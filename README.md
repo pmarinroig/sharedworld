@@ -34,6 +34,8 @@ The public site is published at
 The privacy policy lives at
 [`https://pmarinroig.github.io/sharedworld/privacy/`](https://pmarinroig.github.io/sharedworld/privacy/)
 and explains how SharedWorld uses Google Drive app data and session data.
+The terms of service live at
+[`https://pmarinroig.github.io/sharedworld/terms/`](https://pmarinroig.github.io/sharedworld/terms/).
 
 The GitHub Pages source for the public site lives under [`pages/`](./pages/).
 
