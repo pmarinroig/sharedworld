@@ -7,6 +7,7 @@
   "authors": [
     "Bolido"
   ],
+  "icon": "share_world_pixel_art.png",
   "environment": "client",
   "entrypoints": {
     "client": [
