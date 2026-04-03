@@ -1,0 +1,157 @@
+:root {
+  color-scheme: light;
+  --bg: #f7f5f1;
+  --surface: #ffffff;
+  --border: #d9d4cc;
+  --text: #1f2328;
+  --muted: #5f6773;
+  --accent: #165a9c;
+  --accent-soft: #edf4fb;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 16px;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--bg);
+}
+
+a {
+  color: var(--accent);
+  text-underline-offset: 0.14em;
+}
+
+a:hover {
+  color: #0f4679;
+}
+
+code {
+  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  font-size: 0.95em;
+}
+
+.layout {
+  width: min(48rem, calc(100% - 2rem));
+  margin: 0 auto;
+  padding: 1.5rem 0 4rem;
+}
+
+.layout-policy {
+  width: min(46rem, calc(100% - 2rem));
+}
+
+.site-header {
+  padding: 0.25rem 0 1.75rem;
+}
+
+.brand {
+  color: var(--text);
+  text-decoration: none;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.content,
+.policy {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+}
+
+.content,
+.policy {
+  padding: 2rem;
+}
+
+h1,
+h2 {
+  margin: 0;
+  line-height: 1.2;
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+h1 {
+  font-size: clamp(2.2rem, 5vw, 3.1rem);
+}
+
+h2 {
+  font-size: 1.35rem;
+}
+
+.summary,
+.content p,
+.policy p {
+  color: var(--muted);
+}
+
+.summary {
+  margin: 1rem 0 0;
+  font-size: 1.05rem;
+}
+
+.page-section + .page-section {
+  margin-top: 2rem;
+  padding-top: 2rem;
+  border-top: 1px solid var(--border);
+}
+
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  margin-top: 1rem;
+  padding: 0 0.25rem;
+}
+
+.policy h2 + p {
+  margin-top: 0.75rem;
+}
+
+.policy p + h2 {
+  margin-top: 2rem;
+}
+
+.policy p {
+  margin-bottom: 0;
+}
+
+.meta {
+  display: inline-block;
+  margin: 1rem 0 0;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.92rem;
+}
+
+@media (max-width: 700px) {
+  .layout,
+  .layout-policy {
+    width: min(100% - 1rem, 48rem);
+    padding-top: 1rem;
+  }
+
+  .content,
+  .policy {
+    padding-left: 1.25rem;
+    padding-right: 1.25rem;
+  }
+
+  .content,
+  .policy {
+    padding-top: 1.5rem;
+    padding-bottom: 1.5rem;
+  }
+}

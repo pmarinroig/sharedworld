@@ -29,8 +29,13 @@ The backend is public and can be self-hosted.
 
 ## Privacy
 
-The privacy policy is available at [`site/privacy/`](./site/privacy/) and
-explains how SharedWorld uses Google Drive app data and session data.
+The public site is published at
+[`https://pmarinroig.github.io/sharedworld/`](https://pmarinroig.github.io/sharedworld/).
+The privacy policy lives at
+[`https://pmarinroig.github.io/sharedworld/privacy/`](https://pmarinroig.github.io/sharedworld/privacy/)
+and explains how SharedWorld uses Google Drive app data and session data.
+
+The GitHub Pages source for the public site lives under [`pages/`](./pages/).
 
 ## Contributing
 

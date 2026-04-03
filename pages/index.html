@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SharedWorld</title>
+    <meta
+      name="description"
+      content="Play with your friends without a dedicated Minecraft server. SharedWorld combines e4mc with Google Drive sync so the world can keep going when the host changes."
+    >
+    <link rel="canonical" href="https://pmarinroig.github.io/sharedworld/">
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main class="layout">
+      <header class="site-header">
+        <a class="brand" href="./" aria-current="page">SharedWorld</a>
+      </header>
+
+      <article class="content">
+        <section class="page-section" aria-labelledby="sharedworld-heading">
+          <h1 id="sharedworld-heading">SharedWorld</h1>
+          <p class="summary">
+            Play with your friends without a dedicated Minecraft server.
+            SharedWorld combines
+            <a href="https://modrinth.com/mod/e4mc">e4mc</a> with Google Drive
+            sync so the world can keep going even when the host changes.
+          </p>
+        </section>
+
+        <section class="page-section" aria-labelledby="how-it-works-heading">
+          <h2 id="how-it-works-heading">How it works</h2>
+          <p>
+            Behind the scenes, the world is synced through Google Drive. The
+            first player to join a Shared World becomes the host. Other players
+            are automatically redirected to that host through <code>e4mc</code>.
+            When the host leaves, a new host is picked from the remaining
+            online players and everyone reconnects automatically.
+          </p>
+        </section>
+
+        <section class="page-section" aria-labelledby="permissions-heading">
+          <h2 id="permissions-heading">Google Drive permissions? Is this safe?</h2>
+          <p>
+            The mod only requests permission to use a private app-data folder
+            where it stores SharedWorld data. It does not get access to your
+            entire Google Drive.
+          </p>
+        </section>
+      </article>
+
+      <nav class="links" aria-label="Project links">
+        <a href="./privacy/">Privacy policy</a>
+        <a href="https://github.com/pmarinroig/sharedworld">Source code</a>
+        <a href="https://github.com/pmarinroig/sharedworld/issues">GitHub issues</a>
+      </nav>
+    </main>
+  </body>
+</html>
