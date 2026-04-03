@@ -1,0 +1,284 @@
+buildscript {
+    repositories {
+        maven {
+            url = "https://maven.fabricmc.net/"
+        }
+        gradlePluginPortal()
+        mavenCentral()
+    }
+    dependencies {
+        classpath "net.fabricmc:fabric-loom:${loom_version}"
+    }
+}
+
+apply plugin: 'fabric-loom'
+apply plugin: 'maven-publish'
+
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = project.archives_base_name
+}
+
+def localModsDir = file("local/mods")
+def patchedLocalModsDir = file("$buildDir/patched-local-mods")
+def extractedLocalJijDir = file("$buildDir/local-jij")
+def fakeRunDevAuthSecretProvider = providers.gradleProperty("sharedworldDevAuthSecret")
+        .orElse(providers.environmentVariable("SHAREDWORLD_DEV_AUTH_SECRET"))
+def fakeRunDevAuthSecret = fakeRunDevAuthSecretProvider.orNull
+def skipDevHelperRuntime = providers.gradleProperty("sharedworldSkipDevHelperRuntime")
+        .map { it.toBoolean() }
+        .orElse(false)
+patchedLocalModsDir.mkdirs()
+extractedLocalJijDir.mkdirs()
+
+sourceSets {
+    devHelper {
+        java.srcDir("src/devhelper/java")
+        resources.srcDir("src/devhelper/resources")
+        compileClasspath += sourceSets.main.compileClasspath + sourceSets.main.output
+        runtimeClasspath += output + compileClasspath + sourceSets.main.runtimeClasspath
+    }
+}
+
+def devHelperJarTask = tasks.register("devHelperJar", Jar) {
+    archiveClassifier = "dev-helper"
+    from sourceSets.devHelper.output
+}
+
+def devHelperRuntimeJar = files(devHelperJarTask)
+
+repositories {
+    maven {
+        url = "https://maven.fabricmc.net/"
+    }
+    mavenCentral()
+}
+
+tasks.register("prepareLocalMods") {
+    outputs.dir(patchedLocalModsDir)
+
+    doLast {
+        delete(patchedLocalModsDir)
+        patchedLocalModsDir.mkdirs()
+
+        if (!localModsDir.exists()) {
+            return
+        }
+
+        fileTree(localModsDir).matching {
+            include "*.jar"
+            exclude "fabric-api-*.jar"
+        }.files.each { jarFile ->
+            File outputJar = new File(patchedLocalModsDir, jarFile.name)
+            if (!jarFile.name.startsWith("e4mc-")) {
+                copy {
+                    from jarFile
+                    into patchedLocalModsDir
+                }
+                return
+            }
+
+            File tempDir = new File(buildDir, "tmp/patched-mods/${jarFile.name.replace('.jar', '')}")
+            delete(tempDir)
+            copy {
+                from zipTree(jarFile)
+                into tempDir
+            }
+
+            File mixinConfig = new File(tempDir, "e4mc.mixins.json")
+            if (mixinConfig.exists()) {
+                def parsed = new JsonSlurper().parse(mixinConfig)
+                if (parsed.mixins instanceof List) {
+                    parsed.mixins = parsed.mixins.findAll { it != "ServerboundKeyPacketMixin" }
+                }
+                mixinConfig.text = JsonOutput.prettyPrint(JsonOutput.toJson(parsed)) + "\n"
+            }
+
+            ant.zip(destfile: outputJar, basedir: tempDir)
+        }
+    }
+}
+
+tasks.register("extractLocalNestedModJars", Copy) {
+    onlyIf {
+        patchedLocalModsDir.exists()
+    }
+
+    dependsOn(tasks.named("prepareLocalMods"))
+
+    into extractedLocalJijDir
+    includeEmptyDirs = false
+    duplicatesStrategy = DuplicatesStrategy.INCLUDE
+
+    from({
+        fileTree(patchedLocalModsDir).matching {
+            include "*.jar"
+            exclude "fabric-api-*.jar"
+        }.files.collect { jarFile ->
+            zipTree(jarFile).matching {
+                include "META-INF/jars/*.jar"
+            }
+        }
+    }) {
+        eachFile {
+            path = name
+        }
+    }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    mappings loom.officialMojangMappings()
+
+    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+    // Loom's source-set classpath grouping is not enough on its own for our fake
+    // client runs; package the helper as a real runtime mod so the login bypass
+    // mixin is actually present when HostA/GuestB connect through e4mc.
+    // A clean checkout needs one priming build to materialize that jar before
+    // Loom can checksum it as a local runtime mod.
+    if (!skipDevHelperRuntime.get()) {
+        modLocalRuntime(devHelperRuntimeJar)
+    }
+    testImplementation "org.junit.jupiter:junit-jupiter:5.10.2"
+    if (localModsDir.exists()) {
+        modLocalRuntime(files({
+            fileTree(patchedLocalModsDir).matching {
+                include "*.jar"
+                exclude "fabric-api-*.jar"
+            }.files
+        }))
+        modLocalRuntime(files({
+            fileTree(extractedLocalJijDir).matching {
+                include "*.jar"
+            }.files
+        }))
+    }
+}
+
+loom {
+    mods {
+        sharedworld {
+            sourceSet sourceSets.main
+        }
+        sharedworldDevHelper {
+            sourceSet sourceSets.devHelper
+        }
+    }
+    runs {
+        fakeHost {
+            inherit client
+            configName = "SharedWorld Fake Host"
+            runDir = "run-host"
+            def hostName = "HostA"
+            def hostUuid = "11111111-1111-1111-1111-111111111111"
+            vmArgs "-Dsharedworld.backendUrl=http://127.0.0.1:8787"
+            vmArgs "-Dsharedworld.devPlayerName=${hostName}"
+            vmArgs "-Dsharedworld.devPlayerUuid=${hostUuid}"
+            if (fakeRunDevAuthSecret != null) {
+                vmArgs "-Dsharedworld.devAuthSecret=${fakeRunDevAuthSecret}"
+            }
+            programArg "--username=${hostName}"
+            programArg "--uuid=${hostUuid}"
+        }
+        fakeGuest {
+            inherit client
+            configName = "SharedWorld Fake Guest"
+            runDir = "run-guest"
+            def guestName = "GuestB"
+            def guestUuid = "22222222-2222-2222-2222-222222222222"
+            vmArgs "-Dsharedworld.backendUrl=http://127.0.0.1:8787"
+            vmArgs "-Dsharedworld.devPlayerName=${guestName}"
+            vmArgs "-Dsharedworld.devPlayerUuid=${guestUuid}"
+            if (fakeRunDevAuthSecret != null) {
+                vmArgs "-Dsharedworld.devAuthSecret=${fakeRunDevAuthSecret}"
+            }
+            programArg "--username=${guestName}"
+            programArg "--uuid=${guestUuid}"
+        }
+    }
+}
+
+gradle.taskGraph.whenReady { graph ->
+    if (graph.allTasks.any { it.name in ["runFakeHost", "runFakeGuest"] } && !fakeRunDevAuthSecretProvider.isPresent()) {
+        throw new GradleException(
+                "Fake SharedWorld runs require a dev auth secret. Set DEV_AUTH_SECRET in " +
+                        "packages/backend/.dev.vars and pass it with -PsharedworldDevAuthSecret=..., " +
+                        "or pass -PsharedworldDevAuthSecret=... explicitly."
+        )
+    }
+}
+
+tasks.named("configureLaunch").configure {
+    dependsOn(tasks.named("prepareLocalMods"))
+    dependsOn(tasks.named("extractLocalNestedModJars"))
+    dependsOn(devHelperJarTask)
+}
+
+tasks.named("generateRemapClasspath").configure {
+    dependsOn(tasks.named("prepareLocalMods"))
+    dependsOn(tasks.named("extractLocalNestedModJars"))
+    dependsOn(devHelperJarTask)
+}
+
+processResources {
+    inputs.property "version", project.version
+
+    filesMatching("fabric.mod.json") {
+        expand "version": inputs.properties.version
+    }
+}
+
+tasks.named("processDevHelperResources").configure {
+    inputs.property "version", project.version
+
+    filesMatching("fabric.mod.json") {
+        expand "version": inputs.properties.version
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    it.options.release = 21
+}
+
+tasks.named("test").configure {
+    useJUnitPlatform {
+        excludeTags "integration"
+    }
+}
+
+tasks.register("integrationTest", Test) {
+    group = "verification"
+    description = "Runs opt-in backend/mod integration tests against the local integration backend."
+    // This task expects a local backend harness to already be running.
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    shouldRunAfter(tasks.named("test"))
+    useJUnitPlatform {
+        includeTags "integration"
+    }
+    systemProperty(
+            "sharedworld.integration.backendUrl",
+            System.getProperty("sharedworld.integration.backendUrl", "http://127.0.0.1:18787")
+    )
+}
+
+java {
+    withSourcesJar()
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+publishing {
+    publications {
+        create("mavenJava", MavenPublication) {
+            artifactId = project.archives_base_name
+            from components.java
+        }
+    }
+}

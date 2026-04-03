@@ -1,0 +1,10 @@
+package link.sharedworld.host;
+
+public enum SharedWorldTerminalReasonKind {
+    AUTHORITATIVE_LOSS,
+    RECOVERABLE_REMOTE_FAILURE,
+    TERMINATED_REVOKED,
+    TERMINATED_DELETED,
+    OBSOLETE_LOCAL_STATE,
+    UNEXPECTED_LOCAL_INVARIANT_BREACH
+}

@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "sharedworld",
+  "version": "${version}",
+  "name": "SharedWorld",
+  "description": "Cloud-backed friend-hosted Minecraft worlds powered by e4mc.",
+  "authors": [
+    "Bolido"
+  ],
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "link.sharedworld.SharedWorldClient"
+    ]
+  },
+  "mixins": [
+    "sharedworld.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.18.2",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "fabric-api": "*",
+    "e4mc": [
+      "6.1.0"
+    ]
+  }
+}

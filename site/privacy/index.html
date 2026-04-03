@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SharedWorld Privacy Policy</title>
+    <meta
+      name="description"
+      content="Privacy Policy for SharedWorld, including its Google Drive app data integration and backend data handling."
+    >
+    <link rel="stylesheet" href="../styles.css">
+  </head>
+  <body>
+    <main class="page-shell">
+      <section class="hero compact">
+        <p class="eyebrow">Privacy Policy</p>
+        <h1>How SharedWorld handles data.</h1>
+        <p class="lede">Last updated: April 3, 2026</p>
+        <div class="actions">
+          <a class="button" href="../">Back to homepage</a>
+        </div>
+      </section>
+
+      <section class="policy">
+        <h2>1. Data we access</h2>
+        <p>
+          SharedWorld requests Google Drive access through the
+          <code>drive.appdata</code> scope. That scope is limited to the hidden
+          application data area associated with the app and does not grant
+          access to your normal Google Drive files, documents, or photos.
+        </p>
+
+        <h2>2. What the data is used for</h2>
+        <p>
+          SharedWorld uses this access only to support multiplayer world
+          synchronization, host handoff, recovery, and related storage
+          operations for SharedWorld sessions. Data obtained through Google APIs
+          is not used for advertising.
+        </p>
+
+        <h2>3. Routing and storage</h2>
+        <p>
+          When a world is synchronized, snapshot data may transit through the
+          SharedWorld backend selected for that session before it reaches the
+          configured storage provider and before it is delivered to authorized
+          players. For the maintainer-operated hosted service, the backend is
+          operated by the project maintainer. If you use a self-hosted or
+          third-party backend, that operator's privacy practices also apply.
+        </p>
+
+        <h2>4. Authentication tokens</h2>
+        <p>
+          SharedWorld processes the OAuth tokens needed to complete storage
+          operations against the Google Drive app data area. Those credentials
+          are used only to provide the storage and synchronization features the
+          user has requested.
+        </p>
+
+        <h2>5. Sharing with other players</h2>
+        <p>
+          SharedWorld is a multiplayer system. If you create or join a shared
+          session, snapshot data for that world may be delivered to the specific
+          players who are authorized to participate in that session so they can
+          continue the world when host ownership changes.
+        </p>
+
+        <h2>6. Google API Services disclosure</h2>
+        <p>
+          SharedWorld's use and transfer of information received from Google
+          APIs will adhere to the Google API Services User Data Policy,
+          including the Limited Use requirements.
+        </p>
+
+        <h2>7. Data deletion and revoking access</h2>
+        <p>
+          You can revoke SharedWorld's access from your Google Account security
+          settings at any time. You can also delete the hidden application data
+          associated with SharedWorld from Google Drive's Manage Apps settings.
+          Revoking access invalidates the stored authorization for future sync
+          operations.
+        </p>
+
+        <h2>8. Contact</h2>
+        <p>
+          Questions about SharedWorld should be directed through GitHub Issues
+          for the public repository.
+        </p>
+      </section>
+    </main>
+  </body>
+</html>

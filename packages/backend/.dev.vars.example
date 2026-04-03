@@ -1,0 +1,4 @@
+ALLOW_DEV_AUTH=true
+ALLOW_DEV_INSECURE_E4MC=true
+DEV_AUTH_SECRET=sharedworld-dev-secret
+SIGNING_SECRET=replace-with-a-long-random-secret

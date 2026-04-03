@@ -1,0 +1,27 @@
+name = "sharedworld"
+main = "src/index.ts"
+compatibility_date = "2026-03-28"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "sharedworld"
+database_id = "9375862a-5ace-47ec-8e2f-5b1bad12cf34"
+
+#[[r2_buckets]]  Currently not using R2
+#binding = "BLOBS"
+#bucket_name = "sharedworld-blobs"
+
+[vars]
+ALLOW_DEV_AUTH = "false"
+ALLOW_DEV_INSECURE_E4MC = "false"
+ALLOW_DEV_GOOGLE_OAUTH = "false"
+
+ACTIVE_STORAGE_PROVIDER = "google-drive"
+GOOGLE_OAUTH_SCOPES = "openid email profile https://www.googleapis.com/auth/drive.appdata"
+PUBLIC_BASE_URL = "https://sharedworld.farigola777.workers.dev"
+GOOGLE_OAUTH_REDIRECT_URI = "https://sharedworld.farigola777.workers.dev/storage/google/callback"
+
+SESSION_TTL_HOURS = "168"
+SIGNED_URL_TTL_SECONDS = "900"
+
+MOJANG_HAS_JOINED_ENDPOINT = "https://sessionserver.mojang.com/session/minecraft/hasJoined"

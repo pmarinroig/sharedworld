@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "sharedworld-dev-helper",
+  "version": "${version}",
+  "name": "SharedWorld Dev Helper",
+  "description": "Local-only helper mod for fake-account SharedWorld e2e testing.",
+  "authors": [
+    "pau"
+  ],
+  "environment": "client",
+  "mixins": [
+    "sharedworld-dev-helper.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.18.2",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "sharedworld": "*"
+  }
+}

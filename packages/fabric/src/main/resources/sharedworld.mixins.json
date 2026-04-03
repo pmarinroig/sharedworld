@@ -1,0 +1,20 @@
+{
+  "required": true,
+  "package": "link.sharedworld.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "ChatComponentMixin",
+    "DimensionDataStorageAccessor",
+    "DisconnectedScreenMixin",
+    "E4mcQuiclimeSessionMixin",
+    "EntityStorageAccessor",
+    "MinecraftDisconnectMixin",
+    "MultiplayerScreenMixin",
+    "PersistentEntitySectionManagerAccessor",
+    "ServerLevelEntityManagerAccessor",
+    "ServerboundKeyPacketCompatMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

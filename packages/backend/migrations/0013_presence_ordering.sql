@@ -1,0 +1,3 @@
+ALTER TABLE world_presence ADD COLUMN present INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE world_presence ADD COLUMN guest_session_epoch INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE world_presence ADD COLUMN presence_sequence INTEGER NOT NULL DEFAULT 0;

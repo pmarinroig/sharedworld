@@ -1,0 +1,25 @@
+{
+  "stats": {
+    "minecraft:mined": {
+      "minecraft:sand": 1
+    },
+    "minecraft:picked_up": {
+      "minecraft:sand": 1
+    },
+    "minecraft:custom": {
+      "minecraft:sprint_one_cm": 1108,
+      "minecraft:time_since_rest": 1493,
+      "minecraft:walk_one_cm": 1013,
+      "minecraft:total_world_time": 1493,
+      "minecraft:leave_game": 3,
+      "minecraft:fly_one_cm": 585,
+      "minecraft:walk_under_water_one_cm": 161,
+      "minecraft:walk_on_water_one_cm": 437,
+      "minecraft:damage_taken": 60,
+      "minecraft:play_time": 1493,
+      "minecraft:jump": 7,
+      "minecraft:time_since_death": 1493
+    }
+  },
+  "DataVersion": 4671
+}
