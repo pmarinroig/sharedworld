@@ -17,6 +17,7 @@ coverage/
 packages/backend/.dev.vars
 packages/fabric/local/mods/*.jar
 packages/fabric/local/minecraft-*-decompiled/
+# Local Fabric runtime state should never be versioned.
 packages/fabric/run/
 packages/fabric/run-host/
 packages/fabric/run-guest/
