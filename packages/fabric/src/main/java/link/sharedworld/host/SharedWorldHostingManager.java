@@ -22,7 +22,6 @@ import net.minecraft.client.gui.screens.worldselection.WorldOpenFlows;
 import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.HttpUtil;
-import net.minecraft.world.level.GameType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -531,7 +530,9 @@ public final class SharedWorldHostingManager {
         if (!server.isPublished()) {
             setPhase(Phase.PUBLISHING, SharedWorldText.string("screen.sharedworld.hosting_opening_to_friends"));
             int port = HttpUtil.getAvailablePort();
-            if (!server.publishServer(GameType.SURVIVAL, false, port)) {
+            // Shared World synchronizes playerdata, so late joiners must keep their stored
+            // gamemode instead of inheriting a forced LAN publish mode.
+            if (!server.publishServer(SharedWorldPublishedJoinModePolicy.publishGameMode(), false, port)) {
                 fail(SharedWorldText.string("screen.sharedworld.hosting_publish_failed"), null);
                 return;
             }
