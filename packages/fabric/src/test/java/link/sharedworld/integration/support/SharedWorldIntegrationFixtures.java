@@ -11,6 +11,7 @@ import link.sharedworld.host.SharedWorldHostingManager;
 import link.sharedworld.host.SharedWorldReleaseCoordinator;
 import link.sharedworld.host.SharedWorldReleasePhase;
 import link.sharedworld.host.SharedWorldReleaseStore;
+import link.sharedworld.progress.SharedWorldProgressState;
 import link.sharedworld.support.SharedWorldCoordinatorHarness;
 import link.sharedworld.sync.ManagedWorldStore;
 import link.sharedworld.sync.WorldSyncCoordinator;
@@ -505,6 +506,14 @@ public final class SharedWorldIntegrationFixtures {
         public void clearHostedSessionAfterCoordinatedRelease() {
             this.resources.clearCalls += 1;
             this.activeHostSession = null;
+        }
+
+        @Override
+        public void relayCoordinatedReleaseProgress(SharedWorldProgressState progressState) {
+        }
+
+        @Override
+        public void clearCoordinatedReleaseProgress() {
         }
 
         @Override

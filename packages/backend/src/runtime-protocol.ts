@@ -311,13 +311,15 @@ export function refreshLiveRuntime(runtime: WorldRuntimeRecord, joinTarget: stri
  * The currently authorized backend runtime record.
  */
 export function moveToFinalizing(runtime: WorldRuntimeRecord, now: Date): WorldRuntimeRecord {
+  const finalizationStartedAt = now.toISOString();
   return {
     ...runtime,
     phase: "host-finalizing",
     joinTarget: null,
     expiresAt: null,
     startupDeadlineAt: null,
-    updatedAt: now.toISOString(),
+    updatedAt: finalizationStartedAt,
+    lastProgressAt: finalizationStartedAt,
     startupProgress: null
   };
 }

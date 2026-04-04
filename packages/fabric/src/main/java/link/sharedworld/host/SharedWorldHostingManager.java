@@ -1150,6 +1150,27 @@ public final class SharedWorldHostingManager {
         );
     }
 
+    public void relayCoordinatedReleaseProgress(SharedWorldProgressState progressState) {
+        if (!this.coordinatedReleaseActive || progressState == null) {
+            return;
+        }
+        this.progressState = progressState;
+        this.statusMessage = progressState.label().getString();
+        relayStartupProgressIfNeeded();
+    }
+
+    public void clearCoordinatedReleaseProgress() {
+        if (!this.coordinatedReleaseActive && this.phase != Phase.RELEASING && this.phase != Phase.ERROR) {
+            return;
+        }
+        HostAttemptContext context = currentAttemptContext();
+        if (context == null || !this.startupProgressRelayActive) {
+            return;
+        }
+        this.startupProgressRelay.clear(progressRelayAuthority(context));
+        this.startupProgressRelayActive = false;
+    }
+
     private boolean isActiveStartupAttempt(long startupAttemptId) {
         return this.startupStarted.get() && !this.startupCancelRequested && this.startupAttemptId == startupAttemptId;
     }

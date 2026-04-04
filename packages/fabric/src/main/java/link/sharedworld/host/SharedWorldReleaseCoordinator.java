@@ -100,6 +100,16 @@ public final class SharedWorldReleaseCoordinator {
                     }
 
                     @Override
+                    public void relayCoordinatedReleaseProgress(SharedWorldProgressState progressState) {
+                        hostingManager.relayCoordinatedReleaseProgress(progressState);
+                    }
+
+                    @Override
+                    public void clearCoordinatedReleaseProgress() {
+                        hostingManager.clearCoordinatedReleaseProgress();
+                    }
+
+                    @Override
                     public void clearHostedSessionAfterTerminalExit() {
                         hostingManager.clearHostedSessionAfterTerminalExit();
                     }
@@ -451,6 +461,7 @@ public final class SharedWorldReleaseCoordinator {
         if (!canDiscardLocalReleaseState()) {
             return false;
         }
+        clearRelayedReleaseProgress();
         this.releaseStore.clear();
         this.state = null;
         this.terminalState = null;
@@ -673,6 +684,7 @@ public final class SharedWorldReleaseCoordinator {
         if (this.state != null && reason != ForcedExitReason.WORLD_DELETED && reason != ForcedExitReason.MEMBERSHIP_REVOKED) {
             return;
         }
+        clearRelayedReleaseProgress();
         this.releaseStore.clear();
         this.state = null;
         this.clientShell.clearPlaySession();
@@ -706,6 +718,7 @@ public final class SharedWorldReleaseCoordinator {
             SharedWorldTerminalReasonKind reasonKind,
             String message
     ) {
+        clearRelayedReleaseProgress();
         this.releaseStore.clear();
         this.state = null;
         this.clientShell.clearPlaySession();
@@ -977,6 +990,7 @@ public final class SharedWorldReleaseCoordinator {
                 this.clientShell.hasLevel() || this.clientShell.hasSingleplayerServer()
         );
         if (outcome.clearPersistedRecord()) {
+            clearRelayedReleaseProgress();
             this.releaseStore.clear();
             this.state = null;
             if (outcome.obsoleteRecordMessage() != null && !outcome.obsoleteRecordMessage().isBlank()) {
@@ -988,16 +1002,20 @@ public final class SharedWorldReleaseCoordinator {
         if (outcome.recoverableError() != null) {
             if (outcome.errorKind() == SharedWorldTerminalReasonKind.AUTHORITATIVE_LOSS && runtime != null) {
                 LOGGER.warn(
-                        "SharedWorld release diagnostics [reconcile]: backend moved on during release for {} (runtimePhase={}, runtimeEpoch={}, backendFinalizationStarted={}, localDisconnectObserved={}, finalUploadCompleted={}, authorityLossStage={})",
+                        "SharedWorld release diagnostics [reconcile]: backend moved on during release for {} (runtimePhase={}, runtimeEpoch={}, runtimeLastProgressAt={}, runtimeWarningPhase={}, runtimeWarningEpoch={}, backendFinalizationStarted={}, localDisconnectObserved={}, finalUploadCompleted={}, authorityLossStage={})",
                         record.worldId,
                         runtime.phase(),
                         runtime.runtimeEpoch(),
+                        runtime.lastProgressAt(),
+                        runtime.uncleanShutdownWarning() == null ? null : runtime.uncleanShutdownWarning().phase(),
+                        runtime.uncleanShutdownWarning() == null ? null : runtime.uncleanShutdownWarning().runtimeEpoch(),
                         record.backendFinalizationStarted,
                         record.localDisconnectObserved,
                         record.finalUploadCompleted,
                         outcome.authorityLossStage()
                 );
             }
+            clearRelayedReleaseProgress();
             this.state.errorMessage = outcome.recoverableError();
             this.state.errorKind = outcome.errorKind();
             return;
@@ -1042,6 +1060,17 @@ public final class SharedWorldReleaseCoordinator {
                 return;
             }
             this.hostControl.markCoordinatedBackendFinalizationStarted();
+            if (runtime != null) {
+                LOGGER.info(
+                        "SharedWorld release diagnostics [beginFinalization]: runtime after backend finalization start for {} is phase={}, epoch={}, lastProgressAt={}, warningPhase={}, warningEpoch={}",
+                        latest.record.worldId,
+                        runtime.phase(),
+                        runtime.runtimeEpoch(),
+                        runtime.lastProgressAt(),
+                        runtime.uncleanShutdownWarning() == null ? null : runtime.uncleanShutdownWarning().phase(),
+                        runtime.uncleanShutdownWarning() == null ? null : runtime.uncleanShutdownWarning().runtimeEpoch()
+                );
+            }
             SharedWorldReleaseStore.ReleaseRecord updated = latest.record.copy();
             updated.backendFinalizationStarted = true;
             updated.phase = updated.localDisconnectObserved
@@ -1165,6 +1194,7 @@ public final class SharedWorldReleaseCoordinator {
                     : updated.pendingTerminalPhase;
             persistAndApply(updated);
             if (SharedWorldReleasePolicy.isClosedTerminal(updated.phase)) {
+                clearRelayedReleaseProgress();
                 this.hostControl.clearHostedSessionAfterCoordinatedRelease();
             }
         });
@@ -1192,6 +1222,7 @@ public final class SharedWorldReleaseCoordinator {
         current.errorMessage = errorMessage;
         current.errorKind = null;
         current.progressState = SharedWorldReleasePolicy.blockingProgress(Component.translatable("screen.sharedworld.progress.uploading_world"), "release_finishing");
+        clearRelayedReleaseProgress();
         this.releaseStore.clear();
         this.hostControl.clearHostedSessionAfterCoordinatedRelease();
     }
@@ -1206,6 +1237,7 @@ public final class SharedWorldReleaseCoordinator {
         persistAndApply(updated);
         current.errorMessage = errorMessage;
         current.errorKind = errorKind;
+        clearRelayedReleaseProgress();
     }
 
     private void persistAndApply(SharedWorldReleaseStore.ReleaseRecord updated) {
@@ -1268,6 +1300,11 @@ public final class SharedWorldReleaseCoordinator {
             case WorldSyncCoordinator.STAGE_FINALIZING_SNAPSHOT -> SharedWorldReleasePolicy.blockingProgress(Component.translatable("screen.sharedworld.progress.uploading_world"), "release_finishing");
             default -> SharedWorldReleasePolicy.blockingProgress(Component.translatable("screen.sharedworld.progress.uploading_world"), "release_preparing");
         };
+        this.hostControl.relayCoordinatedReleaseProgress(current.progressState);
+    }
+
+    private void clearRelayedReleaseProgress() {
+        this.hostControl.clearCoordinatedReleaseProgress();
     }
 
     private static boolean equalsIgnoreCase(String left, String right) {
@@ -1468,6 +1505,10 @@ public final class SharedWorldReleaseCoordinator {
         ) throws Exception;
 
         void clearHostedSessionAfterCoordinatedRelease();
+
+        void relayCoordinatedReleaseProgress(SharedWorldProgressState progressState);
+
+        void clearCoordinatedReleaseProgress();
 
         void clearHostedSessionAfterTerminalExit();
 

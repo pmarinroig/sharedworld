@@ -688,7 +688,9 @@ public final class SharedWorldCoordinatorHarness {
         private boolean backgroundSaveInFlight;
         private boolean coordinatedReleaseStarted;
         private boolean backendFinalizationStarted;
+        private int clearProgressCalls;
         private int clearCalls;
+        private final List<SharedWorldProgressState> relayedProgress = new ArrayList<>();
 
         private FakeHostControl(TempdirSnapshotDriver snapshotDriver) {
             this.snapshotDriver = snapshotDriver;
@@ -732,6 +734,18 @@ public final class SharedWorldCoordinatorHarness {
         }
 
         @Override
+        public void relayCoordinatedReleaseProgress(SharedWorldProgressState progressState) {
+            if (progressState != null) {
+                this.relayedProgress.add(progressState);
+            }
+        }
+
+        @Override
+        public void clearCoordinatedReleaseProgress() {
+            this.clearProgressCalls += 1;
+        }
+
+        @Override
         public void clearHostedSessionAfterTerminalExit() {
             this.clearCalls += 1;
             this.activeHostSession = null;
@@ -762,6 +776,14 @@ public final class SharedWorldCoordinatorHarness {
 
         public int clearCalls() {
             return this.clearCalls;
+        }
+
+        public int clearProgressCalls() {
+            return this.clearProgressCalls;
+        }
+
+        public List<SharedWorldProgressState> relayedProgress() {
+            return this.relayedProgress;
         }
 
         public ScriptedFailures failures() {
