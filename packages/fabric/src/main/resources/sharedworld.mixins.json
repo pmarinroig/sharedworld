@@ -1,6 +1,7 @@
 {
   "required": true,
   "package": "link.sharedworld.mixin",
+  "plugin": "link.sharedworld.mixin.SharedWorldMixinConfigPlugin",
   "compatibilityLevel": "JAVA_21",
   "client": [
     "ChatComponentMixin",

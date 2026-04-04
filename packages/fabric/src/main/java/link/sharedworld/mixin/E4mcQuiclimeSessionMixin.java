@@ -1,6 +1,7 @@
 package link.sharedworld.mixin;
 
 import io.netty.channel.ChannelHandlerContext;
+import link.sharedworld.SharedWorldE4mcCompatibility;
 import link.sharedworld.integration.E4mcDomainTracker;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Pseudo;
@@ -27,6 +28,7 @@ public abstract class E4mcQuiclimeSessionMixin {
             field.setAccessible(true);
             Object value = field.get(message);
             if (value instanceof String domain) {
+                SharedWorldE4mcCompatibility.logDomainCaptureHookFired(domain);
                 E4mcDomainTracker.captureAssignedDomain(domain);
             }
         } catch (ReflectiveOperationException ignored) {

@@ -95,6 +95,10 @@ tasks.register("prepareLocalMods") {
             if (mixinConfig.exists()) {
                 def parsed = new JsonSlurper().parse(mixinConfig)
                 if (parsed.mixins instanceof List) {
+                    // Temporary validation scaffolding for local dev runs: the
+                    // shipped SharedWorld jar now gates its own compat mixin,
+                    // but we still strip the e4mc redirect here while
+                    // verifying the 6.1.0 path end-to-end.
                     parsed.mixins = parsed.mixins.findAll { it != "ServerboundKeyPacketMixin" }
                 }
                 mixinConfig.text = JsonOutput.prettyPrint(JsonOutput.toJson(parsed)) + "\n"
