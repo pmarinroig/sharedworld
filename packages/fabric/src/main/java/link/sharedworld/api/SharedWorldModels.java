@@ -343,6 +343,7 @@ public final class SharedWorldModels {
             String hostUuid,
             String hostPlayerName,
             String phase,
+            long runtimeEpoch,
             String recordedAt
     ) {
     }

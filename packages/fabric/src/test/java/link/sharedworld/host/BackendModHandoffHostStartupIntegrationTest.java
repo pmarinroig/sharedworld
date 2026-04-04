@@ -85,7 +85,7 @@ final class BackendModHandoffHostStartupIntegrationTest {
                     clock,
                     clientShell,
                     new SharedWorldCoordinatorHarness.FakePlayerIdentity(SharedWorldIntegrationBackend.GUEST.playerUuid()),
-                    (parent, result) -> hostingManager.beginHosting(parent, result.world(), result.latestManifest(), result.assignment()),
+                    (parent, result, startupMode) -> hostingManager.beginHosting(parent, result.world(), result.latestManifest(), result.assignment(), startupMode),
                     new SharedWorldSessionCoordinator.SessionUi() {
                         @Override
                         public Screen joinError(Screen parent, Throwable error) {

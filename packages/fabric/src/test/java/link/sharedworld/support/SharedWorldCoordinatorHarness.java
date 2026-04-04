@@ -18,6 +18,7 @@ import link.sharedworld.progress.SharedWorldProgressState;
 import link.sharedworld.SharedWorldCoordinatorSupport;
 import link.sharedworld.SharedWorldRecoveryStore;
 import link.sharedworld.SharedWorldSessionCoordinator;
+import link.sharedworld.host.SharedWorldHostingManager;
 import link.sharedworld.sync.WorldSyncCoordinator;
 import link.sharedworld.sync.WorldSyncProgressListener;
 import net.minecraft.client.gui.screens.Screen;
@@ -45,6 +46,7 @@ public final class SharedWorldCoordinatorHarness {
     public final FakeReleaseBackend releaseBackend;
     public final TempdirSnapshotDriver snapshotDriver;
     public final FakeHostControl hostControl;
+    public SharedWorldHostingManager.StartupMode lastHostStartupMode = SharedWorldHostingManager.StartupMode.NORMAL;
     public final SharedWorldSessionCoordinator sessionCoordinator;
     public final SharedWorldReleaseCoordinator releaseCoordinator;
 
@@ -90,8 +92,7 @@ public final class SharedWorldCoordinatorHarness {
                 clock,
                 clientShell,
                 playerIdentity,
-                (parent, result) -> {
-                },
+                (parent, result, startupMode) -> lastHostStartupMode = startupMode,
                 new SharedWorldSessionCoordinator.SessionUi() {
                     @Override
                     public Screen joinError(Screen parent, Throwable error) {

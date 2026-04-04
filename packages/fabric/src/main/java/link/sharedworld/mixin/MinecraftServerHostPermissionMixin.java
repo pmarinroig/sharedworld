@@ -13,13 +13,13 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(MinecraftServer.class)
 abstract class MinecraftServerHostPermissionMixin {
     @Inject(method = "getProfilePermissions", at = @At("RETURN"), cancellable = true)
-    private void sharedworld$grantOwnerHostPermissions(NameAndId profile, CallbackInfoReturnable<LevelBasedPermissionSet> cir) {
-        MinecraftServer server = (MinecraftServer) (Object) this;
+    private void sharedworld$applySharedWorldOwnerPermissions(NameAndId profile, CallbackInfoReturnable<LevelBasedPermissionSet> cir) {
         cir.setReturnValue(
                 SharedWorldHostPermissionPolicy.effectivePermissions(
                         cir.getReturnValue(),
                         SharedWorldDevSessionBridge.isHostingSharedWorld(),
-                        server.isSingleplayerOwner(profile)
+                        profile.id() == null ? null : profile.id().toString(),
+                        SharedWorldDevSessionBridge.hostingSharedWorldOwnerUuid()
                 )
         );
     }

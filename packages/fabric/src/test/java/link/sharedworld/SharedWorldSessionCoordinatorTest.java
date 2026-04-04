@@ -239,6 +239,7 @@ final class SharedWorldSessionCoordinatorTest {
                                     "player-previous",
                                     "Previous",
                                     "host-finalizing",
+                                    7L,
                                     java.time.Instant.EPOCH.toString()
                             )
                     ),
@@ -476,6 +477,7 @@ final class SharedWorldSessionCoordinatorTest {
                                     "player-previous",
                                     "Previous",
                                     "host-finalizing",
+                                    7L,
                                     java.time.Instant.ofEpochMilli(harness.clock.nowMillis()).toString()
                             )
                     ),
@@ -495,6 +497,7 @@ final class SharedWorldSessionCoordinatorTest {
 
             assertTrue(harness.clientShell.actions().contains("setScreen:host-acquired"));
             assertEquals(java.util.List.of(false, true), harness.sessionBackend.enterAcknowledgeFlags());
+            assertEquals(link.sharedworld.host.SharedWorldHostingManager.StartupMode.ACKNOWLEDGED_UNCLEAN_SHUTDOWN, harness.lastHostStartupMode);
         } finally {
             harness.close();
         }

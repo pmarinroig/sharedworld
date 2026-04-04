@@ -115,7 +115,7 @@ public final class SharedWorldIntegrationFixtures {
                 clock,
                 clientShell,
                 new SharedWorldCoordinatorHarness.FakePlayerIdentity(player.playerUuid()),
-                (parent, result) -> {
+                (parent, result, startupMode) -> {
                     hostStarts.add(result);
                     if (onHostStart != null) {
                         onHostStart.accept(result);

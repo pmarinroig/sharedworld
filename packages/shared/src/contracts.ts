@@ -167,6 +167,7 @@ export interface UncleanShutdownWarning {
   hostUuid: string;
   hostPlayerName: string;
   phase: "host-live" | "host-finalizing";
+  runtimeEpoch: number;
   recordedAt: string;
 }
 

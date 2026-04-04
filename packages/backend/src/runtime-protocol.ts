@@ -385,6 +385,7 @@ export function toRuntimeStatus(
         hostUuid: warning.hostUuid,
         hostPlayerName: warning.hostPlayerName,
         phase: warning.phase,
+        runtimeEpoch: warning.runtimeEpoch,
         recordedAt: warning.recordedAt
       };
   if (!runtime) {

@@ -1,7 +1,7 @@
 package link.sharedworld;
 
 public final class SharedWorldDevSessionBridge {
-    private static volatile State state = new State(false, false, false);
+    private static volatile State state = new State(false, false, false, null);
 
     private SharedWorldDevSessionBridge() {
     }
@@ -11,16 +11,22 @@ public final class SharedWorldDevSessionBridge {
         state = new State(
                 currentSessionIsDev,
                 backendAllowsInsecureE4mc,
-                current.hostingSharedWorld()
+                current.hostingSharedWorld(),
+                current.hostingSharedWorldOwnerUuid()
         );
     }
 
     public static void setHostingSharedWorld(boolean hostingSharedWorld) {
+        setHostingSharedWorld(hostingSharedWorld, null);
+    }
+
+    public static void setHostingSharedWorld(boolean hostingSharedWorld, String ownerUuid) {
         State current = state;
         state = new State(
                 current.currentSessionIsDev(),
                 current.backendAllowsInsecureE4mc(),
-                hostingSharedWorld
+                hostingSharedWorld,
+                normalizeOwnerUuid(hostingSharedWorld ? ownerUuid : null)
         );
     }
 
@@ -36,6 +42,10 @@ public final class SharedWorldDevSessionBridge {
         return state.hostingSharedWorld();
     }
 
+    public static String hostingSharedWorldOwnerUuid() {
+        return state.hostingSharedWorldOwnerUuid();
+    }
+
     public static boolean isInsecureDialtoneBypassAllowed() {
         State current = state;
         return current.currentSessionIsDev()
@@ -44,9 +54,21 @@ public final class SharedWorldDevSessionBridge {
     }
 
     public static void clear() {
-        state = new State(false, false, false);
+        state = new State(false, false, false, null);
     }
 
-    public record State(boolean currentSessionIsDev, boolean backendAllowsInsecureE4mc, boolean hostingSharedWorld) {
+    private static String normalizeOwnerUuid(String ownerUuid) {
+        if (ownerUuid == null || ownerUuid.isBlank()) {
+            return null;
+        }
+        return CanonicalPlayerIdentity.normalizeUuidWithHyphens(ownerUuid, "shared world owner UUID");
+    }
+
+    public record State(
+            boolean currentSessionIsDev,
+            boolean backendAllowsInsecureE4mc,
+            boolean hostingSharedWorld,
+            String hostingSharedWorldOwnerUuid
+    ) {
     }
 }
