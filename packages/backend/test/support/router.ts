@@ -229,6 +229,9 @@ const defaultRouterService = {
   async completeFinalization(_ctx, _worldId, _request) {
     return unexpectedRouteCall("completeFinalization");
   },
+  async cancelStorageLink(_ctx, _sessionId) {
+    return unexpectedRouteCall("cancelStorageLink");
+  },
   async completeStorageLink(_sessionId, _request) {
     return unexpectedRouteCall("completeStorageLink");
   },

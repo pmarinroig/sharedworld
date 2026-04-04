@@ -61,6 +61,21 @@ describe("router error handling", () => {
     });
   });
 
+  test("storage callback cancelled session explains how to restart from Minecraft", async () => {
+    const router = createRouter(createRouterService({
+      async completeStorageLink() {
+        throw new HttpError(409, "storage_link_cancelled", "This Google Drive link is no longer active. Return to Minecraft and start again.");
+      }
+    }));
+
+    const response = await router(new Request("http://127.0.0.1:8787/storage/google/callback?sessionId=session-123"));
+    const body = await response.text();
+
+    expect(response.status).toBe(409);
+    expect(body).toContain("Link no longer active");
+    expect(body).toContain("Return to Minecraft and start again.");
+  });
+
   test("redeem invite returns HttpError status instead of 500", async () => {
     const router = createRouter(createRouterService({
       async redeemInvite() {

@@ -22,6 +22,7 @@ export class StorageLinkDomainService {
     const provider = request.provider ?? this.provider;
     const id = randomId("link");
     const state = randomId("state");
+    const completedAt = now.toISOString();
     const expiresAt = new Date(now.getTime() + STORAGE_LINK_TTL_MS).toISOString();
     const authUrl = this.buildStorageAuthUrl(id, state);
     await this.repository.createStorageLinkSession({
@@ -39,6 +40,7 @@ export class StorageLinkDomainService {
       createdAt: now.toISOString(),
       completedAt: null
     });
+    await this.repository.cancelPendingStorageLinkSessions(ctx.playerUuid, provider, id, completedAt);
     return {
       id,
       provider,
@@ -61,10 +63,31 @@ export class StorageLinkDomainService {
     return summarizeStorageLinkSession(session);
   }
 
+  async cancelStorageLink(ctx: RequestContext, sessionId: string, now = new Date()): Promise<StorageLinkSession> {
+    const session = await this.requireLinkSessionOwner(ctx, sessionId);
+    if (new Date(session.expiresAt).getTime() < now.getTime() && session.status === "pending") {
+      await this.repository.updateStorageLinkSession(session.id, { status: "expired", errorMessage: "Storage link session expired." });
+      session.status = "expired";
+      session.errorMessage = "Storage link session expired.";
+      return summarizeStorageLinkSession(session);
+    }
+    if (session.status === "pending") {
+      const completedAt = now.toISOString();
+      await this.repository.cancelStorageLinkSession(session.id, completedAt);
+      session.status = "cancelled";
+      session.errorMessage = null;
+      session.completedAt = completedAt;
+    }
+    return summarizeStorageLinkSession(session);
+  }
+
   async completeStorageLink(sessionId: string, request: StorageLinkCompleteRequest, now = new Date()): Promise<StorageLinkSession> {
     const session = await this.repository.getStorageLinkSession(sessionId);
     if (!session) {
       throw new HttpError(404, "storage_link_not_found", "Storage link session not found.");
+    }
+    if (session.status === "cancelled") {
+      throw new HttpError(409, "storage_link_cancelled", "This Google Drive link is no longer active. Return to Minecraft and start again.");
     }
     if (new Date(session.expiresAt).getTime() < now.getTime()) {
       throw new HttpError(410, "storage_link_expired", "Storage link session expired.");

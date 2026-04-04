@@ -136,6 +136,7 @@
   "screen.sharedworld.validation_world_name_short": "El nombre del mundo debe tener al menos 3 caracteres.",
   "screen.sharedworld.storage_google_drive_detail": "SharedWorld usa Google Drive para almacenar los archivos de tu servidor. Solo pide acceso a la carpeta de la aplicación, no a todo tu Drive.",
   "screen.sharedworld.storage_link_google_drive": "Vincular Google Drive",
+  "screen.sharedworld.storage_get_new_link": "Obtener un enlace nuevo",
   "screen.sharedworld.storage_relink": "Volver a vincular",
   "screen.sharedworld.storage_waiting_for_browser": "Esperando al navegador...",
   "screen.sharedworld.storage_waiting_authorization": "Todavía esperando la autorización de Google Drive.",

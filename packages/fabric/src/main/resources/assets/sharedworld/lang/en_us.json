@@ -136,6 +136,7 @@
   "screen.sharedworld.validation_world_name_short": "World name must be at least 3 characters.",
   "screen.sharedworld.storage_google_drive_detail": "SharedWorld uses Google Drive to store your server files. It only asks for access to the app folder, not your whole Drive.",
   "screen.sharedworld.storage_link_google_drive": "Link Google Drive",
+  "screen.sharedworld.storage_get_new_link": "Get a New Link",
   "screen.sharedworld.storage_relink": "Relink",
   "screen.sharedworld.storage_waiting_for_browser": "Waiting for Browser...",
   "screen.sharedworld.storage_waiting_authorization": "Still waiting for Google Drive authorization.",

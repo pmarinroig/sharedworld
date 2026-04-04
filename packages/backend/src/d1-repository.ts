@@ -421,6 +421,28 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     return row ? mapStorageLinkSession(row) : null;
   }
 
+  async cancelStorageLinkSession(sessionId: string, completedAt: string): Promise<void> {
+    await this.run(
+      `UPDATE storage_link_sessions
+       SET status = 'cancelled', error_message = NULL, completed_at = ?
+       WHERE id = ? AND status = 'pending'`,
+      completedAt,
+      sessionId
+    );
+  }
+
+  async cancelPendingStorageLinkSessions(playerUuid: string, provider: StorageProviderType, exceptSessionId: string, completedAt: string): Promise<void> {
+    await this.run(
+      `UPDATE storage_link_sessions
+       SET status = 'cancelled', error_message = NULL, completed_at = ?
+       WHERE player_uuid = ? AND provider = ? AND id <> ? AND status = 'pending'`,
+      completedAt,
+      playerUuid,
+      provider,
+      exceptSessionId
+    );
+  }
+
   async updateStorageLinkSession(sessionId: string, update: Partial<Pick<StorageLinkSessionRecord, "status" | "linkedAccountEmail" | "accountDisplayName" | "errorMessage" | "storageAccountId" | "completedAt">>): Promise<void> {
     const current = await this.getStorageLinkSession(sessionId);
     if (!current) {

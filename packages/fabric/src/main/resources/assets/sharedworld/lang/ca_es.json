@@ -136,6 +136,7 @@
   "screen.sharedworld.validation_world_name_short": "El nom del món ha de tenir com a mínim 3 caràcters.",
   "screen.sharedworld.storage_google_drive_detail": "SharedWorld utilitza Google Drive per emmagatzemar els fitxers del teu servidor. Només demana accés a la carpeta de l'aplicació, no a tot el teu Drive.",
   "screen.sharedworld.storage_link_google_drive": "Enllaça Google Drive",
+  "screen.sharedworld.storage_get_new_link": "Obté un enllaç nou",
   "screen.sharedworld.storage_relink": "Torna a enllaçar",
   "screen.sharedworld.storage_waiting_for_browser": "S'està esperant el navegador...",
   "screen.sharedworld.storage_waiting_authorization": "Encara s'està esperant l'autorització de Google Drive.",

@@ -342,6 +342,27 @@ export class MemorySharedWorldRepository implements SharedWorldRepository {
     return this.storageLinkSessions.get(sessionId) ?? null;
   }
 
+  async cancelStorageLinkSession(sessionId: string, completedAt: string): Promise<void> {
+    const session = this.storageLinkSessions.get(sessionId);
+    if (!session || session.status !== "pending") {
+      return;
+    }
+    session.status = "cancelled";
+    session.errorMessage = null;
+    session.completedAt = completedAt;
+  }
+
+  async cancelPendingStorageLinkSessions(playerUuid: string, provider: StorageProviderType, exceptSessionId: string, completedAt: string): Promise<void> {
+    for (const session of this.storageLinkSessions.values()) {
+      if (session.id === exceptSessionId || session.playerUuid !== playerUuid || session.provider !== provider || session.status !== "pending") {
+        continue;
+      }
+      session.status = "cancelled";
+      session.errorMessage = null;
+      session.completedAt = completedAt;
+    }
+  }
+
   async updateStorageLinkSession(sessionId: string, update: Partial<Pick<StorageLinkSessionRecord, "status" | "linkedAccountEmail" | "accountDisplayName" | "errorMessage" | "storageAccountId" | "completedAt">>): Promise<void> {
     const session = this.storageLinkSessions.get(sessionId);
     if (!session) {

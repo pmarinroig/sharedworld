@@ -187,6 +187,10 @@ export class SharedWorldService {
     return this.storageLinks.getStorageLinkSession(ctx, sessionId, now);
   }
 
+  async cancelStorageLink(ctx: RequestContext, sessionId: string, now = new Date()) {
+    return this.storageLinks.cancelStorageLink(ctx, sessionId, now);
+  }
+
   async completeStorageLink(sessionId: string, request: StorageLinkCompleteRequest, now = new Date()) {
     return this.storageLinks.completeStorageLink(sessionId, request, now);
   }

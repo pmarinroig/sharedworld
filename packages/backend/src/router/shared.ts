@@ -8,6 +8,7 @@ export type RouterService = Pick<
   SharedWorldService,
   | "beginFinalization"
   | "cancelWaiting"
+  | "cancelStorageLink"
   | "completeAuth"
   | "completeDevAuth"
   | "completeFinalization"

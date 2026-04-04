@@ -35,6 +35,8 @@ import java.nio.file.StandardCopyOption;
 import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
@@ -63,6 +65,7 @@ public final class CreateSharedWorldScreen extends Screen {
     private final WorldTab worldTab = new WorldTab();
     private final DetailsTab detailsTab = new DetailsTab();
     private final StorageTab storageTab = new StorageTab();
+    private final DriveLinkAttemptController driveLinkController = new DriveLinkAttemptController();
 
     private LocalSaveCatalog.LocalSaveOption selectedSave;
     private StorageLinkSessionDto storageLink;
@@ -82,8 +85,6 @@ public final class CreateSharedWorldScreen extends Screen {
     private SelectedIcon selectedIcon;
     private boolean clearCustomIcon;
     private boolean submitting;
-    private boolean driveLinkInFlight;
-    private boolean driveLinkCopiedFallback;
     private String storageMessage = "";
     private int storageMessageColor = 0xFFB8C5D6;
     private String iconMessage = "";
@@ -233,11 +234,13 @@ public final class CreateSharedWorldScreen extends Screen {
 
     @Override
     public void onClose() {
+        this.cancelDriveLinkAttempt(true);
         this.minecraft.setScreen(this.parent);
     }
 
     @Override
     public void removed() {
+        this.cancelDriveLinkAttempt(true);
         super.removed();
         if (this.previewTexture != null) {
             this.previewTexture.clear();
@@ -398,18 +401,14 @@ public final class CreateSharedWorldScreen extends Screen {
             this.primaryButton.setMessage(Component.translatable(this.submitting
                     ? "screen.sharedworld.creating"
                     : "screen.sharedworld.create_world"));
-            this.primaryButton.active = !this.submitting && !this.driveLinkInFlight && this.selectedSave != null && this.nameValid() && this.storageLinked();
+            this.primaryButton.active = !this.submitting && this.selectedSave != null && this.nameValid() && this.storageLinked();
         } else {
             this.primaryButton.setMessage(Component.translatable("screen.sharedworld.next"));
             this.primaryButton.active = !this.submitting && ((currentTab == this.worldTab && this.selectedSave != null) || (currentTab == this.detailsTab && this.nameValid()));
         }
 
-        this.linkDriveButton.setMessage(Component.translatable(this.storageLinked()
-                ? "screen.sharedworld.storage_relink"
-                : (this.driveLinkInFlight
-                ? "screen.sharedworld.storage_waiting_for_browser"
-                : "screen.sharedworld.storage_link_google_drive")));
-        this.linkDriveButton.active = !this.submitting && !this.driveLinkInFlight;
+        this.linkDriveButton.setMessage(Component.translatable(this.driveLinkButtonTranslationKey()));
+        this.linkDriveButton.active = !this.submitting && !this.driveLinkOpeningBrowser();
         this.chooseIconButton.visible = false;
         this.chooseIconButton.active = false;
         this.clearIconButton.visible = false;
@@ -486,75 +485,126 @@ public final class CreateSharedWorldScreen extends Screen {
     }
 
     private void beginDriveLink() {
-        this.driveLinkInFlight = true;
-        this.driveLinkCopiedFallback = false;
+        this.cancelDriveLinkAttempt(false);
+        this.storageLink = null;
         this.storageMessage = "";
-        CompletableFuture.runAsync(() -> {
-            try {
-                if (this.storageLink == null || !"linked".equalsIgnoreCase(this.storageLink.status())) {
-                    this.storageLink = SharedWorldClient.apiClient().createStorageLink();
-                }
-                this.openDriveLink(this.storageLink.authUrl());
-                this.pollDriveLink();
-            } catch (Exception exception) {
-                Minecraft.getInstance().execute(() -> {
-                    this.driveLinkInFlight = false;
-                    this.storageMessage = AbstractSharedWorldMetadataScreen.friendlyMessage(exception);
-                    this.storageMessageColor = 0xFFFF5555;
-                    this.refreshStorageState();
-                });
-            }
-        }, SharedWorldClient.ioExecutor());
+        DriveLinkAttempt attempt = this.driveLinkController.beginAttempt();
+        this.refreshStorageState();
+        CompletableFuture.runAsync(() -> this.runDriveLinkAttempt(attempt), SharedWorldClient.ioExecutor());
     }
 
-    private void pollDriveLink() throws IOException, InterruptedException {
-        for (int attempt = 0; attempt < 60; attempt++) {
-            StorageLinkSessionDto updated = SharedWorldClient.apiClient().getStorageLink(this.storageLink.id());
-            this.storageLink = updated;
-            if ("linked".equalsIgnoreCase(updated.status()) || "failed".equalsIgnoreCase(updated.status()) || "expired".equalsIgnoreCase(updated.status())) {
-                Minecraft.getInstance().execute(() -> {
-                    this.driveLinkInFlight = false;
-                    this.refreshStorageState();
-                });
-                return;
-            }
-            Thread.sleep(1_000L);
-        }
-        Minecraft.getInstance().execute(() -> {
-            this.driveLinkInFlight = false;
-            this.storageMessage = SharedWorldText.string("screen.sharedworld.storage_waiting_authorization");
-            this.storageMessageColor = 0xFFFFD37A;
-            this.refreshStorageState();
-        });
-    }
-
-    private void openDriveLink(String authUrl) throws IOException {
-        this.minecraft.keyboardHandler.setClipboard(authUrl);
-        if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
-            Desktop.getDesktop().browse(URI.create(authUrl));
-            Minecraft.getInstance().execute(() -> {
-                this.storageMessage = "";
+    private void runDriveLinkAttempt(DriveLinkAttempt attempt) {
+        try {
+            StorageLinkSessionDto session = SharedWorldClient.apiClient().createStorageLink();
+            attempt.setSession(session);
+            this.scheduleCurrentAttemptUiUpdate(attempt, () -> {
+                this.storageLink = session;
                 this.refreshStorageState();
             });
+            this.openDriveLink(attempt);
+            attempt.setPhase(DriveLinkUiPhase.WAITING_FOR_AUTH);
+            this.scheduleCurrentAttemptUiUpdate(attempt, this::refreshStorageState);
+            this.pollDriveLink(attempt);
+        } catch (Exception exception) {
+            attempt.setPhase(DriveLinkUiPhase.ERROR);
+            this.scheduleCurrentAttemptUiUpdate(attempt, () -> {
+                this.driveLinkController.clearIfCurrent(attempt);
+                this.storageMessage = AbstractSharedWorldMetadataScreen.friendlyMessage(exception);
+                this.storageMessageColor = 0xFFFF5555;
+                this.updateButtons();
+            });
+        }
+    }
+
+    private void pollDriveLink(DriveLinkAttempt attempt) throws IOException, InterruptedException {
+        new DriveLinkPoller(SharedWorldClient.apiClient()::getStorageLink, Thread::sleep).poll(
+                attempt,
+                updated -> this.scheduleCurrentAttemptUiUpdate(attempt, () -> {
+                    this.storageLink = updated;
+                    attempt.setPhase(DriveLinkUiPhase.forTerminalStatus(updated.status()));
+                    this.driveLinkController.clearIfCurrent(attempt);
+                    this.refreshStorageState();
+                })
+        );
+    }
+
+    private void openDriveLink(DriveLinkAttempt attempt) throws IOException {
+        if (attempt.authUrl() == null) {
+            throw new IOException("SharedWorld did not receive a Google Drive auth URL.");
+        }
+        this.minecraft.keyboardHandler.setClipboard(attempt.authUrl());
+        if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
+            Desktop.getDesktop().browse(URI.create(attempt.authUrl()));
+            attempt.setCopiedFallback(false);
             return;
         }
+        attempt.setCopiedFallback(true);
+    }
+
+    private void cancelDriveLinkAttempt(boolean cancelBackend) {
+        DriveLinkAttempt attempt = this.driveLinkController.cancelCurrent();
+        if (attempt == null) {
+            return;
+        }
+        if (cancelBackend && attempt.sessionId() != null && attempt.phase().isPending()) {
+            CompletableFuture.runAsync(() -> {
+                try {
+                    SharedWorldClient.apiClient().cancelStorageLink(attempt.sessionId());
+                } catch (Exception ignored) {
+                }
+            }, SharedWorldClient.ioExecutor());
+        }
+    }
+
+    private String driveLinkButtonTranslationKey() {
+        if (this.storageLinked()) {
+            return "screen.sharedworld.storage_relink";
+        }
+        if (this.driveLinkWaitingForAuthorization()) {
+            return "screen.sharedworld.storage_get_new_link";
+        }
+        return "screen.sharedworld.storage_link_google_drive";
+    }
+
+    private boolean driveLinkOpeningBrowser() {
+        DriveLinkAttempt attempt = this.driveLinkController.currentAttempt();
+        return attempt != null && attempt.phase() == DriveLinkUiPhase.OPENING_BROWSER;
+    }
+
+    private boolean driveLinkWaitingForAuthorization() {
+        DriveLinkAttempt attempt = this.driveLinkController.currentAttempt();
+        return attempt != null && attempt.phase() == DriveLinkUiPhase.WAITING_FOR_AUTH;
+    }
+
+    private void scheduleCurrentAttemptUiUpdate(DriveLinkAttempt attempt, Runnable update) {
         Minecraft.getInstance().execute(() -> {
-            this.driveLinkCopiedFallback = true;
-            this.storageMessage = SharedWorldText.string("screen.sharedworld.storage_link_copied");
-            this.storageMessageColor = 0xFFFFD37A;
-            this.refreshStorageState();
+            if (!this.driveLinkController.isCurrent(attempt)) {
+                return;
+            }
+            update.run();
         });
     }
 
     private void refreshStorageState() {
-        if (this.storageLinked()) {
+        DriveLinkAttempt attempt = this.driveLinkController.currentAttempt();
+        this.storageMessage = "";
+        this.storageMessageColor = 0xFFB8C5D6;
+        if (attempt != null && attempt.phase() == DriveLinkUiPhase.OPENING_BROWSER) {
+            this.storageMessage = SharedWorldText.string("screen.sharedworld.storage_waiting_for_browser");
+            this.storageMessageColor = 0xFFFFD37A;
+        } else if (attempt != null && attempt.phase() == DriveLinkUiPhase.WAITING_FOR_AUTH) {
+            this.storageMessage = SharedWorldText.string(attempt.copiedFallback()
+                    ? "screen.sharedworld.storage_link_copied"
+                    : "screen.sharedworld.storage_waiting_authorization");
+            this.storageMessageColor = 0xFFFFD37A;
+        } else if (this.storageLinked()) {
             this.storageMessage = "";
-        } else if (this.storageLink != null && this.storageLink.errorMessage() != null && !this.storageLink.errorMessage().isBlank()) {
+        } else if (this.storageLink != null
+                && !"cancelled".equalsIgnoreCase(this.storageLink.status())
+                && this.storageLink.errorMessage() != null
+                && !this.storageLink.errorMessage().isBlank()) {
             this.storageMessage = this.storageLink.errorMessage();
             this.storageMessageColor = 0xFFFF5555;
-        } else if (this.driveLinkCopiedFallback) {
-            this.storageMessage = SharedWorldText.string("screen.sharedworld.storage_link_copied");
-            this.storageMessageColor = 0xFFFFD37A;
         }
         this.updateButtons();
     }
@@ -643,7 +693,7 @@ public final class CreateSharedWorldScreen extends Screen {
         if (this.storageLinked()) {
             return 0xFF55FF55;
         }
-        if (this.driveLinkInFlight) {
+        if (this.driveLinkOpeningBrowser() || this.driveLinkWaitingForAuthorization()) {
             return 0xFFFFFFFF;
         }
         if (this.storageLink != null && ("failed".equalsIgnoreCase(this.storageLink.status()) || "expired".equalsIgnoreCase(this.storageLink.status()))) {
@@ -735,6 +785,154 @@ public final class CreateSharedWorldScreen extends Screen {
     }
 
     private record RestoreState(int tabIndex, String message, int messageColor) {
+    }
+
+    enum DriveLinkUiPhase {
+        IDLE,
+        OPENING_BROWSER,
+        WAITING_FOR_AUTH,
+        LINKED,
+        ERROR;
+
+        boolean isPending() {
+            return this == OPENING_BROWSER || this == WAITING_FOR_AUTH;
+        }
+
+        static DriveLinkUiPhase forTerminalStatus(String status) {
+            if ("linked".equalsIgnoreCase(status)) {
+                return LINKED;
+            }
+            if ("cancelled".equalsIgnoreCase(status)) {
+                return IDLE;
+            }
+            return ERROR;
+        }
+    }
+
+    static final class DriveLinkAttempt {
+        private final AtomicBoolean cancelled = new AtomicBoolean(false);
+        private volatile DriveLinkUiPhase phase;
+        private volatile String sessionId;
+        private volatile String authUrl;
+        private volatile boolean copiedFallback;
+
+        DriveLinkAttempt(DriveLinkUiPhase phase) {
+            this.phase = phase;
+        }
+
+        boolean cancel() {
+            return this.cancelled.compareAndSet(false, true);
+        }
+
+        boolean isCancelled() {
+            return this.cancelled.get();
+        }
+
+        DriveLinkUiPhase phase() {
+            return this.phase;
+        }
+
+        void setPhase(DriveLinkUiPhase phase) {
+            this.phase = phase;
+        }
+
+        void setSession(StorageLinkSessionDto session) {
+            this.sessionId = session.id();
+            this.authUrl = session.authUrl();
+        }
+
+        String sessionId() {
+            return this.sessionId;
+        }
+
+        String authUrl() {
+            return this.authUrl;
+        }
+
+        boolean copiedFallback() {
+            return this.copiedFallback;
+        }
+
+        void setCopiedFallback(boolean copiedFallback) {
+            this.copiedFallback = copiedFallback;
+        }
+    }
+
+    static final class DriveLinkAttemptController {
+        private final AtomicReference<DriveLinkAttempt> currentAttempt = new AtomicReference<>();
+
+        DriveLinkAttempt beginAttempt() {
+            DriveLinkAttempt attempt = new DriveLinkAttempt(DriveLinkUiPhase.OPENING_BROWSER);
+            DriveLinkAttempt previous = this.currentAttempt.getAndSet(attempt);
+            if (previous != null) {
+                previous.cancel();
+            }
+            return attempt;
+        }
+
+        DriveLinkAttempt currentAttempt() {
+            return this.currentAttempt.get();
+        }
+
+        boolean isCurrent(DriveLinkAttempt attempt) {
+            return this.currentAttempt.get() == attempt && !attempt.isCancelled();
+        }
+
+        void clearIfCurrent(DriveLinkAttempt attempt) {
+            this.currentAttempt.compareAndSet(attempt, null);
+        }
+
+        DriveLinkAttempt cancelCurrent() {
+            DriveLinkAttempt attempt = this.currentAttempt.getAndSet(null);
+            if (attempt != null) {
+                attempt.cancel();
+            }
+            return attempt;
+        }
+    }
+
+    static final class DriveLinkPoller {
+        private final StorageLinkFetcher fetcher;
+        private final PollDelay delay;
+
+        DriveLinkPoller(StorageLinkFetcher fetcher, PollDelay delay) {
+            this.fetcher = fetcher;
+            this.delay = delay;
+        }
+
+        void poll(DriveLinkAttempt attempt, Consumer<StorageLinkSessionDto> onTerminal) throws IOException, InterruptedException {
+            if (attempt.sessionId() == null) {
+                throw new IOException("SharedWorld did not receive a Google Drive session id.");
+            }
+            while (!attempt.isCancelled()) {
+                StorageLinkSessionDto updated = this.fetcher.get(attempt.sessionId());
+                if (attempt.isCancelled()) {
+                    return;
+                }
+                if (isTerminalStatus(updated.status())) {
+                    onTerminal.accept(updated);
+                    return;
+                }
+                this.delay.sleep(1_000L);
+            }
+        }
+
+        static boolean isTerminalStatus(String status) {
+            return "linked".equalsIgnoreCase(status)
+                    || "failed".equalsIgnoreCase(status)
+                    || "expired".equalsIgnoreCase(status)
+                    || "cancelled".equalsIgnoreCase(status);
+        }
+
+        @FunctionalInterface
+        interface StorageLinkFetcher {
+            StorageLinkSessionDto get(String sessionId) throws IOException, InterruptedException;
+        }
+
+        @FunctionalInterface
+        interface PollDelay {
+            void sleep(long millis) throws InterruptedException;
+        }
     }
 
     private final class WorldTab implements Tab {

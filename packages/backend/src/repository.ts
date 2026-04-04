@@ -132,6 +132,8 @@ export interface WorldRepository {
 export interface StorageRepository {
   createStorageLinkSession(session: StorageLinkSessionRecord): Promise<void>;
   getStorageLinkSession(sessionId: string): Promise<StorageLinkSessionRecord | null>;
+  cancelStorageLinkSession(sessionId: string, completedAt: string): Promise<void>;
+  cancelPendingStorageLinkSessions(playerUuid: string, provider: StorageProviderType, exceptSessionId: string, completedAt: string): Promise<void>;
   updateStorageLinkSession(
     sessionId: string,
     update: Partial<Pick<StorageLinkSessionRecord, "status" | "linkedAccountEmail" | "accountDisplayName" | "errorMessage" | "storageAccountId" | "completedAt">>

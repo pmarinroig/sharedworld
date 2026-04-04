@@ -166,6 +166,11 @@ public final class SharedWorldApiClient {
         return request("GET", "/storage/link-sessions/" + sessionId, null, StorageLinkSessionDto.class, true);
     }
 
+    public StorageLinkSessionDto cancelStorageLink(String sessionId) throws IOException, InterruptedException {
+        ensureSession();
+        return request("POST", "/storage/link-sessions/" + sessionId + "/cancel", Map.of(), StorageLinkSessionDto.class, true);
+    }
+
     public void deleteWorld(String worldId) throws IOException, InterruptedException {
         ensureSession();
         request("DELETE", "/worlds/" + worldId, null, null, true);
