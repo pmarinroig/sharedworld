@@ -1,15 +1,13 @@
-package link.sharedworld.mixin;
+package link.sharedworld;
 
-import link.sharedworld.SharedWorldDevSessionBridge;
-import link.sharedworld.SharedWorldE4mcCompatibility;
 import net.minecraft.server.level.ServerPlayer;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
-final class E4mcSingleplayerOwnerCompatHooks {
-    private E4mcSingleplayerOwnerCompatHooks() {
+public final class SharedWorldE4mcOwnerCompatHooks {
+    private SharedWorldE4mcOwnerCompatHooks() {
     }
 
-    static void applySharedWorldOwnerCheck(ServerPlayer player, CallbackInfoReturnable<Boolean> cir) {
+    public static void applySharedWorldOwnerCheck(ServerPlayer player, CallbackInfoReturnable<Boolean> cir) {
         if (!SharedWorldDevSessionBridge.isHostingSharedWorld()) {
             return;
         }

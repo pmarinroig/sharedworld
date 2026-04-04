@@ -1,5 +1,6 @@
 package link.sharedworld.mixin;
 
+import link.sharedworld.SharedWorldE4mcOwnerCompatHooks;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import org.spongepowered.asm.mixin.Mixin;
@@ -22,6 +23,6 @@ abstract class E4mcSingleplayerOwnerCompatNamedMixin {
             ServerPlayer player,
             CallbackInfoReturnable<Boolean> cir
     ) {
-        E4mcSingleplayerOwnerCompatHooks.applySharedWorldOwnerCheck(player, cir);
+        SharedWorldE4mcOwnerCompatHooks.applySharedWorldOwnerCheck(player, cir);
     }
 }
