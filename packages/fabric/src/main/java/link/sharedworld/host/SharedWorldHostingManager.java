@@ -1,6 +1,5 @@
 package link.sharedworld.host;
 
-import com.mojang.authlib.GameProfile;
 import link.sharedworld.SharedWorldClient;
 import link.sharedworld.SharedWorldDevSessionBridge;
 import link.sharedworld.SharedWorldGuestCacheWarmer;
@@ -28,6 +27,8 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.time.Instant;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
@@ -46,6 +47,8 @@ public final class SharedWorldHostingManager {
     private final HostStartupProgressRelayController startupProgressRelay;
     private final ManagedWorldStore worldStore;
     private final SyncAccess syncAccess;
+    private final HostRecoveryPersistence hostRecoveryStore;
+    private final PendingReleaseRecoveryChecker pendingReleaseRecoveryChecker;
     private final WorldSnapshotCaptureCoordinator snapshotCaptureCoordinator;
     private final WorldOpenController worldOpenController;
     private final HostWorldBootstrap worldBootstrap;
@@ -73,6 +76,8 @@ public final class SharedWorldHostingManager {
     private volatile boolean startupProgressRelayActive;
     private volatile long runtimeEpoch;
     private volatile String hostToken;
+    private volatile StartupMode startupMode = StartupMode.NORMAL;
+    private volatile boolean startupRecoveringLocalCrash;
 
     public SharedWorldHostingManager(SharedWorldApiClient apiClient) {
         this(
@@ -80,7 +85,12 @@ public final class SharedWorldHostingManager {
                 new ManagedWorldStore(),
                 null,
                 null,
-                defaultStartupProgressRelay(apiClient)
+                defaultStartupProgressRelay(apiClient),
+                new SharedWorldHostRecoveryStore(),
+                worldId -> {
+                    SharedWorldReleaseCoordinator releaseCoordinator = releaseCoordinatorOrNull();
+                    return releaseCoordinator != null && releaseCoordinator.hasPendingReleaseRecovery(worldId);
+                }
         );
     }
 
@@ -91,9 +101,34 @@ public final class SharedWorldHostingManager {
             WorldOpenController worldOpenController,
             HostStartupProgressRelayController startupProgressRelay
     ) {
+        this(
+                apiClient,
+                worldStore,
+                syncAccess,
+                worldOpenController,
+                startupProgressRelay,
+                new SharedWorldHostRecoveryStore(),
+                worldId -> {
+                    SharedWorldReleaseCoordinator releaseCoordinator = releaseCoordinatorOrNull();
+                    return releaseCoordinator != null && releaseCoordinator.hasPendingReleaseRecovery(worldId);
+                }
+        );
+    }
+
+    SharedWorldHostingManager(
+            SharedWorldApiClient apiClient,
+            ManagedWorldStore worldStore,
+            SyncAccess syncAccess,
+            WorldOpenController worldOpenController,
+            HostStartupProgressRelayController startupProgressRelay,
+            HostRecoveryPersistence hostRecoveryStore,
+            PendingReleaseRecoveryChecker pendingReleaseRecoveryChecker
+    ) {
         this.apiClient = Objects.requireNonNull(apiClient, "apiClient");
         this.startupProgressRelay = Objects.requireNonNull(startupProgressRelay, "startupProgressRelay");
         this.worldStore = Objects.requireNonNull(worldStore, "worldStore");
+        this.hostRecoveryStore = Objects.requireNonNull(hostRecoveryStore, "hostRecoveryStore");
+        this.pendingReleaseRecoveryChecker = Objects.requireNonNull(pendingReleaseRecoveryChecker, "pendingReleaseRecoveryChecker");
         this.syncAccess = syncAccess != null
                 ? syncAccess
                 : new WorldSyncAdapter(new WorldSyncCoordinator(apiClient, this.worldStore));
@@ -120,15 +155,18 @@ public final class SharedWorldHostingManager {
         }
     }
 
-    private static void refreshLocalHostPermissionLevel() {
-        Minecraft minecraft = Minecraft.getInstance();
-        IntegratedServer server = minecraft.getSingleplayerServer();
-        if (server == null) {
+    private static void refreshHostedPermissionLevels() {
+        Minecraft minecraft;
+        try {
+            minecraft = Minecraft.getInstance();
+        } catch (ExceptionInInitializerError | NoClassDefFoundError ignored) {
             return;
         }
-
-        GameProfile profile = server.getSingleplayerProfile();
-        if (profile == null) {
+        if (minecraft == null) {
+            return;
+        }
+        IntegratedServer server = minecraft.getSingleplayerServer();
+        if (server == null) {
             return;
         }
 
@@ -137,12 +175,9 @@ public final class SharedWorldHostingManager {
             return;
         }
 
-        var serverPlayer = playerList.getPlayer(profile.id());
-        if (serverPlayer == null) {
-            return;
+        for (var serverPlayer : playerList.getPlayers()) {
+            playerList.sendPlayerPermissionLevel(serverPlayer);
         }
-
-        playerList.sendPlayerPermissionLevel(serverPlayer);
     }
 
     private static void withGuestCacheWarmer(Consumer<SharedWorldGuestCacheWarmer> action) {
@@ -187,6 +222,10 @@ public final class SharedWorldHostingManager {
      * Backend host assignment for the current runtime epoch/token.
      */
     public void beginHosting(Screen launchingScreen, WorldSummaryDto world, SnapshotManifestDto latestManifest, HostAssignmentDto assignment) {
+        beginHosting(launchingScreen, world, latestManifest, assignment, StartupMode.NORMAL);
+    }
+
+    public void beginHosting(Screen launchingScreen, WorldSummaryDto world, SnapshotManifestDto latestManifest, HostAssignmentDto assignment, StartupMode startupMode) {
         if (this.startupStarted.get() && this.world != null && this.world.id().equals(world.id())) {
             return;
         }
@@ -202,6 +241,8 @@ public final class SharedWorldHostingManager {
         this.runtimeEpoch = assignment.runtimeEpoch();
         this.hostToken = assignment.hostToken();
         this.hostPlayerUuid = this.apiClient.canonicalAssignedPlayerUuidWithHyphens(assignment.playerUuid());
+        this.startupMode = startupMode == null ? StartupMode.NORMAL : startupMode;
+        this.startupRecoveringLocalCrash = false;
         this.hostSessionGeneration += 1L;
         this.publishedJoinTarget = null;
         this.coordinatedReleaseActive = false;
@@ -462,6 +503,7 @@ public final class SharedWorldHostingManager {
     }
 
     public void clearHostedSessionAfterCoordinatedRelease() {
+        this.hostRecoveryStore.clear();
         resetState();
     }
 
@@ -483,6 +525,10 @@ public final class SharedWorldHostingManager {
      */
     public void clearHostedSessionAfterTerminalExit() {
         resetState();
+    }
+
+    public boolean hasRecoverableLocalCrashState(String worldId, String hostPlayerUuid, long previousRuntimeEpoch) {
+        return evaluateRecoveryEligibility(worldId, hostPlayerUuid, previousRuntimeEpoch).outcome() == RecoveryEligibilityOutcome.RECOVER_LOCAL;
     }
 
     public String activeWorldName() {
@@ -536,10 +582,15 @@ public final class SharedWorldHostingManager {
 
     private void prepareAndOpen(long startupAttemptId) {
         try {
+            HostRecoveryRecord recoveryRecord = startupRecoveryRecord();
+            this.startupRecoveringLocalCrash = recoveryRecord != null;
             this.worldBootstrap.prepareAndOpen(
                     startupAttemptId,
                     this.world,
                     this::requireHostPlayerUuid,
+                    this.runtimeEpoch,
+                    this.hostToken,
+                    recoveryRecord != null,
                     this::isActiveStartupAttempt,
                     progress -> applyStartupSyncProgress(startupAttemptId, progress),
                     () -> setPhase(Phase.OPENING_WORLD, SharedWorldText.string("screen.sharedworld.hosting_opening_world"))
@@ -632,9 +683,10 @@ public final class SharedWorldHostingManager {
                 && joinTarget != null
                 && joinTarget.equals(this.publishedJoinTarget)) {
             this.lastAutosaveAt = this.lastHeartbeatAt;
+            saveHostRecoveryMarker();
             withPlaySessionTracker(playSessionTracker -> playSessionTracker.beginHostSession(this.world.id(), this.world.name()));
-            SharedWorldDevSessionBridge.setHostingSharedWorld(true);
-            refreshLocalHostPermissionLevel();
+            SharedWorldDevSessionBridge.setHostingSharedWorld(true, this.world.ownerUuid());
+            refreshHostedPermissionLevels();
             setPhase(Phase.RUNNING, SharedWorldText.string("screen.sharedworld.hosting_live_at", joinTarget));
         }
     }
@@ -807,6 +859,59 @@ public final class SharedWorldHostingManager {
         return this.hostPlayerUuid;
     }
 
+    private HostRecoveryRecord startupRecoveryRecord() {
+        if (this.startupMode != StartupMode.ACKNOWLEDGED_UNCLEAN_SHUTDOWN || this.world == null) {
+            return null;
+        }
+        RecoveryEligibility eligibility = evaluateRecoveryEligibility(this.world.id(), requireHostPlayerUuid(), this.runtimeEpoch - 1L);
+        if (eligibility.outcome() != RecoveryEligibilityOutcome.RECOVER_LOCAL) {
+            return null;
+        }
+        return eligibility.record();
+    }
+
+    private RecoveryEligibility evaluateRecoveryEligibility(String worldId, String hostPlayerUuid, long previousRuntimeEpoch) {
+        if (worldId == null || worldId.isBlank() || hostPlayerUuid == null || hostPlayerUuid.isBlank()) {
+            return new RecoveryEligibility(RecoveryEligibilityOutcome.FALLBACK_NO_MARKER, null);
+        }
+        if (this.pendingReleaseRecoveryChecker.hasPendingReleaseRecovery(worldId)) {
+            return new RecoveryEligibility(RecoveryEligibilityOutcome.FALLBACK_PENDING_RELEASE, null);
+        }
+        HostRecoveryRecord record = this.hostRecoveryStore.load();
+        if (record == null) {
+            return new RecoveryEligibility(RecoveryEligibilityOutcome.FALLBACK_NO_MARKER, null);
+        }
+        if (!worldId.equals(record.worldId())) {
+            return new RecoveryEligibility(RecoveryEligibilityOutcome.FALLBACK_NO_MARKER, null);
+        }
+        if (!hostPlayerUuid.equalsIgnoreCase(record.hostUuid())) {
+            return new RecoveryEligibility(RecoveryEligibilityOutcome.FALLBACK_NO_MARKER, null);
+        }
+        if (!Files.exists(this.worldStore.workingCopy(worldId))) {
+            return new RecoveryEligibility(RecoveryEligibilityOutcome.FALLBACK_NO_WORKING_COPY, record);
+        }
+        if (record.runtimeEpoch() != previousRuntimeEpoch) {
+            return new RecoveryEligibility(RecoveryEligibilityOutcome.FALLBACK_STALE_EPOCH, record);
+        }
+        return new RecoveryEligibility(RecoveryEligibilityOutcome.RECOVER_LOCAL, record);
+    }
+
+    private void saveHostRecoveryMarker() {
+        if (this.world == null || this.hostPlayerUuid == null || this.hostPlayerUuid.isBlank()) {
+            return;
+        }
+        try {
+            this.hostRecoveryStore.save(new HostRecoveryRecord(
+                    this.world.id(),
+                    this.world.name(),
+                    this.hostPlayerUuid,
+                    this.runtimeEpoch,
+                    Instant.ofEpochMilli(this.lastHeartbeatAt == 0L ? System.currentTimeMillis() : this.lastHeartbeatAt).toString()
+            ));
+        } catch (Exception ignored) {
+        }
+    }
+
     private void setPhase(Phase phase, String statusMessage) {
         this.phase = phase;
         this.statusMessage = statusMessage;
@@ -917,9 +1022,11 @@ public final class SharedWorldHostingManager {
         this.startupProgressRelay.reset();
         this.runtimeEpoch = 0L;
         this.hostToken = null;
+        this.startupMode = StartupMode.NORMAL;
+        this.startupRecoveringLocalCrash = false;
         E4mcDomainTracker.clear();
         SharedWorldDevSessionBridge.clear();
-        refreshLocalHostPermissionLevel();
+        refreshHostedPermissionLevels();
     }
 
     private void applyStartupSyncProgress(long startupAttemptId, WorldSyncProgress progress) {
@@ -927,6 +1034,31 @@ public final class SharedWorldHostingManager {
             return;
         }
         this.progressState = switch (progress.stage()) {
+            case WorldSyncCoordinator.STAGE_UPLOADING_CHANGED_FILES -> this.startupRecoveringLocalCrash
+                    ? HostProgressStateFactory.startupDeterminate(
+                    "recovering_local_world",
+                    Component.translatable("screen.sharedworld.progress.recovering_local_world"),
+                    progress.fraction(),
+                    this.progressState,
+                    progress.bytesDone(),
+                    progress.bytesTotal()
+            )
+                    : HostProgressStateFactory.startupIndeterminate(
+                    "preparing_world",
+                    Component.translatable("screen.sharedworld.progress.preparing_world"),
+                    this.progressState
+            );
+            case WorldSyncCoordinator.STAGE_FINALIZING_SNAPSHOT -> this.startupRecoveringLocalCrash
+                    ? HostProgressStateFactory.startupIndeterminate(
+                    "recovering_local_world",
+                    Component.translatable("screen.sharedworld.progress.recovering_local_world"),
+                    this.progressState
+            )
+                    : HostProgressStateFactory.startupIndeterminate(
+                    "preparing_world",
+                    Component.translatable("screen.sharedworld.progress.preparing_world"),
+                    this.progressState
+            );
             case WorldSyncCoordinator.STAGE_DOWNLOADING_CHANGED_FILES -> HostProgressStateFactory.startupDeterminate(
                     "syncing_world",
                     Component.translatable("screen.sharedworld.progress.syncing_world"),
@@ -1045,6 +1177,11 @@ public final class SharedWorldHostingManager {
         ERROR
     }
 
+    public enum StartupMode {
+        NORMAL,
+        ACKNOWLEDGED_UNCLEAN_SHUTDOWN
+    }
+
     public record ActiveHostSession(
             String worldId,
             String worldName,
@@ -1064,6 +1201,29 @@ public final class SharedWorldHostingManager {
     ) {
     }
 
+    public record HostRecoveryRecord(
+            String worldId,
+            String worldName,
+            String hostUuid,
+            long runtimeEpoch,
+            String updatedAt
+    ) {
+    }
+
+    private record RecoveryEligibility(
+            RecoveryEligibilityOutcome outcome,
+            HostRecoveryRecord record
+    ) {
+    }
+
+    private enum RecoveryEligibilityOutcome {
+        RECOVER_LOCAL,
+        FALLBACK_NO_MARKER,
+        FALLBACK_NO_WORKING_COPY,
+        FALLBACK_PENDING_RELEASE,
+        FALLBACK_STALE_EPOCH
+    }
+
     interface SyncAccess {
         Path ensureSynchronizedWorkingCopy(String worldId, String hostPlayerUuid, WorldSyncProgressListener progressListener) throws IOException, InterruptedException;
 
@@ -1075,6 +1235,18 @@ public final class SharedWorldHostingManager {
                 String hostToken,
                 WorldSyncProgressListener progressListener
         ) throws IOException, InterruptedException;
+    }
+
+    public interface HostRecoveryPersistence {
+        HostRecoveryRecord load();
+
+        void save(HostRecoveryRecord record) throws Exception;
+
+        void clear();
+    }
+
+    interface PendingReleaseRecoveryChecker {
+        boolean hasPendingReleaseRecovery(String worldId);
     }
 
     interface WorldOpenController {

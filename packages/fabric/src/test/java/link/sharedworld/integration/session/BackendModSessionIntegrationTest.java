@@ -155,7 +155,7 @@ final class BackendModSessionIntegrationTest {
                     clock,
                     clientShell,
                     new SharedWorldCoordinatorHarness.FakePlayerIdentity(SharedWorldIntegrationBackend.GUEST.playerUuid()),
-                    (parent, result) -> {
+                    (parent, result, startupMode) -> {
                     },
                     new SharedWorldSessionCoordinator.SessionUi() {
                         @Override

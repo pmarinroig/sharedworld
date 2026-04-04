@@ -480,6 +480,21 @@ public final class SharedWorldReleaseCoordinator {
         return discardLocalReleaseState();
     }
 
+    public boolean hasPendingReleaseRecovery(String worldId) {
+        if (worldId == null || worldId.isBlank()) {
+            return false;
+        }
+        ensurePersistedReleaseRecoveryStarted();
+        if (this.terminalState != null) {
+            return false;
+        }
+        ReleaseState current = this.state;
+        if (current != null && equalsIgnoreCase(current.record.worldId, worldId)) {
+            return true;
+        }
+        return this.releaseStore.loadFor(worldId, this.playerIdentity.currentPlayerUuid()) != null;
+    }
+
     public boolean abandonPendingReleaseIfMatches(String worldId) throws Exception {
         if (worldId == null || worldId.isBlank()) {
             return false;

@@ -10,6 +10,7 @@ import link.sharedworld.progress.SharedWorldProgressState;
 import link.sharedworld.screen.HandoffWaitingScreen;
 import link.sharedworld.screen.HostAcquiredScreen;
 import link.sharedworld.screen.SharedWorldErrorScreen;
+import link.sharedworld.host.SharedWorldHostingManager;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
@@ -61,7 +62,7 @@ public final class SharedWorldSessionCoordinator {
                 SharedWorldCoordinatorSupport.systemClock(),
                 SharedWorldCoordinatorSupport.liveClientShell(),
                 SharedWorldCoordinatorSupport.currentPlayerIdentity(),
-                (parent, result) -> SharedWorldClient.hostingManager().beginHosting(parent, result.world(), result.latestManifest(), result.assignment()),
+                (parent, result, startupMode) -> SharedWorldClient.hostingManager().beginHosting(parent, result.world(), result.latestManifest(), result.assignment(), startupMode),
                 new SessionUi() {
                     @Override
                     public Screen joinError(Screen parent, Throwable error) {
@@ -136,11 +137,11 @@ public final class SharedWorldSessionCoordinator {
      * The backend enter-session response.
      */
     public void beginJoin(Screen parent, WorldSummaryDto world) {
-        beginJoinAttempt(parent, world.id(), displayName(world), world.ownerUuid(), null, false, false, false, null);
+        beginJoinAttempt(parent, world.id(), displayName(world), world.ownerUuid(), null, false, false, false, null, SharedWorldHostingManager.StartupMode.NORMAL);
     }
 
     public void acknowledgeUncleanShutdown(Screen parent, String worldId, String worldName) {
-        beginJoinAttempt(parent, worldId, worldName, null, null, false, false, true, null);
+        beginJoinAttempt(parent, worldId, worldName, null, null, false, false, true, null, SharedWorldHostingManager.StartupMode.ACKNOWLEDGED_UNCLEAN_SHUTDOWN);
     }
 
     /**
@@ -159,11 +160,12 @@ public final class SharedWorldSessionCoordinator {
      * Authority source:
      * The backend enter-session response.
      */
-    private void beginJoinAttempt(Screen parent, String worldId, String worldName, String ownerUuid, String previousJoinTarget, boolean hostChangeFlow, boolean returnToSharedWorldMenu, boolean acknowledgeUncleanShutdown, RecoveryFingerprint resumedRecoveryFingerprint) {
+    private void beginJoinAttempt(Screen parent, String worldId, String worldName, String ownerUuid, String previousJoinTarget, boolean hostChangeFlow, boolean returnToSharedWorldMenu, boolean acknowledgeUncleanShutdown, RecoveryFingerprint resumedRecoveryFingerprint, SharedWorldHostingManager.StartupMode startupMode) {
         PendingJoinAttempt attempt = new PendingJoinAttempt(
                 ++this.joinAttemptCounter,
                 worldId,
-                resumedRecoveryFingerprint
+                resumedRecoveryFingerprint,
+                startupMode == null ? SharedWorldHostingManager.StartupMode.NORMAL : startupMode
         );
         this.pendingJoinAttempt = attempt;
         this.asyncBridge.supply(
@@ -191,7 +193,7 @@ public final class SharedWorldSessionCoordinator {
                         this.clientShell.setScreen(this.sessionUi.joinError(parent, cause));
                         return;
                     }
-                    this.handleEnterSession(parent, ownerUuid, worldName, previousJoinTarget, result, hostChangeFlow, returnToSharedWorldMenu, attempt.recoveryFingerprint());
+                    this.handleEnterSession(parent, ownerUuid, worldName, previousJoinTarget, result, hostChangeFlow, returnToSharedWorldMenu, attempt.recoveryFingerprint(), attempt.startupMode());
                 }
         );
     }
@@ -465,7 +467,8 @@ public final class SharedWorldSessionCoordinator {
                     true,
                     true,
                     false,
-                    fingerprint
+                    fingerprint,
+                    SharedWorldHostingManager.StartupMode.NORMAL
             );
             return;
         }
@@ -508,7 +511,7 @@ public final class SharedWorldSessionCoordinator {
      * Authority source:
      * The backend enter-session response.
      */
-    private void handleEnterSession(Screen parent, String ownerUuid, String worldName, String previousJoinTarget, EnterSessionResponseDto result, boolean hostChangeFlow, boolean returnToSharedWorldMenu, RecoveryFingerprint resumedRecoveryFingerprint) {
+    private void handleEnterSession(Screen parent, String ownerUuid, String worldName, String previousJoinTarget, EnterSessionResponseDto result, boolean hostChangeFlow, boolean returnToSharedWorldMenu, RecoveryFingerprint resumedRecoveryFingerprint, SharedWorldHostingManager.StartupMode startupMode) {
         if ("connect".equals(result.action())) {
             String target = result.runtime() != null ? result.runtime().joinTarget() : null;
             if (target != null && !target.isBlank()) {
@@ -518,7 +521,7 @@ public final class SharedWorldSessionCoordinator {
         }
         if ("host".equals(result.action()) && result.assignment() != null) {
             clearPersistedRecoveryIfMatches(resumedRecoveryFingerprint);
-            this.hostStartupOwner.beginHosting(parent, result);
+            this.hostStartupOwner.beginHosting(parent, result, startupMode);
             this.clientShell.setScreen(this.sessionUi.hostAcquired(parent, result));
             return;
         }
@@ -655,7 +658,8 @@ public final class SharedWorldSessionCoordinator {
                 state.hostChangeFlow,
                 state.returnToSharedWorldMenu,
                 false,
-                null
+                null,
+                SharedWorldHostingManager.StartupMode.NORMAL
         );
     }
 
@@ -831,7 +835,7 @@ public final class SharedWorldSessionCoordinator {
     private record ConnectedRuntimeContext(String worldId, String worldName, long runtimeEpoch, String previousJoinTarget) {
     }
 
-    private record PendingJoinAttempt(long attemptId, String worldId, RecoveryFingerprint recoveryFingerprint) {
+    private record PendingJoinAttempt(long attemptId, String worldId, RecoveryFingerprint recoveryFingerprint, SharedWorldHostingManager.StartupMode startupMode) {
     }
 
     private record RecoveryFingerprint(
@@ -876,6 +880,6 @@ public final class SharedWorldSessionCoordinator {
 
     @FunctionalInterface
     public interface HostStartupOwner {
-        void beginHosting(Screen parent, EnterSessionResponseDto result);
+        void beginHosting(Screen parent, EnterSessionResponseDto result, SharedWorldHostingManager.StartupMode startupMode);
     }
 }

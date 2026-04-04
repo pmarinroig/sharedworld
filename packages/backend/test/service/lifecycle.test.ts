@@ -246,6 +246,7 @@ describe("SharedWorldService lifecycle", () => {
       hostUuid: "player-owner",
       hostPlayerName: "Owner",
       phase: "host-live",
+      runtimeEpoch: entered.assignment!.runtimeEpoch,
       recordedAt: "2099-01-03T00:01:41.000Z"
     });
     expect(await repository.getRuntimeRecord(world.id, new Date("2099-01-03T00:01:41.000Z"))).toBeNull();
@@ -304,6 +305,7 @@ describe("SharedWorldService lifecycle", () => {
       hostUuid: "player-owner",
       hostPlayerName: "Owner",
       phase: "host-finalizing",
+      runtimeEpoch: entered.assignment!.runtimeEpoch,
       recordedAt: "2099-01-03T00:01:51.000Z"
     });
   });
@@ -344,7 +346,8 @@ describe("SharedWorldService lifecycle", () => {
     expect(warned.runtime.uncleanShutdownWarning).toMatchObject({
       hostUuid: "player-owner",
       hostPlayerName: "Owner",
-      phase: "host-finalizing"
+      phase: "host-finalizing",
+      runtimeEpoch: entered.assignment!.runtimeEpoch
     });
     expect(typeof warned.runtime.uncleanShutdownWarning?.recordedAt).toBe("string");
   });

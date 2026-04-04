@@ -1,5 +1,6 @@
 package link.sharedworld;
 
+import link.sharedworld.host.SharedWorldHostPermissionPolicy;
 import net.fabricmc.loader.api.FabricLoader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -93,6 +94,14 @@ public final class SharedWorldE4mcCompatibility {
 
     public static void logDomainCaptureHookFired(String joinTarget) {
         LOGGER.info("SharedWorld e4mc diagnostics [domain-capture]: joinTarget={}", joinTarget);
+    }
+
+    public static boolean shouldTreatPlayerAsSharedWorldOwnerForE4mc(String playerUuid) {
+        return SharedWorldHostPermissionPolicy.hasSharedWorldOwnerPermissions(
+                SharedWorldDevSessionBridge.isHostingSharedWorld(),
+                playerUuid,
+                SharedWorldDevSessionBridge.hostingSharedWorldOwnerUuid()
+        );
     }
 
     private static int compareTriplet(int[] current, int major, int minor, int patch) {

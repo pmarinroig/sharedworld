@@ -15,22 +15,41 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.util.FormattedCharSequence;
 
 import java.util.List;
+import java.util.function.BooleanSupplier;
 
 public final class UncleanShutdownWarningScreen extends Screen {
     private final Screen parent;
     private final String worldId;
     private final String worldName;
     private final WorldRuntimeStatusDto runtimeStatus;
+    private final BooleanSupplier ownUncleanShutdown;
+    private final BooleanSupplier localCrashRecoveryAvailable;
     private Button launchAnywayButton;
     private boolean launchConfirmationRequested;
     private boolean launchRequested;
 
     public UncleanShutdownWarningScreen(Screen parent, String worldId, String worldName, WorldRuntimeStatusDto runtimeStatus) {
+        this(parent, worldId, worldName, runtimeStatus, () -> {
+            UncleanShutdownWarningDto warning = runtimeStatus == null ? null : runtimeStatus.uncleanShutdownWarning();
+            return warning != null
+                    && warning.hostUuid() != null
+                    && !warning.hostUuid().isBlank()
+                    && SharedWorldClient.hostingManager().hasRecoverableLocalCrashState(worldId, warning.hostUuid(), warning.runtimeEpoch());
+        }, () -> ownUncleanShutdown(runtimeStatus));
+    }
+
+    UncleanShutdownWarningScreen(Screen parent, String worldId, String worldName, WorldRuntimeStatusDto runtimeStatus, BooleanSupplier localCrashRecoveryAvailable) {
+        this(parent, worldId, worldName, runtimeStatus, localCrashRecoveryAvailable, () -> ownUncleanShutdown(runtimeStatus));
+    }
+
+    UncleanShutdownWarningScreen(Screen parent, String worldId, String worldName, WorldRuntimeStatusDto runtimeStatus, BooleanSupplier localCrashRecoveryAvailable, BooleanSupplier ownUncleanShutdown) {
         super(Component.translatable("screen.sharedworld.unclean_shutdown_title"));
         this.parent = parent;
         this.worldId = worldId;
         this.worldName = worldName;
         this.runtimeStatus = runtimeStatus;
+        this.ownUncleanShutdown = ownUncleanShutdown == null ? () -> false : ownUncleanShutdown;
+        this.localCrashRecoveryAvailable = localCrashRecoveryAvailable == null ? () -> false : localCrashRecoveryAvailable;
     }
 
     @Override
@@ -93,7 +112,7 @@ public final class UncleanShutdownWarningScreen extends Screen {
         SharedWorldClient.sessionCoordinator().acknowledgeUncleanShutdown(this.parent, this.worldId, SharedWorldText.displayWorldName(this.worldName));
     }
 
-    private Component launchAnywayLabel() {
+    Component launchAnywayLabel() {
         if (this.isOwnUncleanShutdown()) {
             return Component.translatable("screen.sharedworld.unclean_shutdown_launch");
         }
@@ -102,10 +121,10 @@ public final class UncleanShutdownWarningScreen extends Screen {
                 : "screen.sharedworld.unclean_shutdown_launch_anyway");
     }
 
-    private Component noticeMessage() {
+    Component noticeMessage() {
         if (this.isOwnUncleanShutdown()) {
             return Component.translatable(
-                    "screen.sharedworld.unclean_shutdown_notice_self",
+                    ownShutdownNoticeKey(this.hasLocalCrashRecoveryAvailable()),
                     SharedWorldText.displayWorldName(this.worldName)
             );
         }
@@ -117,7 +136,11 @@ public final class UncleanShutdownWarningScreen extends Screen {
     }
 
     private boolean isOwnUncleanShutdown() {
-        UncleanShutdownWarningDto warning = this.runtimeStatus == null ? null : this.runtimeStatus.uncleanShutdownWarning();
+        return this.ownUncleanShutdown.getAsBoolean();
+    }
+
+    private static boolean ownUncleanShutdown(WorldRuntimeStatusDto runtimeStatus) {
+        UncleanShutdownWarningDto warning = runtimeStatus == null ? null : runtimeStatus.uncleanShutdownWarning();
         return warning != null
                 && warning.hostUuid() != null
                 && !warning.hostUuid().isBlank()
@@ -125,6 +148,16 @@ public final class UncleanShutdownWarningScreen extends Screen {
                         warning.hostUuid(),
                         SharedWorldApiClient.currentWorldPlayerUuidWithHyphens()
                 );
+    }
+
+    private boolean hasLocalCrashRecoveryAvailable() {
+        return this.isOwnUncleanShutdown() && this.localCrashRecoveryAvailable.getAsBoolean();
+    }
+
+    static String ownShutdownNoticeKey(boolean hasLocalCrashRecoveryAvailable) {
+        return hasLocalCrashRecoveryAvailable
+                ? "screen.sharedworld.unclean_shutdown_notice_self_recover_local"
+                : "screen.sharedworld.unclean_shutdown_notice_self_latest_snapshot";
     }
 
     private void cancelLaunch() {

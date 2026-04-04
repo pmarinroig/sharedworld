@@ -31,6 +31,7 @@ describe("router lifecycle contracts", () => {
               hostUuid: "player-host",
               hostPlayerName: "Host",
               phase: "host-finalizing",
+              runtimeEpoch: 6,
               recordedAt: "2099-01-01T00:00:00.000Z"
             }
           }
@@ -74,7 +75,8 @@ describe("router lifecycle contracts", () => {
         uncleanShutdownWarning: {
           hostUuid: "player-host",
           hostPlayerName: "Host",
-          phase: "host-finalizing"
+          phase: "host-finalizing",
+          runtimeEpoch: 6
         }
       }
     });
