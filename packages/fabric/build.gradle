@@ -27,6 +27,7 @@ base {
 def localModsDir = file("local/mods")
 def patchedLocalModsDir = file("$buildDir/patched-local-mods")
 def extractedLocalJijDir = file("$buildDir/local-jij")
+def fakeRunLocalBackendUrl = "http://127.0.0.1:8787"
 def fakeRunDevAuthSecretProvider = providers.gradleProperty("sharedworldDevAuthSecret")
         .orElse(providers.environmentVariable("SHAREDWORLD_DEV_AUTH_SECRET"))
 def fakeRunDevAuthSecret = fakeRunDevAuthSecretProvider.orNull
@@ -177,7 +178,7 @@ loom {
             runDir = "run-host"
             def hostName = "HostA"
             def hostUuid = "11111111-1111-1111-1111-111111111111"
-            vmArgs "-Dsharedworld.backendUrl=http://127.0.0.1:8787"
+            vmArgs "-Dsharedworld.backendUrl=${fakeRunLocalBackendUrl}"
             vmArgs "-Dsharedworld.devPlayerName=${hostName}"
             vmArgs "-Dsharedworld.devPlayerUuid=${hostUuid}"
             if (fakeRunDevAuthSecret != null) {
@@ -192,7 +193,7 @@ loom {
             runDir = "run-guest"
             def guestName = "GuestB"
             def guestUuid = "22222222-2222-2222-2222-222222222222"
-            vmArgs "-Dsharedworld.backendUrl=http://127.0.0.1:8787"
+            vmArgs "-Dsharedworld.backendUrl=${fakeRunLocalBackendUrl}"
             vmArgs "-Dsharedworld.devPlayerName=${guestName}"
             vmArgs "-Dsharedworld.devPlayerUuid=${guestUuid}"
             if (fakeRunDevAuthSecret != null) {

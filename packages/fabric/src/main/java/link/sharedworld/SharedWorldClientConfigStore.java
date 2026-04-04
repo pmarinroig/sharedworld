@@ -15,7 +15,6 @@ import java.nio.file.Path;
 
 public final class SharedWorldClientConfigStore {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-    private static final String DEFAULT_BACKEND_BASE_URL = "http://127.0.0.1:8787";
 
     private final Path file;
     private ClientConfig state;
@@ -45,7 +44,7 @@ public final class SharedWorldClientConfigStore {
 
     public synchronized String configuredBackendBaseUrl() {
         String configured = normalizeBaseUrl(this.state.backend.baseUrl);
-        return configured == null ? DEFAULT_BACKEND_BASE_URL : configured;
+        return configured == null ? SharedWorldBackendConstants.DEFAULT_BASE_URL : configured;
     }
 
     public synchronized void setConfiguredBackendBaseUrl(String baseUrl) {
@@ -54,7 +53,7 @@ public final class SharedWorldClientConfigStore {
     }
 
     public String resolvedBackendBaseUrl() {
-        String override = normalizeBaseUrl(System.getProperty("sharedworld.backendUrl"));
+        String override = normalizeBaseUrl(System.getProperty(SharedWorldBackendConstants.BACKEND_URL_SYSTEM_PROPERTY));
         if (override != null) {
             return override;
         }
