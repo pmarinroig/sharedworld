@@ -1,5 +1,6 @@
 package link.sharedworld.host;
 
+import com.mojang.authlib.GameProfile;
 import link.sharedworld.SharedWorldClient;
 import link.sharedworld.SharedWorldDevSessionBridge;
 import link.sharedworld.SharedWorldGuestCacheWarmer;
@@ -117,6 +118,31 @@ public final class SharedWorldHostingManager {
         } catch (ExceptionInInitializerError | NoClassDefFoundError ignored) {
             return Runnable::run;
         }
+    }
+
+    private static void refreshLocalHostPermissionLevel() {
+        Minecraft minecraft = Minecraft.getInstance();
+        IntegratedServer server = minecraft.getSingleplayerServer();
+        if (server == null) {
+            return;
+        }
+
+        GameProfile profile = server.getSingleplayerProfile();
+        if (profile == null) {
+            return;
+        }
+
+        var playerList = server.getPlayerList();
+        if (playerList == null) {
+            return;
+        }
+
+        var serverPlayer = playerList.getPlayer(profile.id());
+        if (serverPlayer == null) {
+            return;
+        }
+
+        playerList.sendPlayerPermissionLevel(serverPlayer);
     }
 
     private static void withGuestCacheWarmer(Consumer<SharedWorldGuestCacheWarmer> action) {
@@ -608,6 +634,7 @@ public final class SharedWorldHostingManager {
             this.lastAutosaveAt = this.lastHeartbeatAt;
             withPlaySessionTracker(playSessionTracker -> playSessionTracker.beginHostSession(this.world.id(), this.world.name()));
             SharedWorldDevSessionBridge.setHostingSharedWorld(true);
+            refreshLocalHostPermissionLevel();
             setPhase(Phase.RUNNING, SharedWorldText.string("screen.sharedworld.hosting_live_at", joinTarget));
         }
     }
@@ -892,6 +919,7 @@ public final class SharedWorldHostingManager {
         this.hostToken = null;
         E4mcDomainTracker.clear();
         SharedWorldDevSessionBridge.clear();
+        refreshLocalHostPermissionLevel();
     }
 
     private void applyStartupSyncProgress(long startupAttemptId, WorldSyncProgress progress) {

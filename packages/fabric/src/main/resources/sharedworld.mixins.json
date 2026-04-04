@@ -9,6 +9,7 @@
     "E4mcQuiclimeSessionMixin",
     "EntityStorageAccessor",
     "IntegratedServerForcedGameTypeMixin",
+    "MinecraftServerHostPermissionMixin",
     "MinecraftDisconnectMixin",
     "MultiplayerScreenMixin",
     "PersistentEntitySectionManagerAccessor",
