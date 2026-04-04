@@ -1,12 +1,10 @@
-package link.sharedworld.mixin;
+package link.sharedworld;
 
-import link.sharedworld.SharedWorldPlaySessionTracker;
-
-final class SharedWorldDisconnectFlow {
+public final class SharedWorldDisconnectFlow {
     private SharedWorldDisconnectFlow() {
     }
 
-    static DisconnectAction decide(
+    public static DisconnectAction decide(
             boolean releasePassThroughArmed,
             boolean localServer,
             boolean hasActiveHostSession,
@@ -34,7 +32,7 @@ final class SharedWorldDisconnectFlow {
         return session != null && session.role() == SharedWorldPlaySessionTracker.SessionRole.GUEST;
     }
 
-    enum DisconnectAction {
+    public enum DisconnectAction {
         IGNORE_PASS_THROUGH,
         GUEST_ONLY,
         HOST_GRACEFUL_RELEASE,

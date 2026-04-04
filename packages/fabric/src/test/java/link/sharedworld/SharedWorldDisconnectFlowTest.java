@@ -1,6 +1,5 @@
-package link.sharedworld.mixin;
+package link.sharedworld;
 
-import link.sharedworld.SharedWorldPlaySessionTracker;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;

@@ -1,6 +1,7 @@
 package link.sharedworld.mixin;
 
 import link.sharedworld.SharedWorldClient;
+import link.sharedworld.SharedWorldDisconnectFlow;
 import link.sharedworld.SharedWorldPlaySessionTracker;
 import net.minecraft.client.Minecraft;
 import org.slf4j.Logger;
