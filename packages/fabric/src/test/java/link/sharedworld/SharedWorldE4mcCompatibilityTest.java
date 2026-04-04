@@ -2,6 +2,7 @@ package link.sharedworld;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.objectweb.asm.Type;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -51,5 +52,108 @@ final class SharedWorldE4mcCompatibilityTest {
         SharedWorldDevSessionBridge.setHostingSharedWorld(true, " ");
 
         assertFalse(SharedWorldE4mcCompatibility.shouldTreatPlayerAsSharedWorldOwnerForE4mc("00000000-0000-0000-0000-000000000001"));
+    }
+
+    @Test
+    void detectsIntermediarySingleplayerOwnerCompatTarget() {
+        String intermediaryDescriptor = Type.getMethodDescriptor(
+                Type.BOOLEAN_TYPE,
+                Type.getType(FakeServer.class),
+                Type.getType(FakeIntermediaryPlayer.class)
+        );
+        String namedDescriptor = Type.getMethodDescriptor(
+                Type.BOOLEAN_TYPE,
+                Type.getType(FakeServer.class),
+                Type.getType(FakeNamedPlayer.class)
+        );
+
+        assertTrue(SharedWorldE4mcCompatibility.SingleplayerOwnerCompatTarget.INTERMEDIARY
+                == SharedWorldE4mcCompatibility.detectSingleplayerOwnerCompatTarget(
+                FakeMirrorWithIntermediaryOwnerHook.class.getName(),
+                SharedWorldE4mcCompatibilityTest.class.getClassLoader(),
+                intermediaryDescriptor,
+                namedDescriptor
+        ));
+    }
+
+    @Test
+    void detectsNamedSingleplayerOwnerCompatTarget() {
+        String intermediaryDescriptor = Type.getMethodDescriptor(
+                Type.BOOLEAN_TYPE,
+                Type.getType(FakeServer.class),
+                Type.getType(FakeIntermediaryPlayer.class)
+        );
+        String namedDescriptor = Type.getMethodDescriptor(
+                Type.BOOLEAN_TYPE,
+                Type.getType(FakeServer.class),
+                Type.getType(FakeNamedPlayer.class)
+        );
+
+        assertTrue(SharedWorldE4mcCompatibility.SingleplayerOwnerCompatTarget.NAMED
+                == SharedWorldE4mcCompatibility.detectSingleplayerOwnerCompatTarget(
+                FakeMirrorWithNamedOwnerHook.class.getName(),
+                SharedWorldE4mcCompatibilityTest.class.getClassLoader(),
+                intermediaryDescriptor,
+                namedDescriptor
+        ));
+    }
+
+    @Test
+    void reportsMissingSingleplayerOwnerCompatTargetWhenNoSupportedHookExists() {
+        String intermediaryDescriptor = Type.getMethodDescriptor(
+                Type.BOOLEAN_TYPE,
+                Type.getType(FakeServer.class),
+                Type.getType(FakeIntermediaryPlayer.class)
+        );
+        String namedDescriptor = Type.getMethodDescriptor(
+                Type.BOOLEAN_TYPE,
+                Type.getType(FakeServer.class),
+                Type.getType(FakeNamedPlayer.class)
+        );
+
+        assertTrue(SharedWorldE4mcCompatibility.SingleplayerOwnerCompatTarget.MISSING
+                == SharedWorldE4mcCompatibility.detectSingleplayerOwnerCompatTarget(
+                FakeMirrorWithoutOwnerHook.class.getName(),
+                SharedWorldE4mcCompatibilityTest.class.getClassLoader(),
+                intermediaryDescriptor,
+                namedDescriptor
+        ));
+        assertTrue(SharedWorldE4mcCompatibility.SingleplayerOwnerCompatTarget.MISSING
+                == SharedWorldE4mcCompatibility.detectSingleplayerOwnerCompatTarget(
+                "link.sharedworld.test.MissingMirror",
+                SharedWorldE4mcCompatibilityTest.class.getClassLoader(),
+                intermediaryDescriptor,
+                namedDescriptor
+        ));
+    }
+
+    private static final class FakeServer {
+    }
+
+    private static final class FakeIntermediaryPlayer {
+    }
+
+    private static final class FakeNamedPlayer {
+    }
+
+    private static final class FakeMirrorWithIntermediaryOwnerHook {
+        @SuppressWarnings("unused")
+        private static boolean isSingleplayerOwner(FakeServer server, FakeIntermediaryPlayer player) {
+            return true;
+        }
+    }
+
+    private static final class FakeMirrorWithNamedOwnerHook {
+        @SuppressWarnings("unused")
+        private static boolean isSingleplayerOwner(FakeServer server, FakeNamedPlayer player) {
+            return true;
+        }
+    }
+
+    private static final class FakeMirrorWithoutOwnerHook {
+        @SuppressWarnings("unused")
+        private static boolean isSingleplayerOwner(FakeServer server, FakeIntermediaryPlayer player, String extra) {
+            return true;
+        }
     }
 }
