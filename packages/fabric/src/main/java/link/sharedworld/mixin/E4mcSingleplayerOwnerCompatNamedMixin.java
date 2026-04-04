@@ -1,7 +1,5 @@
 package link.sharedworld.mixin;
 
-import link.sharedworld.SharedWorldDevSessionBridge;
-import link.sharedworld.SharedWorldE4mcCompatibility;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import org.spongepowered.asm.mixin.Mixin;
@@ -12,7 +10,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Pseudo
 @Mixin(targets = "link.e4mc.Mirror")
-abstract class E4mcSingleplayerOwnerCompatMixin {
+abstract class E4mcSingleplayerOwnerCompatNamedMixin {
     @Inject(
             method = "isSingleplayerOwner(Lnet/minecraft/server/MinecraftServer;Lnet/minecraft/server/level/ServerPlayer;)Z",
             at = @At("HEAD"),
@@ -24,11 +22,6 @@ abstract class E4mcSingleplayerOwnerCompatMixin {
             ServerPlayer player,
             CallbackInfoReturnable<Boolean> cir
     ) {
-        if (!SharedWorldDevSessionBridge.isHostingSharedWorld()) {
-            return;
-        }
-
-        String playerUuid = player == null || player.getUUID() == null ? null : player.getUUID().toString();
-        cir.setReturnValue(SharedWorldE4mcCompatibility.shouldTreatPlayerAsSharedWorldOwnerForE4mc(playerUuid));
+        E4mcSingleplayerOwnerCompatHooks.applySharedWorldOwnerCheck(player, cir);
     }
 }
