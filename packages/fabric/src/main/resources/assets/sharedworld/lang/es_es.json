@@ -214,6 +214,8 @@
   "screen.sharedworld.release_lost_authority_begin": "Shared World perdió la autoridad de host del backend antes de que pudiera comenzar la finalización. La sesión de host local ya no era autoritativa.",
   "screen.sharedworld.release_begin_finalization_failed": "Shared World no pudo iniciar la finalización del backend correctamente. %s",
   "screen.sharedworld.release_missing_staging_data": "Faltan los datos de preparación de finalización de Shared World.",
+  "screen.sharedworld.release_lost_authority_pre_upload": "Shared World perdió la autoridad de host del backend después de que comenzara la finalización del backend pero antes de que pudiera empezar la subida de la instantánea final. La sesión de host local ya no era autoritativa, así que los últimos cambios locales no se finalizaron.",
+  "screen.sharedworld.release_lost_authority_upload": "Shared World perdió la autoridad de host del backend antes de que pudiera terminar de subir la instantánea final. La sesión de host local ya no era autoritativa, así que los últimos cambios locales no se finalizaron.",
   "screen.sharedworld.release_upload_snapshot_failed": "Shared World no pudo subir la instantánea final correctamente. %s",
   "screen.sharedworld.release_lost_authority_complete": "Shared World perdió la autoridad de host del backend antes de que pudiera completarse la finalización del backend. La sesión de host local ya no era autoritativa.",
   "screen.sharedworld.release_complete_finalization_failed": "Shared World no pudo completar la finalización del backend correctamente. %s",

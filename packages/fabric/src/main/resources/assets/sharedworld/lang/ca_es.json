@@ -214,6 +214,8 @@
   "screen.sharedworld.release_lost_authority_begin": "Shared World ha perdut l'autoritat d'host del backend abans que pogués començar la finalització. La sessió d'host local ja no era autoritativa.",
   "screen.sharedworld.release_begin_finalization_failed": "Shared World no ha pogut iniciar correctament la finalització del backend. %s",
   "screen.sharedworld.release_missing_staging_data": "Falten les dades de preparació de finalització de Shared World.",
+  "screen.sharedworld.release_lost_authority_pre_upload": "Shared World ha perdut l'autoritat d'host del backend després que comencés la finalització del backend però abans que es pogués començar a pujar la instantània final. La sessió d'host local ja no era autoritativa, així que els darrers canvis locals no s'han finalitzat.",
+  "screen.sharedworld.release_lost_authority_upload": "Shared World ha perdut l'autoritat d'host del backend abans que es pogués acabar de pujar la instantània final. La sessió d'host local ja no era autoritativa, així que els darrers canvis locals no s'han finalitzat.",
   "screen.sharedworld.release_upload_snapshot_failed": "Shared World no ha pogut pujar la instantània final correctament. %s",
   "screen.sharedworld.release_lost_authority_complete": "Shared World ha perdut l'autoritat d'host del backend abans que la finalització del backend es pogués completar. La sessió d'host local ja no era autoritativa.",
   "screen.sharedworld.release_complete_finalization_failed": "Shared World no ha pogut completar correctament la finalització del backend. %s",

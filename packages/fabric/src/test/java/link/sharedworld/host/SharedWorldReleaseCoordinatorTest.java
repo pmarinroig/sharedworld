@@ -644,10 +644,11 @@ final class SharedWorldReleaseCoordinatorTest {
     }
 
     @Test
-    void reconcileTreatsAdvancedRuntimeAsCompletedAfterBackendFinalizationStarted() {
+    void reconcileTreatsAdvancedRuntimeAsCompletedOnlyAfterFinalUploadFinished() {
         SharedWorldReleaseStore.ReleaseRecord record = releaseRecord();
         record.runtimeEpoch = 7L;
         record.backendFinalizationStarted = true;
+        record.finalUploadCompleted = true;
         record.phase = SharedWorldReleasePhase.COMPLETING_BACKEND_FINALIZATION;
 
         SharedWorldReleasePolicy.ResumeDecision decision = SharedWorldReleasePolicy.reconcile(
@@ -658,6 +659,59 @@ final class SharedWorldReleaseCoordinatorTest {
         assertTrue(decision.backendFinalizationStarted());
         assertTrue(decision.backendFinalizationCompleted());
         assertNull(decision.recoverableError());
+    }
+
+    @Test
+    void reconcileTreatsAdvancedRuntimeBeforeUploadAsAuthorityLoss() {
+        SharedWorldReleaseStore.ReleaseRecord record = releaseRecord();
+        record.runtimeEpoch = 7L;
+        record.backendFinalizationStarted = true;
+        record.phase = SharedWorldReleasePhase.BACKEND_FINALIZING;
+
+        SharedWorldReleasePolicy.ResumeDecision decision = SharedWorldReleasePolicy.reconcile(
+                record,
+                new WorldRuntimeStatusDto("world-1", "idle", 8L, null, null, null, null, null, null, null, null, null)
+        );
+
+        assertTrue(decision.backendFinalizationStarted());
+        assertFalse(decision.backendFinalizationCompleted());
+        assertEquals(SharedWorldTerminalReasonKind.AUTHORITATIVE_LOSS, decision.errorKind());
+        assertEquals(
+                SharedWorldReleasePolicy.ReleaseAuthorityLossStage.AFTER_FINALIZATION_BEFORE_UPLOAD,
+                decision.authorityLossStage()
+        );
+        assertEquals(
+                "screen.sharedworld.release_lost_authority_pre_upload",
+                decision.recoverableError()
+        );
+        assertFalse(decision.clearBecauseObsoleteRecord());
+    }
+
+    @Test
+    void reconcileTreatsAdvancedRuntimeDuringUploadAsUploadAuthorityLoss() {
+        SharedWorldReleaseStore.ReleaseRecord record = releaseRecord();
+        record.runtimeEpoch = 7L;
+        record.backendFinalizationStarted = true;
+        record.localDisconnectObserved = true;
+        record.phase = SharedWorldReleasePhase.UPLOADING_FINAL_SNAPSHOT;
+
+        SharedWorldReleasePolicy.ResumeDecision decision = SharedWorldReleasePolicy.reconcile(
+                record,
+                new WorldRuntimeStatusDto("world-1", "idle", 8L, null, null, null, null, null, null, null, null, null)
+        );
+
+        assertTrue(decision.backendFinalizationStarted());
+        assertFalse(decision.backendFinalizationCompleted());
+        assertEquals(SharedWorldTerminalReasonKind.AUTHORITATIVE_LOSS, decision.errorKind());
+        assertEquals(
+                SharedWorldReleasePolicy.ReleaseAuthorityLossStage.DURING_UPLOAD,
+                decision.authorityLossStage()
+        );
+        assertEquals(
+                "screen.sharedworld.release_lost_authority_upload",
+                decision.recoverableError()
+        );
+        assertFalse(decision.clearBecauseObsoleteRecord());
     }
 
     @Test
@@ -703,6 +757,76 @@ final class SharedWorldReleaseCoordinatorTest {
         SharedWorldReleaseStore.ReleaseRecord copy = record.copy();
 
         assertEquals(SharedWorldReleasePhase.TERMINATED_REVOKED, copy.pendingTerminalPhase);
+    }
+
+    @Test
+    void backendMovingOnBeforeUploadBecomesAuthorityLossInsteadOfComplete() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            harness.hostControl.setActiveHostSession("world-1", "World", 7L, "token-7", "join.example");
+            harness.releaseBackend.setRuntime(SharedWorldCoordinatorHarness.runtime("world-1", "host-live", 7L, null, "join.example"));
+            harness.releaseBackend.setRuntimeAfterBegin(
+                    new WorldRuntimeStatusDto("world-1", "idle", 8L, null, null, null, null, null, null, null, null, null)
+            );
+
+            assertNotNull(harness.releaseCoordinator.beginGracefulDisconnect(null));
+            driveRelease(harness);
+
+            SharedWorldReleaseCoordinator.ReleaseView view = harness.releaseCoordinator.view();
+            assertNotNull(view);
+            assertEquals(SharedWorldReleasePhase.ERROR_RECOVERABLE, view.phase());
+            assertEquals(SharedWorldTerminalReasonKind.AUTHORITATIVE_LOSS, view.errorKind());
+            assertFalse(view.canRetry());
+            assertEquals(
+                    "screen.sharedworld.release_lost_authority_pre_upload",
+                    view.errorMessage()
+            );
+            assertEquals(0, harness.snapshotDriver.uploads().size());
+            assertEquals(1, harness.releaseBackend.beginCalls());
+            assertEquals(0, harness.releaseBackend.completeCalls());
+            assertNotNull(harness.releaseStore.load());
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
+    void resumedReleaseDetectsUploadStageAuthorityLossMessage() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            harness.hostControl.setActiveHostSession("world-1", "World", 7L, "token-7", "join.example");
+            harness.releaseBackend.setRuntime(SharedWorldCoordinatorHarness.runtime("world-1", "host-live", 7L, null, "join.example"));
+
+            beginGracefulVanillaDisconnect(harness);
+
+            harness.tickRelease();
+            harness.runNextAsync();
+            harness.flushMainThread();
+            assertEquals(SharedWorldReleasePhase.UPLOADING_FINAL_SNAPSHOT, harness.releaseCoordinator.view().phase());
+            assertNotNull(harness.releaseStore.load());
+
+            SharedWorldCoordinatorHarness restarted = harness.restart();
+            restarted.clientShell.setLocalServerState(false, false, false);
+            restarted.releaseBackend.setRuntime(new WorldRuntimeStatusDto("world-1", "idle", 8L, null, null, null, null, null, null, null, null, null));
+
+            driveRelease(restarted);
+
+            SharedWorldReleaseCoordinator.ReleaseView view = restarted.releaseCoordinator.view();
+            assertNotNull(view);
+            assertEquals(SharedWorldReleasePhase.ERROR_RECOVERABLE, view.phase());
+            assertEquals(SharedWorldTerminalReasonKind.AUTHORITATIVE_LOSS, view.errorKind());
+            assertEquals(
+                    "screen.sharedworld.release_lost_authority_upload",
+                    view.errorMessage()
+            );
+            assertEquals(0, restarted.snapshotDriver.uploads().size());
+            assertEquals(1, restarted.releaseBackend.beginCalls());
+            assertEquals(0, restarted.releaseBackend.completeCalls());
+            assertNotNull(restarted.releaseStore.load());
+            restarted.close();
+        } finally {
+            harness.close();
+        }
     }
 
     private static void driveRelease(SharedWorldCoordinatorHarness harness) {

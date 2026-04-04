@@ -614,6 +614,7 @@ public final class SharedWorldCoordinatorHarness {
     public static final class FakeReleaseBackend implements SharedWorldReleaseCoordinator.ReleaseBackend {
         private final ScriptedFailures failures = new ScriptedFailures();
         private WorldRuntimeStatusDto runtime;
+        private WorldRuntimeStatusDto runtimeAfterBegin;
         private int beginCalls;
         private int completeCalls;
         private int releaseCalls;
@@ -629,7 +630,9 @@ public final class SharedWorldCoordinatorHarness {
         public void beginFinalization(String worldId, long runtimeEpoch, String hostToken) throws Exception {
             this.beginCalls += 1;
             this.failures.throwIfNeeded("beginFinalization");
-            this.runtime = new WorldRuntimeStatusDto(worldId, "host-finalizing", runtimeEpoch, "player-host", "Host", null, null, null, null, null, null, null);
+            this.runtime = this.runtimeAfterBegin == null
+                    ? new WorldRuntimeStatusDto(worldId, "host-finalizing", runtimeEpoch, "player-host", "Host", null, null, null, null, null, null, null)
+                    : this.runtimeAfterBegin;
         }
 
         @Override
@@ -650,6 +653,10 @@ public final class SharedWorldCoordinatorHarness {
 
         public void setRuntime(WorldRuntimeStatusDto runtime) {
             this.runtime = runtime;
+        }
+
+        public void setRuntimeAfterBegin(WorldRuntimeStatusDto runtimeAfterBegin) {
+            this.runtimeAfterBegin = runtimeAfterBegin;
         }
 
         public void setRuntimeAfterComplete(WorldRuntimeStatusDto runtimeAfterComplete) {

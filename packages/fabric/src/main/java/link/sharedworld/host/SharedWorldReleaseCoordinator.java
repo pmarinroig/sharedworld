@@ -971,6 +971,18 @@ public final class SharedWorldReleaseCoordinator {
         }
         persistAndApply(outcome.updatedRecord());
         if (outcome.recoverableError() != null) {
+            if (outcome.errorKind() == SharedWorldTerminalReasonKind.AUTHORITATIVE_LOSS && runtime != null) {
+                LOGGER.warn(
+                        "SharedWorld release diagnostics [reconcile]: backend moved on during release for {} (runtimePhase={}, runtimeEpoch={}, backendFinalizationStarted={}, localDisconnectObserved={}, finalUploadCompleted={}, authorityLossStage={})",
+                        record.worldId,
+                        runtime.phase(),
+                        runtime.runtimeEpoch(),
+                        record.backendFinalizationStarted,
+                        record.localDisconnectObserved,
+                        record.finalUploadCompleted,
+                        outcome.authorityLossStage()
+                );
+            }
             this.state.errorMessage = outcome.recoverableError();
             this.state.errorKind = outcome.errorKind();
             return;

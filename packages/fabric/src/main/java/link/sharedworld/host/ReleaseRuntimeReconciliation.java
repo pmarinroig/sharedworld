@@ -30,7 +30,8 @@ final class ReleaseRuntimeReconciliation {
             return Outcome.recoverable(
                     updated,
                     decision.recoverableError(),
-                    SharedWorldTerminalReasonKind.UNEXPECTED_LOCAL_INVARIANT_BREACH
+                    decision.errorKind(),
+                    decision.authorityLossStage()
             );
         }
         if (updated.pendingTerminalPhase != null && updated.localDisconnectObserved) {
@@ -61,16 +62,18 @@ final class ReleaseRuntimeReconciliation {
             String obsoleteRecordMessage,
             String recoverableError,
             SharedWorldTerminalReasonKind errorKind,
+            SharedWorldReleasePolicy.ReleaseAuthorityLossStage authorityLossStage,
             boolean clearHostedSession
     ) {
         private static Outcome clearPersisted(String obsoleteRecordMessage) {
-            return new Outcome(null, true, obsoleteRecordMessage, null, null, false);
+            return new Outcome(null, true, obsoleteRecordMessage, null, null, null, false);
         }
 
         private static Outcome persist(SharedWorldReleaseStore.ReleaseRecord updatedRecord) {
             return new Outcome(
                     updatedRecord,
                     false,
+                    null,
                     null,
                     null,
                     null,
@@ -81,9 +84,10 @@ final class ReleaseRuntimeReconciliation {
         private static Outcome recoverable(
                 SharedWorldReleaseStore.ReleaseRecord updatedRecord,
                 String recoverableError,
-                SharedWorldTerminalReasonKind errorKind
+                SharedWorldTerminalReasonKind errorKind,
+                SharedWorldReleasePolicy.ReleaseAuthorityLossStage authorityLossStage
         ) {
-            return new Outcome(updatedRecord, false, null, recoverableError, errorKind, false);
+            return new Outcome(updatedRecord, false, null, recoverableError, errorKind, authorityLossStage, false);
         }
     }
 }

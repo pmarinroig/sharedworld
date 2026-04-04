@@ -214,6 +214,8 @@
   "screen.sharedworld.release_lost_authority_begin": "Shared World lost backend host authority before finalization could begin. The local host session was no longer authoritative.",
   "screen.sharedworld.release_begin_finalization_failed": "Shared World couldn't begin backend finalization cleanly. %s",
   "screen.sharedworld.release_missing_staging_data": "Shared World finalization staging data is missing.",
+  "screen.sharedworld.release_lost_authority_pre_upload": "Shared World lost backend host authority after backend finalization began but before the final snapshot upload could start. The local host session was no longer authoritative, so the latest local changes were not finalized.",
+  "screen.sharedworld.release_lost_authority_upload": "Shared World lost backend host authority before the final snapshot could finish uploading. The local host session was no longer authoritative, so the latest local changes were not finalized.",
   "screen.sharedworld.release_upload_snapshot_failed": "Shared World couldn't upload the final snapshot cleanly. %s",
   "screen.sharedworld.release_lost_authority_complete": "Shared World lost backend host authority before backend finalization could complete. The local host session was no longer authoritative.",
   "screen.sharedworld.release_complete_finalization_failed": "Shared World couldn't complete backend finalization cleanly. %s",
