@@ -31,9 +31,11 @@ The backend is public and can be self-hosted.
 
 The public site is published at
 [`https://pmarinroig.github.io/sharedworld/`](https://pmarinroig.github.io/sharedworld/).
+
 The privacy policy lives at
 [`https://pmarinroig.github.io/sharedworld/privacy/`](https://pmarinroig.github.io/sharedworld/privacy/)
 and explains how SharedWorld uses Google Drive app data and session data.
+
 The terms of service live at
 [`https://pmarinroig.github.io/sharedworld/terms/`](https://pmarinroig.github.io/sharedworld/terms/).
 
