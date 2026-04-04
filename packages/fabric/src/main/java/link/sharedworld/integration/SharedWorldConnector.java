@@ -1,16 +1,23 @@
 package link.sharedworld.integration;
 
 import link.sharedworld.SharedWorldClient;
+import link.sharedworld.screen.SharedWorldErrorScreen;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.ConnectScreen;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.multiplayer.ServerData;
+import net.minecraft.client.multiplayer.TransferState;
 import net.minecraft.client.multiplayer.resolver.ServerAddress;
+import net.minecraft.network.chat.Component;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
+import java.util.Objects;
+import java.util.function.Consumer;
 
 public final class SharedWorldConnector {
+    private static final Logger LOGGER = LoggerFactory.getLogger(SharedWorldConnector.class);
+
     private SharedWorldConnector() {
     }
 
@@ -20,59 +27,59 @@ public final class SharedWorldConnector {
 
     public static void connect(Screen parent, String target, String worldId, String worldName) {
         Minecraft minecraft = Minecraft.getInstance();
+        connect(parent, target, worldId, worldName, minecraft, ConnectScreen::startConnecting, (currentParent, error) -> minecraft.setScreen(new SharedWorldErrorScreen(
+                currentParent,
+                Component.translatable("screen.sharedworld.error_join_title"),
+                Component.translatable("screen.sharedworld.join_connect_failed")
+        )));
+    }
+
+    public static void connect(Screen parent, String target, String worldId, String worldName, Consumer<Throwable> failureHandler) {
+        Objects.requireNonNull(failureHandler, "failureHandler");
+        Minecraft minecraft = Minecraft.getInstance();
+        connect(parent, target, worldId, worldName, minecraft, ConnectScreen::startConnecting, (currentParent, error) -> failureHandler.accept(error));
+    }
+
+    static void connect(
+            Screen parent,
+            String target,
+            String worldId,
+            String worldName,
+            Minecraft minecraft,
+            ConnectStarter connectStarter,
+            ConnectFailureHandler connectFailureHandler
+    ) {
         ServerAddress address = ServerAddress.parseString(target);
         ServerData serverData = new ServerData(worldName, target, ServerData.Type.OTHER);
         if (worldId != null) {
             SharedWorldClient.playSessionTracker().beginGuestConnect(worldId, worldName, target);
         }
 
-        for (Method method : ConnectScreen.class.getDeclaredMethods()) {
-            if (!Modifier.isStatic(method.getModifiers()) || !method.getName().equals("startConnecting")) {
-                continue;
+        try {
+            connectStarter.start(parent, minecraft, address, serverData, false, null);
+        } catch (RuntimeException exception) {
+            LOGGER.error("Failed to open the Minecraft connect screen for SharedWorld target {}", target, exception);
+            if (worldId != null) {
+                SharedWorldClient.playSessionTracker().clear();
             }
-
-            Object[] args = buildArguments(method.getParameterTypes(), parent, minecraft, address, serverData);
-            if (args == null) {
-                continue;
-            }
-
-            try {
-                method.setAccessible(true);
-                method.invoke(null, args);
-                return;
-            } catch (ReflectiveOperationException exception) {
-                SharedWorldClient.LOGGER.warn("Failed to invoke ConnectScreen.startConnecting reflectively", exception);
-            }
+            connectFailureHandler.onFailure(parent, exception);
         }
-
-        minecraft.keyboardHandler.setClipboard(target);
-        SharedWorldClient.LOGGER.warn("Could not locate a compatible ConnectScreen.startConnecting signature. Copied {} to clipboard.", target);
     }
 
-    private static Object[] buildArguments(
-            Class<?>[] parameterTypes,
-            Screen parent,
-            Minecraft minecraft,
-            ServerAddress address,
-            ServerData serverData
-    ) {
-        Object[] args = new Object[parameterTypes.length];
-        for (int index = 0; index < parameterTypes.length; index++) {
-            Class<?> parameter = parameterTypes[index];
-            if (Screen.class.isAssignableFrom(parameter)) {
-                args[index] = parent;
-            } else if (Minecraft.class.isAssignableFrom(parameter)) {
-                args[index] = minecraft;
-            } else if (ServerAddress.class.isAssignableFrom(parameter)) {
-                args[index] = address;
-            } else if (ServerData.class.isAssignableFrom(parameter)) {
-                args[index] = serverData;
-            } else if (parameter == boolean.class || parameter == Boolean.class) {
-                args[index] = Boolean.FALSE;
-            } else {
-                args[index] = null;
-            }
-        }
-        return args;
+    @FunctionalInterface
+    interface ConnectStarter {
+        void start(
+                Screen parent,
+                Minecraft minecraft,
+                ServerAddress address,
+                ServerData serverData,
+                boolean quickPlay,
+                TransferState transferState
+        );
+    }
+
+    @FunctionalInterface
+    interface ConnectFailureHandler {
+        void onFailure(Screen parent, Throwable error);
     }
 }

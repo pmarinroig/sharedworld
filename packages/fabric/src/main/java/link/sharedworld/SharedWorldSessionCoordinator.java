@@ -432,6 +432,20 @@ public final class SharedWorldSessionCoordinator {
         this.pendingConnectedRuntime = new ConnectedRuntimeContext(worldId, worldName, runtimeEpoch, previousJoinTarget);
     }
 
+    private void clearPendingConnectedRuntime(String worldId, String joinTarget) {
+        ConnectedRuntimeContext context = this.pendingConnectedRuntime;
+        if (context == null) {
+            return;
+        }
+        if (!context.worldId.equals(worldId)) {
+            return;
+        }
+        if (!sameJoinTarget(context.previousJoinTarget, joinTarget)) {
+            return;
+        }
+        this.pendingConnectedRuntime = null;
+    }
+
     private void maybeResumePersistedRecovery() {
         SharedWorldRecoveryStore.RecoveryRecord record = this.recoveryStore.load();
         if (record == null || this.waitingState != null) {
@@ -482,8 +496,7 @@ public final class SharedWorldSessionCoordinator {
         if ("connect".equals(result.action())) {
             String target = result.runtime() != null ? result.runtime().joinTarget() : null;
             if (target != null && !target.isBlank()) {
-                rememberConnectedRuntime(result.world().id(), worldName, result.runtime().runtimeEpoch(), target);
-                this.clientShell.connect(parent, target, result.world().id(), worldName);
+                beginConnectHandoff(parent, result.world().id(), worldName, result.runtime().runtimeEpoch(), target);
                 return;
             }
         }
@@ -586,10 +599,9 @@ public final class SharedWorldSessionCoordinator {
     private void applyPollDecision(WaitingFlowState state, SharedWorldWaitingFlowLogic.PollDecision decision) {
         switch (decision.outcome()) {
             case CONNECT -> {
-                state.transitionStarted = true;
+                this.waitingState = null;
                 this.recoveryStore.clear();
-                rememberConnectedRuntime(state.worldId, state.worldName, decision.runtimeEpoch(), decision.connectTarget());
-                this.clientShell.connect(state.parent, decision.connectTarget(), state.worldId, state.worldName);
+                beginConnectHandoff(state.parent, state.worldId, state.worldName, decision.runtimeEpoch(), decision.connectTarget());
             }
             case RESTART -> restartWaitingAttempt(state);
             case STAY_WAITING -> {
@@ -653,6 +665,26 @@ public final class SharedWorldSessionCoordinator {
                 "handoff_wait",
                 previous
         );
+    }
+
+    private void beginConnectHandoff(Screen parent, String worldId, String worldName, long runtimeEpoch, String joinTarget) {
+        rememberConnectedRuntime(worldId, worldName, runtimeEpoch, joinTarget);
+        this.clientShell.connect(parent, joinTarget, worldId, worldName, error -> handleConnectHandoffFailure(parent, worldId, joinTarget, error));
+    }
+
+    private void handleConnectHandoffFailure(Screen parent, String worldId, String joinTarget, Throwable error) {
+        clearPendingConnectedRuntime(worldId, joinTarget);
+        if (parent != null) {
+            parent.clearFocus();
+        }
+        this.clientShell.setScreen(this.sessionUi.joinError(
+                parent,
+                new IllegalStateException(SharedWorldText.string("screen.sharedworld.join_connect_failed"))
+        ));
+    }
+
+    private static boolean sameJoinTarget(String left, String right) {
+        return left == null ? right == null : left.equalsIgnoreCase(right);
     }
 
     private static String displayName(WorldSummaryDto world) {

@@ -32,6 +32,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Deque;
 import java.util.List;
+import java.util.function.Consumer;
 
 public final class SharedWorldCoordinatorHarness {
     public final FakeClock clock;
@@ -350,6 +351,7 @@ public final class SharedWorldCoordinatorHarness {
         private final Deque<Runnable> renderThreadTasks = new ArrayDeque<>();
         private int disconnectCalls;
         private String pendingScreenTag;
+        private Throwable nextConnectFailure;
 
         @Override
         public boolean hasSingleplayerServer() {
@@ -412,9 +414,22 @@ public final class SharedWorldCoordinatorHarness {
         }
 
         @Override
-        public void connect(Screen parent, String joinTarget, String worldId, String worldName) {
+        public void connect(Screen parent, String joinTarget, String worldId, String worldName, Consumer<Throwable> failureHandler) {
             if (!this.renderThread) {
-                this.renderThreadTasks.addLast(() -> connect(parent, joinTarget, worldId, worldName));
+                Throwable failure = this.nextConnectFailure;
+                this.nextConnectFailure = null;
+                this.renderThreadTasks.addLast(() -> completeConnect(parent, joinTarget, failureHandler, failure));
+                return;
+            }
+            Throwable failure = this.nextConnectFailure;
+            this.nextConnectFailure = null;
+            completeConnect(parent, joinTarget, failureHandler, failure);
+        }
+
+        private void completeConnect(Screen parent, String joinTarget, Consumer<Throwable> failureHandler, Throwable failure) {
+            if (failure != null) {
+                this.actions.add("connectFailed:" + joinTarget);
+                failureHandler.accept(failure);
                 return;
             }
             this.currentScreen = null;
@@ -455,6 +470,10 @@ public final class SharedWorldCoordinatorHarness {
 
         public void markNextScreen(String pendingScreenTag) {
             this.pendingScreenTag = pendingScreenTag;
+        }
+
+        public void failNextConnect(Throwable failure) {
+            this.nextConnectFailure = failure;
         }
     }
 
