@@ -52,6 +52,7 @@
   "screen.sharedworld.error_title": "Error de Shared World",
   "screen.sharedworld.error_join_title": "No s'ha pogut entrar a Shared World",
   "screen.sharedworld.error_host_title": "No s'ha pogut iniciar Shared World",
+  "screen.sharedworld.join_connect_failed": "SharedWorld no ha pogut obrir la pantalla de connexió de Minecraft. Revisa els registres i torna-ho a provar.",
   "screen.sharedworld.error_generic": "Alguna cosa ha anat malament.",
   "screen.sharedworld.error_internet_unreachable": "Shared Worlds no ha pogut arribar a internet. Comprova la connexió i torna-ho a provar.",
   "screen.sharedworld.error_backend_unreachable": "Shared Worlds no ha pogut arribar al backend. Assegura't que estigui en execució i torna-ho a provar.",

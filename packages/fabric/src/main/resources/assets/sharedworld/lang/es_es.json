@@ -52,6 +52,7 @@
   "screen.sharedworld.error_title": "Error de Shared World",
   "screen.sharedworld.error_join_title": "No se ha podido unir a Shared World",
   "screen.sharedworld.error_host_title": "No se ha podido iniciar Shared World",
+  "screen.sharedworld.join_connect_failed": "SharedWorld no pudo abrir la pantalla de conexión de Minecraft. Revisa los registros y vuelve a intentarlo.",
   "screen.sharedworld.error_generic": "Algo ha salido mal.",
   "screen.sharedworld.error_internet_unreachable": "Shared Worlds no pudo llegar a internet. Comprueba tu conexión e inténtalo de nuevo.",
   "screen.sharedworld.error_backend_unreachable": "Shared Worlds no pudo llegar al backend. Asegúrate de que esté en ejecución e inténtalo de nuevo.",

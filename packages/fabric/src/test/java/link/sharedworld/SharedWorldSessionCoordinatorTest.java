@@ -76,6 +76,74 @@ final class SharedWorldSessionCoordinatorTest {
     }
 
     @Test
+    void immediateConnectFailureShowsJoinErrorAndClearsPendingRuntimeContext() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            var world = SharedWorldCoordinatorHarness.world("world-1", "World", "player-owner");
+            harness.sessionBackend.enqueueEnterResponse(SharedWorldCoordinatorHarness.connectResponse(world, 7L, "join.example"));
+            harness.clientShell.failNextConnect(new IllegalStateException("boom"));
+
+            harness.sessionCoordinator.beginJoin(harness.parentScreen(), world);
+            harness.runUntilIdle();
+
+            assertTrue(harness.clientShell.actions().contains("connectFailed:join.example"));
+            assertTrue(harness.clientShell.actions().contains("setScreen:join-error"));
+            assertNull(harness.sessionCoordinator.waitingView());
+            assertNull(harness.recoveryStore.load());
+
+            harness.sessionCoordinator.onUnexpectedGuestDisconnect(new SharedWorldPlaySessionTracker.RecoverySession(
+                    "world-1",
+                    "World",
+                    "join.example"
+            ));
+
+            assertEquals(0L, harness.recoveryStore.load().runtimeEpoch());
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
+    void waitingConnectFailureClearsWaitingStateBeforeDeferredRenderThreadFailureAndAllowsRetry() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            var world = SharedWorldCoordinatorHarness.world("world-1", "World", "player-owner");
+            harness.sessionBackend.enqueueEnterResponse(SharedWorldCoordinatorHarness.waitResponse(world));
+
+            harness.sessionCoordinator.beginJoin(harness.parentScreen(), world);
+            harness.runUntilIdle();
+
+            harness.clientShell.setRenderThread(false);
+            harness.clientShell.failNextConnect(new IllegalStateException("boom"));
+            harness.sessionBackend.setCurrentObserve(SharedWorldCoordinatorHarness.observeConnect("world-1", 8L, "join.example"));
+            harness.advanceTime(1_000L);
+            harness.tickSession();
+            harness.runNextAsync();
+            harness.async.flushMainThread();
+
+            assertNull(harness.sessionCoordinator.waitingView());
+            assertNull(harness.recoveryStore.load());
+
+            harness.sessionCoordinator.cancelWaiting();
+            assertNull(harness.sessionCoordinator.waitingView());
+
+            harness.clientShell.flushRenderThreadTasks();
+
+            assertTrue(harness.clientShell.actions().contains("connectFailed:join.example"));
+            assertTrue(harness.clientShell.actions().contains("setScreen:join-error"));
+
+            harness.clientShell.setRenderThread(true);
+            harness.sessionBackend.enqueueEnterResponse(SharedWorldCoordinatorHarness.connectResponse(world, 9L, "join.retry"));
+            harness.sessionCoordinator.beginJoin(harness.parentScreen(), world);
+            harness.runUntilIdle();
+
+            assertTrue(harness.clientShell.actions().contains("connect:join.retry"));
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
     void cancelWaitingClearsRecoveryAndReturnsToParent() throws Exception {
         SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
         try {
