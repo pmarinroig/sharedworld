@@ -61,7 +61,10 @@ public final class SharedWorldClient implements ClientModInitializer {
                 return;
             }
         });
-        ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> PLAY_SESSION_TRACKER.onPlayJoin(handler));
+        ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
+            PLAY_SESSION_TRACKER.onPlayJoin(handler);
+            sessionCoordinator.onGuestSessionJoined(PLAY_SESSION_TRACKER.currentSession(handler));
+        });
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
             SharedWorldPlaySessionTracker.ActiveWorldSession activeSession = PLAY_SESSION_TRACKER.currentSession(handler);
             if (client.isSameThread()) {

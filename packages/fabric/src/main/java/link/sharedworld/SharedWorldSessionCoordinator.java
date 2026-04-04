@@ -27,6 +27,8 @@ public final class SharedWorldSessionCoordinator {
     private final SessionUi sessionUi;
     private WaitingFlowState waitingState;
     private ConnectedRuntimeContext pendingConnectedRuntime;
+    private RecoveryFingerprint suppressedRecoveryFingerprint;
+    private RecoveryFingerprint pendingRecoveredConnectFingerprint;
     private boolean autoResumeChecked;
     private long joinAttemptCounter;
     private PendingJoinAttempt pendingJoinAttempt;
@@ -134,11 +136,11 @@ public final class SharedWorldSessionCoordinator {
      * The backend enter-session response.
      */
     public void beginJoin(Screen parent, WorldSummaryDto world) {
-        beginJoinAttempt(parent, world.id(), displayName(world), world.ownerUuid(), null, false, false, false);
+        beginJoinAttempt(parent, world.id(), displayName(world), world.ownerUuid(), null, false, false, false, null);
     }
 
     public void acknowledgeUncleanShutdown(Screen parent, String worldId, String worldName) {
-        beginJoinAttempt(parent, worldId, worldName, null, null, false, false, true);
+        beginJoinAttempt(parent, worldId, worldName, null, null, false, false, true, null);
     }
 
     /**
@@ -157,10 +159,11 @@ public final class SharedWorldSessionCoordinator {
      * Authority source:
      * The backend enter-session response.
      */
-    private void beginJoinAttempt(Screen parent, String worldId, String worldName, String ownerUuid, String previousJoinTarget, boolean hostChangeFlow, boolean returnToSharedWorldMenu, boolean acknowledgeUncleanShutdown) {
+    private void beginJoinAttempt(Screen parent, String worldId, String worldName, String ownerUuid, String previousJoinTarget, boolean hostChangeFlow, boolean returnToSharedWorldMenu, boolean acknowledgeUncleanShutdown, RecoveryFingerprint resumedRecoveryFingerprint) {
         PendingJoinAttempt attempt = new PendingJoinAttempt(
                 ++this.joinAttemptCounter,
-                worldId
+                worldId,
+                resumedRecoveryFingerprint
         );
         this.pendingJoinAttempt = attempt;
         this.asyncBridge.supply(
@@ -172,7 +175,13 @@ public final class SharedWorldSessionCoordinator {
                     this.pendingJoinAttempt = null;
                     if (error != null) {
                         Throwable cause = rootCause(error);
+                        if (SharedWorldApiClient.isDeletedWorldError(cause)) {
+                            clearPersistedRecoveryIfMatches(attempt.recoveryFingerprint());
+                            this.clientShell.setScreen(this.sessionUi.deleted(parent));
+                            return;
+                        }
                         if (SharedWorldApiClient.isMembershipRevokedError(cause)) {
+                            clearPersistedRecoveryIfMatches(attempt.recoveryFingerprint());
                             this.clientShell.openMembershipRevokedScreen(parent);
                             return;
                         }
@@ -182,7 +191,7 @@ public final class SharedWorldSessionCoordinator {
                         this.clientShell.setScreen(this.sessionUi.joinError(parent, cause));
                         return;
                     }
-                    this.handleEnterSession(parent, ownerUuid, worldName, previousJoinTarget, result, hostChangeFlow, returnToSharedWorldMenu);
+                    this.handleEnterSession(parent, ownerUuid, worldName, previousJoinTarget, result, hostChangeFlow, returnToSharedWorldMenu, attempt.recoveryFingerprint());
                 }
         );
     }
@@ -260,7 +269,7 @@ public final class SharedWorldSessionCoordinator {
         state.progressState = progress(state.hostChangeFlow, Component.translatable("screen.sharedworld.progress.finishing_up"), state.progressState);
         if (state.waiterSessionId == null || state.waiterSessionId.isBlank()) {
             this.waitingState = null;
-            this.recoveryStore.clear();
+            clearPersistedRecovery();
             this.clientShell.clearPlaySession();
             if (state.returnToSharedWorldMenu) {
                 this.clientShell.openMainScreen(state.parent);
@@ -283,7 +292,7 @@ public final class SharedWorldSessionCoordinator {
                 return;
             }
             this.waitingState = null;
-            this.recoveryStore.clear();
+            clearPersistedRecovery();
             this.clientShell.clearPlaySession();
             if (state.returnToSharedWorldMenu) {
                 this.clientShell.openMainScreen(state.parent);
@@ -349,13 +358,13 @@ public final class SharedWorldSessionCoordinator {
                 Throwable cause = rootCause(error);
                 if (SharedWorldApiClient.isDeletedWorldError(cause)) {
                     this.waitingState = null;
-                    this.recoveryStore.clear();
+                    clearPersistedRecovery();
                     this.clientShell.setScreen(this.sessionUi.deleted(state.parent));
                     return;
                 }
                 if (SharedWorldApiClient.isMembershipRevokedError(cause)) {
                     this.waitingState = null;
-                    this.recoveryStore.clear();
+                    clearPersistedRecovery();
                     this.clientShell.openMembershipRevokedScreen(state.parent);
                     return;
                 }
@@ -385,7 +394,7 @@ public final class SharedWorldSessionCoordinator {
             runtimeEpoch = context.runtimeEpoch;
         }
         try {
-            this.recoveryStore.save(new SharedWorldRecoveryStore.RecoveryRecord(
+            savePersistedRecovery(new SharedWorldRecoveryStore.RecoveryRecord(
                     recovery.worldId(),
                     recovery.worldName(),
                     runtimeEpoch,
@@ -399,33 +408,22 @@ public final class SharedWorldSessionCoordinator {
 
     public boolean openRecoveryScreenIfPresent(Screen fallbackParent) {
         SharedWorldRecoveryStore.RecoveryRecord record = this.recoveryStore.load();
-        if (record == null) {
+        if (record == null || isRecoverySuppressed(record)) {
             return false;
         }
-        if (record.waiterSessionId() == null || record.waiterSessionId().isBlank()) {
-            beginJoinAttempt(
-                    fallbackParent,
-                    record.worldId(),
-                    record.worldName(),
-                    null,
-                    record.previousJoinTarget(),
-                    true,
-                    true,
-                    false
-            );
-            return true;
-        }
-        startWaitingFlow(
-                fallbackParent,
-                record.worldId(),
-                record.worldName(),
-                null,
-                record.previousJoinTarget(),
-                record.waiterSessionId(),
-                true,
-                true
-        );
+        resumePersistedRecovery(record, fallbackParent);
         return true;
+    }
+
+    public void onGuestSessionJoined(SharedWorldPlaySessionTracker.ActiveWorldSession session) {
+        if (session == null || session.role() != SharedWorldPlaySessionTracker.SessionRole.GUEST) {
+            return;
+        }
+        RecoveryFingerprint fingerprint = this.pendingRecoveredConnectFingerprint;
+        if (fingerprint == null || !fingerprint.worldId().equals(session.worldId())) {
+            return;
+        }
+        clearPersistedRecoveryIfMatches(fingerprint);
     }
 
     public void rememberConnectedRuntime(String worldId, String worldName, long runtimeEpoch, String previousJoinTarget) {
@@ -451,21 +449,28 @@ public final class SharedWorldSessionCoordinator {
         if (record == null || this.waitingState != null) {
             return;
         }
-        if (record.waiterSessionId() == null || record.waiterSessionId().isBlank()) {
+        resumePersistedRecovery(record, null);
+    }
+
+    private void resumePersistedRecovery(SharedWorldRecoveryStore.RecoveryRecord record, Screen parent) {
+        RecoveryFingerprint fingerprint = fingerprint(record);
+        this.suppressedRecoveryFingerprint = fingerprint;
+        if (!resumesThroughWaiting(record)) {
             beginJoinAttempt(
-                    null,
+                    parent,
                     record.worldId(),
                     record.worldName(),
                     null,
                     record.previousJoinTarget(),
                     true,
                     true,
-                    false
+                    false,
+                    fingerprint
             );
             return;
         }
         startWaitingFlow(
-                null,
+                parent,
                 record.worldId(),
                 record.worldName(),
                 null,
@@ -474,6 +479,17 @@ public final class SharedWorldSessionCoordinator {
                 true,
                 true
         );
+    }
+
+    private boolean resumesThroughWaiting(SharedWorldRecoveryStore.RecoveryRecord record) {
+        String flowKind = normalizeRecoveryValue(record.flowKind());
+        if ("waiting".equals(flowKind)) {
+            return true;
+        }
+        if ("disconnect-recovery".equals(flowKind)) {
+            return false;
+        }
+        return record.waiterSessionId() != null && !record.waiterSessionId().isBlank();
     }
 
     /**
@@ -492,20 +508,22 @@ public final class SharedWorldSessionCoordinator {
      * Authority source:
      * The backend enter-session response.
      */
-    private void handleEnterSession(Screen parent, String ownerUuid, String worldName, String previousJoinTarget, EnterSessionResponseDto result, boolean hostChangeFlow, boolean returnToSharedWorldMenu) {
+    private void handleEnterSession(Screen parent, String ownerUuid, String worldName, String previousJoinTarget, EnterSessionResponseDto result, boolean hostChangeFlow, boolean returnToSharedWorldMenu, RecoveryFingerprint resumedRecoveryFingerprint) {
         if ("connect".equals(result.action())) {
             String target = result.runtime() != null ? result.runtime().joinTarget() : null;
             if (target != null && !target.isBlank()) {
-                beginConnectHandoff(parent, result.world().id(), worldName, result.runtime().runtimeEpoch(), target);
+                beginConnectHandoff(parent, result.world().id(), worldName, result.runtime().runtimeEpoch(), target, resumedRecoveryFingerprint);
                 return;
             }
         }
         if ("host".equals(result.action()) && result.assignment() != null) {
+            clearPersistedRecoveryIfMatches(resumedRecoveryFingerprint);
             this.hostStartupOwner.beginHosting(parent, result);
             this.clientShell.setScreen(this.sessionUi.hostAcquired(parent, result));
             return;
         }
         if ("warn-host".equals(result.action())) {
+            clearPersistedRecoveryIfMatches(resumedRecoveryFingerprint);
             this.clientShell.setScreen(this.sessionUi.uncleanShutdownWarning(parent, result.world().id(), worldName, result.runtime()));
             return;
         }
@@ -524,7 +542,7 @@ public final class SharedWorldSessionCoordinator {
         this.waitingState.progressState = progress(hostChangeFlow, Component.translatable("screen.sharedworld.progress.waiting_for_host"), null);
         if (waiterSessionId != null && !waiterSessionId.isBlank()) {
             try {
-                this.recoveryStore.save(new SharedWorldRecoveryStore.RecoveryRecord(
+                savePersistedRecovery(new SharedWorldRecoveryStore.RecoveryRecord(
                         worldId,
                         worldName,
                         0L,
@@ -572,13 +590,13 @@ public final class SharedWorldSessionCoordinator {
                 Throwable cause = rootCause(error);
                 if (SharedWorldApiClient.isDeletedWorldError(cause)) {
                     this.waitingState = null;
-                    this.recoveryStore.clear();
+                    clearPersistedRecovery();
                     this.clientShell.setScreen(this.sessionUi.deleted(state.parent));
                     return;
                 }
                 if (SharedWorldApiClient.isMembershipRevokedError(cause)) {
                     this.waitingState = null;
-                    this.recoveryStore.clear();
+                    clearPersistedRecovery();
                     this.clientShell.openMembershipRevokedScreen(state.parent);
                 }
                 return;
@@ -600,8 +618,8 @@ public final class SharedWorldSessionCoordinator {
         switch (decision.outcome()) {
             case CONNECT -> {
                 this.waitingState = null;
-                this.recoveryStore.clear();
-                beginConnectHandoff(state.parent, state.worldId, state.worldName, decision.runtimeEpoch(), decision.connectTarget());
+                clearPersistedRecovery();
+                beginConnectHandoff(state.parent, state.worldId, state.worldName, decision.runtimeEpoch(), decision.connectTarget(), null);
             }
             case RESTART -> restartWaitingAttempt(state);
             case STAY_WAITING -> {
@@ -613,7 +631,7 @@ public final class SharedWorldSessionCoordinator {
             }
             case ERROR -> {
                 this.waitingState = null;
-                this.recoveryStore.clear();
+                clearPersistedRecovery();
                 this.clientShell.setScreen(this.sessionUi.joinError(
                         state.parent,
                         new IllegalStateException(decision.errorMessage())
@@ -627,7 +645,7 @@ public final class SharedWorldSessionCoordinator {
             return;
         }
         this.waitingState = null;
-        this.recoveryStore.clear();
+        clearPersistedRecovery();
         beginJoinAttempt(
                 state.parent,
                 state.worldId,
@@ -636,17 +654,18 @@ public final class SharedWorldSessionCoordinator {
                 state.previousJoinTarget,
                 state.hostChangeFlow,
                 state.returnToSharedWorldMenu,
-                false
+                false,
+                null
         );
     }
 
     private void persistWaitingRecovery(WaitingFlowState state) {
         if (state.waiterSessionId == null || state.waiterSessionId.isBlank()) {
-            this.recoveryStore.clear();
+            clearPersistedRecovery();
             return;
         }
         try {
-            this.recoveryStore.save(new SharedWorldRecoveryStore.RecoveryRecord(
+            savePersistedRecovery(new SharedWorldRecoveryStore.RecoveryRecord(
                     state.worldId,
                     state.worldName,
                     0L,
@@ -658,6 +677,55 @@ public final class SharedWorldSessionCoordinator {
         }
     }
 
+    private void savePersistedRecovery(SharedWorldRecoveryStore.RecoveryRecord record) throws Exception {
+        this.recoveryStore.save(record);
+        this.suppressedRecoveryFingerprint = null;
+        this.pendingRecoveredConnectFingerprint = null;
+    }
+
+    private void clearPersistedRecovery() {
+        this.recoveryStore.clear();
+        this.suppressedRecoveryFingerprint = null;
+        this.pendingRecoveredConnectFingerprint = null;
+    }
+
+    private void clearPersistedRecoveryIfMatches(RecoveryFingerprint fingerprint) {
+        if (fingerprint == null) {
+            return;
+        }
+        SharedWorldRecoveryStore.RecoveryRecord current = this.recoveryStore.load();
+        if (current != null && fingerprint.equals(fingerprint(current))) {
+            clearPersistedRecovery();
+            return;
+        }
+        if (fingerprint.equals(this.suppressedRecoveryFingerprint)) {
+            this.suppressedRecoveryFingerprint = null;
+        }
+        if (fingerprint.equals(this.pendingRecoveredConnectFingerprint)) {
+            this.pendingRecoveredConnectFingerprint = null;
+        }
+    }
+
+    private boolean isRecoverySuppressed(SharedWorldRecoveryStore.RecoveryRecord record) {
+        return this.suppressedRecoveryFingerprint != null
+                && this.suppressedRecoveryFingerprint.equals(fingerprint(record));
+    }
+
+    private static RecoveryFingerprint fingerprint(SharedWorldRecoveryStore.RecoveryRecord record) {
+        return new RecoveryFingerprint(
+                record.worldId(),
+                record.worldName(),
+                record.runtimeEpoch(),
+                normalizeRecoveryValue(record.flowKind()),
+                normalizeRecoveryValue(record.previousJoinTarget()),
+                normalizeRecoveryValue(record.waiterSessionId())
+        );
+    }
+
+    private static String normalizeRecoveryValue(String value) {
+        return value == null ? "" : value;
+    }
+
     private static SharedWorldProgressState progress(boolean hostChangeFlow, Component label, SharedWorldProgressState previous) {
         return SharedWorldProgressState.indeterminate(
                 Component.translatable(hostChangeFlow ? "screen.sharedworld.host_change" : "screen.sharedworld.joining_title"),
@@ -667,13 +735,17 @@ public final class SharedWorldSessionCoordinator {
         );
     }
 
-    private void beginConnectHandoff(Screen parent, String worldId, String worldName, long runtimeEpoch, String joinTarget) {
+    private void beginConnectHandoff(Screen parent, String worldId, String worldName, long runtimeEpoch, String joinTarget, RecoveryFingerprint resumedRecoveryFingerprint) {
         rememberConnectedRuntime(worldId, worldName, runtimeEpoch, joinTarget);
-        this.clientShell.connect(parent, joinTarget, worldId, worldName, error -> handleConnectHandoffFailure(parent, worldId, joinTarget, error));
+        this.pendingRecoveredConnectFingerprint = resumedRecoveryFingerprint;
+        this.clientShell.connect(parent, joinTarget, worldId, worldName, error -> handleConnectHandoffFailure(parent, worldId, joinTarget, resumedRecoveryFingerprint, error));
     }
 
-    private void handleConnectHandoffFailure(Screen parent, String worldId, String joinTarget, Throwable error) {
+    private void handleConnectHandoffFailure(Screen parent, String worldId, String joinTarget, RecoveryFingerprint resumedRecoveryFingerprint, Throwable error) {
         clearPendingConnectedRuntime(worldId, joinTarget);
+        if (resumedRecoveryFingerprint != null && resumedRecoveryFingerprint.equals(this.pendingRecoveredConnectFingerprint)) {
+            this.pendingRecoveredConnectFingerprint = null;
+        }
         if (parent != null) {
             parent.clearFocus();
         }
@@ -759,7 +831,17 @@ public final class SharedWorldSessionCoordinator {
     private record ConnectedRuntimeContext(String worldId, String worldName, long runtimeEpoch, String previousJoinTarget) {
     }
 
-    private record PendingJoinAttempt(long attemptId, String worldId) {
+    private record PendingJoinAttempt(long attemptId, String worldId, RecoveryFingerprint recoveryFingerprint) {
+    }
+
+    private record RecoveryFingerprint(
+            String worldId,
+            String worldName,
+            long runtimeEpoch,
+            String flowKind,
+            String previousJoinTarget,
+            String waiterSessionId
+    ) {
     }
 
     public interface SessionBackend {

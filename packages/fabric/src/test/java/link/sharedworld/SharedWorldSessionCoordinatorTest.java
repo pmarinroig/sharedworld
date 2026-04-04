@@ -5,6 +5,7 @@ import link.sharedworld.support.SharedWorldCoordinatorHarness;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -98,6 +99,176 @@ final class SharedWorldSessionCoordinatorTest {
             ));
 
             assertEquals(0L, harness.recoveryStore.load().runtimeEpoch());
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
+    void disconnectRecoveryEnterSessionFailurePreservesRecordButSuppressesSameSessionAutoResume() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            harness.recoveryStore.save(new SharedWorldRecoveryStore.RecoveryRecord("world-1", "World", 7L, "disconnect-recovery", "join.old", null));
+            harness.sessionBackend.failures().add("enterSession", new IllegalStateException("temporary"));
+
+            assertTrue(harness.sessionCoordinator.openRecoveryScreenIfPresent(harness.parentScreen()));
+            harness.runUntilIdle();
+
+            assertTrue(harness.clientShell.actions().contains("setScreen:join-error"));
+            assertNotNull(harness.recoveryStore.load());
+            assertEquals("disconnect-recovery", harness.recoveryStore.load().flowKind());
+            assertFalse(harness.sessionCoordinator.openRecoveryScreenIfPresent(harness.parentScreen()));
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
+    void sameDisconnectRecoveryCanAutoResumeAgainAfterRestart() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            harness.recoveryStore.save(new SharedWorldRecoveryStore.RecoveryRecord("world-1", "World", 7L, "disconnect-recovery", "join.old", null));
+
+            SharedWorldCoordinatorHarness restarted = harness.restart();
+            restarted.sessionBackend.enqueueEnterResponse(SharedWorldCoordinatorHarness.waitResponse(
+                    SharedWorldCoordinatorHarness.world("world-1", "World", "player-owner")
+            ));
+
+            assertTrue(restarted.sessionCoordinator.openRecoveryScreenIfPresent(restarted.parentScreen()));
+            restarted.runUntilIdle();
+
+            assertTrue(restarted.clientShell.actions().contains("setScreen:waiting"));
+            assertNotNull(restarted.recoveryStore.load());
+            restarted.close();
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
+    void disconnectRecoveryConnectClearsOnlyAfterGuestJoin() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            var world = SharedWorldCoordinatorHarness.world("world-1", "World", "player-owner");
+            harness.recoveryStore.save(new SharedWorldRecoveryStore.RecoveryRecord("world-1", "World", 7L, "disconnect-recovery", "join.old", null));
+            harness.sessionBackend.enqueueEnterResponse(SharedWorldCoordinatorHarness.connectResponse(world, 8L, "join.example"));
+
+            assertTrue(harness.sessionCoordinator.openRecoveryScreenIfPresent(harness.parentScreen()));
+            harness.runUntilIdle();
+
+            assertTrue(harness.clientShell.actions().contains("connect:join.example"));
+            assertNotNull(harness.recoveryStore.load());
+
+            harness.sessionCoordinator.onGuestSessionJoined(new SharedWorldPlaySessionTracker.ActiveWorldSession(
+                    "world-1",
+                    "World",
+                    SharedWorldPlaySessionTracker.SessionRole.GUEST,
+                    "join.example"
+            ));
+
+            assertNull(harness.recoveryStore.load());
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
+    void disconnectRecoveryConnectFailureKeepsRecordAndSuppressesSameSessionAutoResume() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            var world = SharedWorldCoordinatorHarness.world("world-1", "World", "player-owner");
+            harness.recoveryStore.save(new SharedWorldRecoveryStore.RecoveryRecord("world-1", "World", 7L, "disconnect-recovery", "join.old", null));
+            harness.sessionBackend.enqueueEnterResponse(SharedWorldCoordinatorHarness.connectResponse(world, 8L, "join.example"));
+            harness.clientShell.failNextConnect(new IllegalStateException("boom"));
+
+            assertTrue(harness.sessionCoordinator.openRecoveryScreenIfPresent(harness.parentScreen()));
+            harness.runUntilIdle();
+
+            assertTrue(harness.clientShell.actions().contains("connectFailed:join.example"));
+            assertTrue(harness.clientShell.actions().contains("setScreen:join-error"));
+            assertNull(harness.sessionCoordinator.waitingView());
+            assertNotNull(harness.recoveryStore.load());
+            assertFalse(harness.sessionCoordinator.openRecoveryScreenIfPresent(harness.parentScreen()));
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
+    void resumedDisconnectRecoveryHostClearsOldRecord() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            var world = SharedWorldCoordinatorHarness.world("world-1", "World", "player-owner");
+            harness.recoveryStore.save(new SharedWorldRecoveryStore.RecoveryRecord("world-1", "World", 7L, "disconnect-recovery", "join.old", null));
+            harness.sessionBackend.enqueueEnterResponse(SharedWorldCoordinatorHarness.hostResponse(world, 8L, "token-8"));
+
+            assertTrue(harness.sessionCoordinator.openRecoveryScreenIfPresent(harness.parentScreen()));
+            harness.runUntilIdle();
+
+            assertTrue(harness.clientShell.actions().contains("setScreen:host-acquired"));
+            assertNull(harness.recoveryStore.load());
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
+    void resumedDisconnectRecoveryWarnHostClearsOldRecord() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            var world = SharedWorldCoordinatorHarness.world("world-1", "World", "player-owner");
+            harness.recoveryStore.save(new SharedWorldRecoveryStore.RecoveryRecord("world-1", "World", 7L, "disconnect-recovery", "join.old", null));
+            harness.sessionBackend.enqueueEnterResponse(new link.sharedworld.api.SharedWorldModels.EnterSessionResponseDto(
+                    "warn-host",
+                    world,
+                    null,
+                    new link.sharedworld.api.SharedWorldModels.WorldRuntimeStatusDto(
+                            "world-1",
+                            "idle",
+                            0L,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            new link.sharedworld.api.SharedWorldModels.UncleanShutdownWarningDto(
+                                    "player-previous",
+                                    "Previous",
+                                    "host-finalizing",
+                                    java.time.Instant.EPOCH.toString()
+                            )
+                    ),
+                    null,
+                    null
+            ));
+
+            assertTrue(harness.sessionCoordinator.openRecoveryScreenIfPresent(harness.parentScreen()));
+            harness.runUntilIdle();
+
+            assertTrue(harness.clientShell.actions().contains("setScreen:unclean-shutdown-warning"));
+            assertNull(harness.recoveryStore.load());
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
+    void waitingRecoveryIsRePersistedAfterConsumption() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            harness.recoveryStore.save(new SharedWorldRecoveryStore.RecoveryRecord("world-1", "World", 7L, "waiting", "join.old", "wait-existing"));
+
+            assertTrue(harness.sessionCoordinator.openRecoveryScreenIfPresent(harness.parentScreen()));
+
+            assertNotNull(harness.sessionCoordinator.waitingView());
+            assertEquals("world-1", harness.sessionCoordinator.waitingView().worldId());
+            assertTrue(harness.clientShell.actions().contains("setScreen:waiting"));
+            assertNotNull(harness.recoveryStore.load());
+            assertEquals("wait-existing", harness.recoveryStore.load().waiterSessionId());
         } finally {
             harness.close();
         }
