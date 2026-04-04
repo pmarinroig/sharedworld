@@ -3,6 +3,7 @@ package link.sharedworld.host;
 import link.sharedworld.api.SharedWorldApiClient;
 import link.sharedworld.support.SharedWorldCoordinatorHarness;
 import link.sharedworld.api.SharedWorldModels.WorldRuntimeStatusDto;
+import link.sharedworld.progress.SharedWorldProgressState;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -30,6 +31,10 @@ final class SharedWorldReleaseCoordinatorTest {
             assertEquals(1, harness.releaseBackend.beginCalls());
             assertEquals(1, harness.releaseBackend.completeCalls());
             assertEquals(1, harness.snapshotDriver.uploads().size());
+            assertFalse(harness.hostControl.relayedProgress().isEmpty());
+            assertTrue(harness.hostControl.relayedProgress().stream().anyMatch(progress -> progress.mode() == SharedWorldProgressState.ProgressMode.DETERMINATE));
+            assertTrue(harness.hostControl.relayedProgress().stream().anyMatch(progress -> progress.mode() == SharedWorldProgressState.ProgressMode.INDETERMINATE));
+            assertTrue(harness.hostControl.clearProgressCalls() > 0);
             assertFalse(harness.releaseCoordinator.shouldKeepSavingScreenVisible());
             assertNull(harness.releaseStore.load());
         } finally {
@@ -80,6 +85,7 @@ final class SharedWorldReleaseCoordinatorTest {
 
             assertEquals(SharedWorldReleasePhase.ERROR_RECOVERABLE, harness.releaseCoordinator.view().phase());
             assertNotNull(harness.releaseStore.load());
+            assertTrue(harness.hostControl.clearProgressCalls() > 0);
 
             assertTrue(harness.releaseCoordinator.retry());
             driveRelease(harness);
@@ -781,6 +787,7 @@ final class SharedWorldReleaseCoordinatorTest {
                     "screen.sharedworld.release_lost_authority_pre_upload",
                     view.errorMessage()
             );
+            assertTrue(harness.hostControl.clearProgressCalls() > 0);
             assertEquals(0, harness.snapshotDriver.uploads().size());
             assertEquals(1, harness.releaseBackend.beginCalls());
             assertEquals(0, harness.releaseBackend.completeCalls());

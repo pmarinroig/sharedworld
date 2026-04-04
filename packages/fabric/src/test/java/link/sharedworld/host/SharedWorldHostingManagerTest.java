@@ -2,8 +2,10 @@ package link.sharedworld.host;
 
 import link.sharedworld.api.SharedWorldApiClient;
 import link.sharedworld.api.SharedWorldModels;
+import link.sharedworld.progress.SharedWorldProgressState;
 import link.sharedworld.sync.ManagedWorldStore;
 import link.sharedworld.sync.WorldSyncProgressListener;
+import net.minecraft.network.chat.Component;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -13,6 +15,8 @@ import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -264,6 +268,51 @@ final class SharedWorldHostingManagerTest {
 
         assertEquals(SharedWorldHostingManager.Phase.RELEASING, manager.phase());
         assertEquals("indeterminate", relayedProgress.get().mode());
+    }
+
+    @Test
+    void coordinatedReleaseProgressIsRelayedAndCleared() throws Exception {
+        List<String> relayed = new ArrayList<>();
+        SharedWorldHostingManager manager = new SharedWorldHostingManager(
+                apiClient(),
+                new ManagedWorldStore(this.tempDir.resolve("managed-release-progress")),
+                null,
+                new RecordingWorldOpenController(),
+                new HostStartupProgressRelayController(
+                        (worldId, runtimeEpoch, hostToken, progress) -> relayed.add(progress == null ? "<clear>" : progress.label() + ":" + progress.mode() + ":" + progress.fraction()),
+                        Runnable::run,
+                        () -> 0L
+                ),
+                new InMemoryHostRecoveryStore(),
+                worldId -> false
+        );
+
+        setField(manager, "world", world("world-1", "Handoff World"));
+        setField(manager, "hostPlayerUuid", HOST_UUID);
+        setField(manager, "runtimeEpoch", 7L);
+        setField(manager, "hostToken", "token-7");
+        setField(manager, "hostSessionGeneration", 1L);
+        setField(manager, "startupAttemptId", 7L);
+        setField(manager, "phase", SharedWorldHostingManager.Phase.RELEASING);
+        setField(manager, "coordinatedReleaseActive", true);
+        setField(manager, "coordinatedReleaseBackendFinalization", true);
+        ((AtomicBoolean) getField(manager, "startupStarted")).set(true);
+
+        manager.relayCoordinatedReleaseProgress(SharedWorldProgressState.determinate(
+                Component.literal("Saving"),
+                Component.literal("Uploading world"),
+                "release_uploading",
+                0.5D,
+                null,
+                50L,
+                100L
+        ));
+        manager.clearCoordinatedReleaseProgress();
+
+        assertEquals(List.of(
+                "Uploading world:determinate:0.5",
+                "<clear>"
+        ), relayed);
     }
 
     private SharedWorldHostingManager manager(

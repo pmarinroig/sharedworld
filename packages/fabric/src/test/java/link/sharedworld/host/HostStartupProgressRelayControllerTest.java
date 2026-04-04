@@ -101,6 +101,36 @@ final class HostStartupProgressRelayControllerTest {
     }
 
     @Test
+    void identicalProgressRefreshesAfterThirtySeconds() {
+        MutableClock clock = new MutableClock();
+        ManualExecutor executor = new ManualExecutor();
+        List<String> calls = new ArrayList<>();
+        HostStartupProgressRelayController controller = new HostStartupProgressRelayController(
+                (worldId, runtimeEpoch, hostToken, progress) -> calls.add(describe(worldId, progress)),
+                executor,
+                clock::now
+        );
+
+        controller.relay(authority("world-1"), progress("Finalizing snapshot", "indeterminate", null));
+        executor.runNext();
+
+        clock.set(29_999L);
+        controller.relay(authority("world-1"), progress("Finalizing snapshot", "indeterminate", null));
+        controller.tick();
+        assertEquals(0, executor.size());
+
+        clock.set(30_000L);
+        controller.tick();
+        assertEquals(1, executor.size());
+        executor.runNext();
+
+        assertEquals(List.of(
+                "world-1:Finalizing snapshot:indeterminate:null",
+                "world-1:Finalizing snapshot:indeterminate:null"
+        ), calls);
+    }
+
+    @Test
     void leavingRelayableStateQueuesOneClearAfterOlderInflightWorkFinishes() {
         MutableClock clock = new MutableClock();
         ManualExecutor executor = new ManualExecutor();

@@ -310,6 +310,130 @@ describe("SharedWorldService lifecycle", () => {
     });
   });
 
+  test("beginFinalization resets stale startup activity so finalization does not expire immediately", async () => {
+    const repository = new MemorySharedWorldRepository();
+    const { signer } = createBlobSigner();
+    const instance = createTestService(repository, authVerifier, signer, {});
+    await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
+    await repository.upsertUser({ playerUuid: "player-guest", playerName: "Guest", createdAt: new Date().toISOString() });
+    const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
+    await repository.addMembership({
+      worldId: world.id,
+      playerUuid: "player-guest",
+      playerName: "Guest",
+      role: "member",
+      joinedAt: "2099-01-01T00:00:00.000Z",
+      deletedAt: null
+    });
+
+    const entered = await instance.enterSession(
+      { playerUuid: "player-owner", playerName: "Owner" },
+      world.id,
+      {},
+      new Date("2099-01-03T00:00:00.000Z")
+    );
+    await instance.setHostStartupProgress(
+      { playerUuid: "player-owner", playerName: "Owner" },
+      world.id,
+      {
+        runtimeEpoch: entered.assignment!.runtimeEpoch,
+        hostToken: entered.assignment!.hostToken,
+        label: "Syncing world",
+        mode: "determinate",
+        fraction: 0.42
+      },
+      new Date("2099-01-03T00:00:05.000Z")
+    );
+    await instance.heartbeatHost(
+      { playerUuid: "player-owner", playerName: "Owner" },
+      world.id,
+      { runtimeEpoch: entered.assignment!.runtimeEpoch, hostToken: entered.assignment!.hostToken, joinTarget: "join.example" },
+      new Date("2099-01-03T00:00:10.000Z")
+    );
+
+    await instance.beginFinalization(
+      { playerUuid: "player-owner", playerName: "Owner" },
+      world.id,
+      { runtimeEpoch: entered.assignment!.runtimeEpoch, hostToken: entered.assignment!.hostToken },
+      new Date("2099-01-03T00:01:39.000Z")
+    );
+
+    const runtime = await instance.runtimeStatus(
+      { playerUuid: "player-guest", playerName: "Guest" },
+      world.id,
+      new Date("2099-01-03T00:01:40.000Z")
+    );
+
+    expect(runtime.phase).toBe("host-finalizing");
+    expect(runtime.uncleanShutdownWarning).toBeNull();
+    expect(runtime.lastProgressAt).toBe("2099-01-03T00:01:39.000Z");
+    expect(runtime.startupProgress).toBeNull();
+  });
+
+  test("repeated finalization progress refresh keeps host-finalizing alive", async () => {
+    const repository = new MemorySharedWorldRepository();
+    const { signer } = createBlobSigner();
+    const instance = createTestService(repository, authVerifier, signer, {});
+    await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
+    await repository.upsertUser({ playerUuid: "player-guest", playerName: "Guest", createdAt: new Date().toISOString() });
+    const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
+    await repository.addMembership({
+      worldId: world.id,
+      playerUuid: "player-guest",
+      playerName: "Guest",
+      role: "member",
+      joinedAt: "2099-01-01T00:00:00.000Z",
+      deletedAt: null
+    });
+
+    const entered = await instance.enterSession(
+      { playerUuid: "player-owner", playerName: "Owner" },
+      world.id,
+      {},
+      new Date("2099-01-03T00:00:00.000Z")
+    );
+    await instance.beginFinalization(
+      { playerUuid: "player-owner", playerName: "Owner" },
+      world.id,
+      { runtimeEpoch: entered.assignment!.runtimeEpoch, hostToken: entered.assignment!.hostToken },
+      new Date("2099-01-03T00:00:10.000Z")
+    );
+    await instance.setHostStartupProgress(
+      { playerUuid: "player-owner", playerName: "Owner" },
+      world.id,
+      {
+        runtimeEpoch: entered.assignment!.runtimeEpoch,
+        hostToken: entered.assignment!.hostToken,
+        label: "Finalizing snapshot",
+        mode: "indeterminate",
+        fraction: null
+      },
+      new Date("2099-01-03T00:00:20.000Z")
+    );
+    await instance.setHostStartupProgress(
+      { playerUuid: "player-owner", playerName: "Owner" },
+      world.id,
+      {
+        runtimeEpoch: entered.assignment!.runtimeEpoch,
+        hostToken: entered.assignment!.hostToken,
+        label: "Finalizing snapshot",
+        mode: "indeterminate",
+        fraction: null
+      },
+      new Date("2099-01-03T00:01:35.000Z")
+    );
+
+    const runtime = await instance.runtimeStatus(
+      { playerUuid: "player-guest", playerName: "Guest" },
+      world.id,
+      new Date("2099-01-03T00:02:50.000Z")
+    );
+
+    expect(runtime.phase).toBe("host-finalizing");
+    expect(runtime.uncleanShutdownWarning).toBeNull();
+    expect(runtime.lastProgressAt).toBe("2099-01-03T00:01:35.000Z");
+  });
+
   test("world summaries stop showing finalizing after a host-finalizing timeout and preserve the launch warning", async () => {
     const repository = new MemorySharedWorldRepository();
     const { signer } = createBlobSigner();

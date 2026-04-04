@@ -9,6 +9,7 @@ import java.util.function.LongSupplier;
 
 final class HostStartupProgressRelayController {
     private static final long MIN_RELAY_INTERVAL_MS = 1_000L;
+    private static final long PROGRESS_REFRESH_INTERVAL_MS = 30_000L;
 
     private final Object flushLock = new Object();
     private final ProgressSender progressSender;
@@ -75,11 +76,12 @@ final class HostStartupProgressRelayController {
             if (this.inFlight || this.desiredState == null) {
                 return;
             }
-            if (sameCommand(this.desiredState, this.lastDispatchedState)) {
+            long now = this.clock.getAsLong();
+            if (sameCommand(this.desiredState, this.lastDispatchedState)
+                    && !shouldRefreshProgressLocked(this.desiredState, now)) {
                 return;
             }
 
-            long now = this.clock.getAsLong();
             if (!this.desiredImmediate && now - this.lastDispatchAt < MIN_RELAY_INTERVAL_MS) {
                 return;
             }
@@ -142,6 +144,13 @@ final class HostStartupProgressRelayController {
         }
         return !Objects.equals(reference.progress().label(), next.progress().label())
                 || !Objects.equals(reference.progress().mode(), next.progress().mode());
+    }
+
+    private boolean shouldRefreshProgressLocked(RelayCommand next, long now) {
+        return next.progress() != null
+                && this.lastDispatchedState != null
+                && sameCommand(next, this.lastDispatchedState)
+                && now - this.lastDispatchAt >= PROGRESS_REFRESH_INTERVAL_MS;
     }
 
     private static boolean sameCommand(RelayCommand left, RelayCommand right) {
