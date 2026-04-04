@@ -9,8 +9,12 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.client.gui.screens.multiplayer.JoinMultiplayerScreen;
 import net.minecraft.network.chat.Component;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public final class SharedWorldClientLifecycleRouter {
+    private static final Logger LOGGER = LoggerFactory.getLogger("sharedworld-release");
+
     private SharedWorldClientLifecycleRouter() {
     }
 
@@ -42,16 +46,33 @@ public final class SharedWorldClientLifecycleRouter {
         if (view == null) {
             return false;
         }
-        if (client.level != null || client.hasSingleplayerServer()) {
+        if (autoAcknowledgeCompletedReleaseAtMenu(releaseCoordinator, client.level != null, client.hasSingleplayerServer())) {
+            LOGGER.info("SharedWorld release diagnostics [router]: auto-acknowledged COMPLETE release state at menu.");
             return false;
         }
-        if (view.phase() == link.sharedworld.host.SharedWorldReleasePhase.COMPLETE) {
+        if (client.level != null || client.hasSingleplayerServer()) {
             return false;
         }
         if (client.screen instanceof SharedWorldSavingScreen || client.screen instanceof SharedWorldErrorScreen) {
             return false;
         }
         client.setScreen(screenForLifecycleView(releaseCoordinator, defaultParent()));
+        return true;
+    }
+
+    static boolean autoAcknowledgeCompletedReleaseAtMenu(
+            SharedWorldReleaseCoordinator releaseCoordinator,
+            boolean hasLevel,
+            boolean hasSingleplayerServer
+    ) {
+        SharedWorldReleaseCoordinator.ReleaseView view = releaseCoordinator.view();
+        if (view == null
+                || hasLevel
+                || hasSingleplayerServer
+                || view.phase() != link.sharedworld.host.SharedWorldReleasePhase.COMPLETE) {
+            return false;
+        }
+        releaseCoordinator.acknowledgeTerminal();
         return true;
     }
 

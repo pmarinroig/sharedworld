@@ -94,6 +94,40 @@ final class SharedWorldReleaseCoordinatorTest {
     }
 
     @Test
+    void staleCompleteStateIsClearedBeforeStartingNextGracefulDisconnect() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            harness.hostControl.setActiveHostSession("world-1", "World", 7L, "token-7", "join.example");
+            harness.releaseBackend.setRuntime(SharedWorldCoordinatorHarness.runtime("world-1", "host-live", 7L, null, "join.example"));
+
+            beginGracefulVanillaDisconnect(harness);
+            driveRelease(harness);
+
+            assertEquals(SharedWorldReleasePhase.COMPLETE, harness.releaseCoordinator.view().phase());
+            assertEquals(1, harness.releaseBackend.beginCalls());
+            assertEquals(1, harness.releaseBackend.completeCalls());
+
+            harness.hostControl.setActiveHostSession("world-1", "World", 8L, "token-8", "join-next.example");
+            harness.releaseBackend.setRuntime(SharedWorldCoordinatorHarness.runtime("world-1", "host-live", 8L, null, "join-next.example"));
+            harness.clientShell.setLocalServerState(true, true, true);
+
+            assertNotNull(harness.releaseCoordinator.beginGracefulDisconnect(null));
+            assertEquals(SharedWorldReleasePhase.BEGINNING_BACKEND_FINALIZATION, harness.releaseCoordinator.view().phase());
+
+            harness.clientShell.setLocalServerState(false, false, false);
+            assertNotNull(harness.releaseCoordinator.onClientDisconnectReturnDisplay(null));
+            driveRelease(harness);
+
+            assertEquals(SharedWorldReleasePhase.COMPLETE, harness.releaseCoordinator.view().phase());
+            assertEquals(2, harness.releaseBackend.beginCalls());
+            assertEquals(2, harness.releaseBackend.completeCalls());
+            assertEquals(2, harness.snapshotDriver.uploads().size());
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
     void hostAuthorityLossDuringReleaseBecomesRecoverableError() throws Exception {
         SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
         try {
