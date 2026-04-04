@@ -8,6 +8,7 @@
     "DisconnectedScreenMixin",
     "E4mcQuiclimeSessionMixin",
     "EntityStorageAccessor",
+    "IntegratedServerForcedGameTypeMixin",
     "MinecraftDisconnectMixin",
     "MultiplayerScreenMixin",
     "PersistentEntitySectionManagerAccessor",
