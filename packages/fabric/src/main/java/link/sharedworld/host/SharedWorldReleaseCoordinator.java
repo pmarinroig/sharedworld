@@ -15,6 +15,8 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.client.gui.screens.multiplayer.JoinMultiplayerScreen;
 import net.minecraft.network.chat.Component;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -22,6 +24,8 @@ import java.nio.file.Path;
 import java.time.Instant;
 
 public final class SharedWorldReleaseCoordinator {
+    private static final Logger LOGGER = LoggerFactory.getLogger("sharedworld-release");
+
     private final ReleaseBackend backend;
     private final HostControl hostControl;
     private final ReleasePersistence releaseStore;
@@ -217,13 +221,45 @@ public final class SharedWorldReleaseCoordinator {
      */
     public ReleaseDisplay beginGracefulDisconnect(Minecraft minecraft) {
         SharedWorldHostingManager.ActiveHostSession session = this.hostControl.activeHostSession();
+        LOGGER.info(
+                "SharedWorld release diagnostics [beginGracefulDisconnect]: hasSession={}, localServer={}, currentPhase={}",
+                session != null,
+                this.clientShell.isLocalServer(),
+                this.state == null ? (this.terminalState == null ? "none" : this.terminalState.phase) : this.state.record.phase
+        );
         if (session == null || !this.clientShell.isLocalServer()) {
             return null;
         }
+        if (this.state != null && SharedWorldReleasePolicy.isClosedTerminal(this.state.record.phase)) {
+            LOGGER.info(
+                    "SharedWorld release diagnostics [beginGracefulDisconnect]: auto-clearing stale closed terminal state {} for {}",
+                    this.state.record.phase,
+                    this.state.record.worldId
+            );
+            acknowledgeTerminal();
+        }
+        if (this.terminalState != null && !this.terminalState.blocking) {
+            LOGGER.info(
+                    "SharedWorld release diagnostics [beginGracefulDisconnect]: auto-clearing stale terminal notice {} for {}",
+                    this.terminalState.phase,
+                    this.terminalState.worldId
+            );
+            acknowledgeTerminal();
+        }
         if (this.state != null) {
+            LOGGER.info(
+                    "SharedWorld release diagnostics [beginGracefulDisconnect]: short-circuiting because active release state {} already exists for {}",
+                    this.state.record.phase,
+                    this.state.record.worldId
+            );
             return new ReleaseDisplay(this.state.record.worldId, this.state.record.worldName);
         }
         if (this.terminalState != null) {
+            LOGGER.info(
+                    "SharedWorld release diagnostics [beginGracefulDisconnect]: short-circuiting because terminal state {} already exists for {}",
+                    this.terminalState.phase,
+                    this.terminalState.worldId
+            );
             return new ReleaseDisplay(this.terminalState.worldId, this.terminalState.worldName);
         }
 
@@ -839,6 +875,13 @@ public final class SharedWorldReleaseCoordinator {
                 : updated.backendFinalizationStarted
                 ? SharedWorldReleasePhase.UPLOADING_FINAL_SNAPSHOT
                 : SharedWorldReleasePhase.BEGINNING_BACKEND_FINALIZATION;
+        if (updated.phase == SharedWorldReleasePhase.UPLOADING_FINAL_SNAPSHOT) {
+            LOGGER.info(
+                    "SharedWorld release diagnostics [transition]: moving {} to {} after local disconnect",
+                    updated.worldId,
+                    updated.phase
+            );
+        }
         persistAndApply(updated);
         if (SharedWorldReleasePolicy.isClosedTerminal(updated.phase)) {
             this.hostControl.clearHostedSessionAfterCoordinatedRelease();
@@ -977,6 +1020,13 @@ public final class SharedWorldReleaseCoordinator {
             updated.phase = updated.localDisconnectObserved
                     ? SharedWorldReleasePhase.UPLOADING_FINAL_SNAPSHOT
                     : SharedWorldReleasePhase.BACKEND_FINALIZING;
+            if (updated.phase == SharedWorldReleasePhase.UPLOADING_FINAL_SNAPSHOT) {
+                LOGGER.info(
+                        "SharedWorld release diagnostics [transition]: moving {} to {} after backend finalization start",
+                        updated.worldId,
+                        updated.phase
+                );
+            }
             persistAndApply(updated);
             applyRuntimeReconciliation(updated, runtime);
         });

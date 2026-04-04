@@ -3,6 +3,7 @@ package link.sharedworld;
 import link.sharedworld.host.SharedWorldReleaseCoordinator;
 import link.sharedworld.host.SharedWorldReleasePhase;
 import link.sharedworld.host.SharedWorldTerminalReasonKind;
+import link.sharedworld.support.SharedWorldCoordinatorHarness;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -11,6 +12,8 @@ import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class SharedWorldClientLifecycleRouterTest {
@@ -82,6 +85,39 @@ final class SharedWorldClientLifecycleRouterTest {
         );
 
         assertEquals("Custom error detail", SharedWorldClientLifecycleRouter.detailFor(view));
+    }
+
+    @Test
+    void completedReleaseIsAcknowledgedOnceBackAtMenu() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            harness.hostControl.setActiveHostSession("world-1", "World", 7L, "token-7", "join.example");
+            harness.releaseBackend.setRuntime(SharedWorldCoordinatorHarness.runtime("world-1", "host-live", 7L, null, "join.example"));
+
+            assertNotNull(harness.releaseCoordinator.beginGracefulDisconnect(null));
+            harness.clientShell.setLocalServerState(false, false, false);
+            assertNotNull(harness.releaseCoordinator.onClientDisconnectReturnDisplay(null));
+
+            for (int i = 0; i < 16; i++) {
+                harness.tickRelease();
+                harness.runUntilIdle();
+                SharedWorldReleaseCoordinator.ReleaseView current = harness.releaseCoordinator.view();
+                if (current != null && current.phase() == SharedWorldReleasePhase.COMPLETE && !harness.hasPendingWork()) {
+                    break;
+                }
+            }
+
+            assertNotNull(harness.releaseCoordinator.view());
+            assertEquals(SharedWorldReleasePhase.COMPLETE, harness.releaseCoordinator.view().phase());
+            assertTrue(SharedWorldClientLifecycleRouter.autoAcknowledgeCompletedReleaseAtMenu(
+                    harness.releaseCoordinator,
+                    false,
+                    false
+            ));
+            assertNull(harness.releaseCoordinator.view());
+        } finally {
+            harness.close();
+        }
     }
 
     @Test
