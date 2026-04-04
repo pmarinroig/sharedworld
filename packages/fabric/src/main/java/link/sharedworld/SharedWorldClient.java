@@ -43,6 +43,7 @@ public final class SharedWorldClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        SharedWorldE4mcCompatibility.logClientInitStarted();
         RuntimePlayerIdentity.resolveBackendPlayerUuidWithHyphens(Minecraft.getInstance().getUser());
         apiClient = new SharedWorldApiClient(SharedWorldClientConfigStore.shared().resolvedBackendBaseUrl());
         HostPlayerIdentity hostPlayerIdentity = apiClient::authenticatedWorldPlayerUuidWithHyphens;
@@ -78,6 +79,7 @@ public final class SharedWorldClient implements ClientModInitializer {
             PLAY_SESSION_TRACKER.clear();
             SharedWorldDevSessionBridge.clear();
         });
+        SharedWorldE4mcCompatibility.logClientInitFinished();
     }
 
     private static void onPlayDisconnect(
