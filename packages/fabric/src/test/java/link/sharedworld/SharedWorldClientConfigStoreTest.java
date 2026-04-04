@@ -41,20 +41,20 @@ final class SharedWorldClientConfigStoreTest {
         Path configFile = this.tempDir.resolve("sharedworld-client.json");
         SharedWorldClientConfigStore store = new SharedWorldClientConfigStore(configFile);
 
-        assertEquals("http://127.0.0.1:8787", store.resolvedBackendBaseUrl());
+        assertEquals(SharedWorldBackendConstants.DEFAULT_BASE_URL, store.resolvedBackendBaseUrl());
 
         store.setConfiguredBackendBaseUrl("https://configured.example.test///");
         assertEquals("https://configured.example.test", store.resolvedBackendBaseUrl());
 
-        String previous = System.getProperty("sharedworld.backendUrl");
-        System.setProperty("sharedworld.backendUrl", "https://override.example.test/");
+        String previous = System.getProperty(SharedWorldBackendConstants.BACKEND_URL_SYSTEM_PROPERTY);
+        System.setProperty(SharedWorldBackendConstants.BACKEND_URL_SYSTEM_PROPERTY, "https://override.example.test/");
         try {
             assertEquals("https://override.example.test", store.resolvedBackendBaseUrl());
         } finally {
             if (previous == null) {
-                System.clearProperty("sharedworld.backendUrl");
+                System.clearProperty(SharedWorldBackendConstants.BACKEND_URL_SYSTEM_PROPERTY);
             } else {
-                System.setProperty("sharedworld.backendUrl", previous);
+                System.setProperty(SharedWorldBackendConstants.BACKEND_URL_SYSTEM_PROPERTY, previous);
             }
         }
     }
