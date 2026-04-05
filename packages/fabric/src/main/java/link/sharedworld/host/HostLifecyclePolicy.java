@@ -20,6 +20,11 @@ final class HostLifecyclePolicy {
                 && phase != SharedWorldHostingManager.Phase.CANCELLING;
     }
 
+    static boolean shouldMaintainLiveLease(SharedWorldHostingManager.Phase phase) {
+        return phase == SharedWorldHostingManager.Phase.RUNNING
+                || phase == SharedWorldHostingManager.Phase.SAVING;
+    }
+
     static SharedWorldReleaseCoordinator.HostAuthorityLossStage authorityLossStage(SharedWorldHostingManager.Phase phase) {
         return phase == SharedWorldHostingManager.Phase.CONFIRMING_HOST
                 ? SharedWorldReleaseCoordinator.HostAuthorityLossStage.STARTUP
