@@ -9,6 +9,7 @@ import link.sharedworld.api.SharedWorldApiClient;
 import link.sharedworld.api.SharedWorldModels.HostAssignmentDto;
 import link.sharedworld.api.SharedWorldModels.StartupProgressDto;
 import link.sharedworld.api.SharedWorldModels.SnapshotManifestDto;
+import link.sharedworld.api.SharedWorldModels.WorldRuntimeStatusDto;
 import link.sharedworld.api.SharedWorldModels.WorldSummaryDto;
 import link.sharedworld.integration.E4mcDomainTracker;
 import link.sharedworld.progress.SharedWorldProgressState;
@@ -52,6 +53,8 @@ public final class SharedWorldHostingManager {
     private final WorldSnapshotCaptureCoordinator snapshotCaptureCoordinator;
     private final WorldOpenController worldOpenController;
     private final HostWorldBootstrap worldBootstrap;
+    private final Executor backgroundExecutor;
+    private final Executor mainThreadExecutor;
     private final AtomicBoolean startupStarted = new AtomicBoolean();
     private final AtomicBoolean saveInFlight = new AtomicBoolean();
     private final AtomicBoolean cancelDisconnectIssued = new AtomicBoolean();
@@ -90,7 +93,9 @@ public final class SharedWorldHostingManager {
                 worldId -> {
                     SharedWorldReleaseCoordinator releaseCoordinator = releaseCoordinatorOrNull();
                     return releaseCoordinator != null && releaseCoordinator.hasPendingReleaseRecovery(worldId);
-                }
+                },
+                defaultBackgroundExecutor(),
+                defaultMainThreadExecutor()
         );
     }
 
@@ -111,7 +116,9 @@ public final class SharedWorldHostingManager {
                 worldId -> {
                     SharedWorldReleaseCoordinator releaseCoordinator = releaseCoordinatorOrNull();
                     return releaseCoordinator != null && releaseCoordinator.hasPendingReleaseRecovery(worldId);
-                }
+                },
+                defaultBackgroundExecutor(),
+                defaultMainThreadExecutor()
         );
     }
 
@@ -124,11 +131,37 @@ public final class SharedWorldHostingManager {
             HostRecoveryPersistence hostRecoveryStore,
             PendingReleaseRecoveryChecker pendingReleaseRecoveryChecker
     ) {
+        this(
+                apiClient,
+                worldStore,
+                syncAccess,
+                worldOpenController,
+                startupProgressRelay,
+                hostRecoveryStore,
+                pendingReleaseRecoveryChecker,
+                defaultBackgroundExecutor(),
+                defaultMainThreadExecutor()
+        );
+    }
+
+    SharedWorldHostingManager(
+            SharedWorldApiClient apiClient,
+            ManagedWorldStore worldStore,
+            SyncAccess syncAccess,
+            WorldOpenController worldOpenController,
+            HostStartupProgressRelayController startupProgressRelay,
+            HostRecoveryPersistence hostRecoveryStore,
+            PendingReleaseRecoveryChecker pendingReleaseRecoveryChecker,
+            Executor backgroundExecutor,
+            Executor mainThreadExecutor
+    ) {
         this.apiClient = Objects.requireNonNull(apiClient, "apiClient");
         this.startupProgressRelay = Objects.requireNonNull(startupProgressRelay, "startupProgressRelay");
         this.worldStore = Objects.requireNonNull(worldStore, "worldStore");
         this.hostRecoveryStore = Objects.requireNonNull(hostRecoveryStore, "hostRecoveryStore");
         this.pendingReleaseRecoveryChecker = Objects.requireNonNull(pendingReleaseRecoveryChecker, "pendingReleaseRecoveryChecker");
+        this.backgroundExecutor = Objects.requireNonNull(backgroundExecutor, "backgroundExecutor");
+        this.mainThreadExecutor = Objects.requireNonNull(mainThreadExecutor, "mainThreadExecutor");
         this.syncAccess = syncAccess != null
                 ? syncAccess
                 : new WorldSyncAdapter(new WorldSyncCoordinator(apiClient, this.worldStore));
@@ -142,17 +175,31 @@ public final class SharedWorldHostingManager {
     private static HostStartupProgressRelayController defaultStartupProgressRelay(SharedWorldApiClient apiClient) {
         return new HostStartupProgressRelayController(
                 apiClient::setHostStartupProgress,
-                backgroundExecutor(),
+                defaultBackgroundExecutor(),
                 System::currentTimeMillis
         );
     }
 
-    private static Executor backgroundExecutor() {
+    private static Executor defaultBackgroundExecutor() {
         try {
             return SharedWorldClient.ioExecutor();
         } catch (ExceptionInInitializerError | NoClassDefFoundError ignored) {
             return Runnable::run;
         }
+    }
+
+    private static Executor defaultMainThreadExecutor() {
+        return runnable -> {
+            try {
+                Minecraft minecraft = Minecraft.getInstance();
+                if (minecraft != null) {
+                    minecraft.execute(runnable);
+                    return;
+                }
+            } catch (ExceptionInInitializerError | NoClassDefFoundError ignored) {
+            }
+            runnable.run();
+        };
     }
 
     private static void refreshHostedPermissionLevels() {
@@ -264,7 +311,7 @@ public final class SharedWorldHostingManager {
         E4mcDomainTracker.clear();
         setPhase(Phase.PREPARING, SharedWorldText.string("screen.sharedworld.hosting_syncing_snapshot"));
 
-        CompletableFuture.runAsync(() -> prepareAndOpen(startupAttemptId), backgroundExecutor())
+        CompletableFuture.runAsync(() -> prepareAndOpen(startupAttemptId), this.backgroundExecutor)
                 .whenComplete((unused, error) -> {
                     if (!isActiveStartupAttempt(startupAttemptId)) {
                         return;
@@ -313,6 +360,7 @@ public final class SharedWorldHostingManager {
         if (driveHostConfirmation(now)) {
             return;
         }
+        driveLiveLease(now);
         driveRunningLoop(now);
     }
 
@@ -385,18 +433,24 @@ public final class SharedWorldHostingManager {
         return true;
     }
 
-    private void driveRunningLoop(long now) {
-        if (this.phase != Phase.RUNNING) {
+    private void driveLiveLease(long now) {
+        if (!HostLifecyclePolicy.shouldMaintainLiveLease(this.phase)) {
             return;
         }
         if (this.coordinatedReleaseActive) {
             if (!this.coordinatedReleaseBackendFinalization && shouldAttemptHeartbeat(now)) {
-                heartbeat(this.publishedJoinTarget);
+                heartbeat(this.publishedJoinTarget, this.phase == Phase.SAVING);
             }
             return;
         }
         if (shouldAttemptHeartbeat(now)) {
-            heartbeat(this.publishedJoinTarget);
+            heartbeat(this.publishedJoinTarget, this.phase == Phase.SAVING);
+        }
+    }
+
+    private void driveRunningLoop(long now) {
+        if (this.phase != Phase.RUNNING || this.coordinatedReleaseActive) {
+            return;
         }
         if (now - this.lastAutosaveAt >= AUTOSAVE_INTERVAL_MS && this.saveInFlight.compareAndSet(false, true)) {
             uploadSnapshot(false);
@@ -638,6 +692,10 @@ public final class SharedWorldHostingManager {
      * Backend runtime authority for the current host epoch/token.
      */
     private void heartbeat(String joinTarget) {
+        heartbeat(joinTarget, false);
+    }
+
+    private void heartbeat(String joinTarget, boolean duringSnapshotUpload) {
         HostAttemptContext context = currentAttemptContext();
         if (context == null || !this.heartbeatInFlight.compareAndSet(false, true)) {
             return;
@@ -646,12 +704,17 @@ public final class SharedWorldHostingManager {
         String heartbeatJoinTarget = joinTarget == null || joinTarget.isBlank() ? null : joinTarget;
         CompletableFuture.runAsync(() -> {
             try {
-                this.apiClient.heartbeatHost(context.worldId(), context.runtimeEpoch(), context.hostToken(), heartbeatJoinTarget);
-                Minecraft.getInstance().execute(() -> onHeartbeatSucceeded(context, heartbeatJoinTarget));
+                WorldRuntimeStatusDto runtime = this.apiClient.heartbeatHost(
+                        context.worldId(),
+                        context.runtimeEpoch(),
+                        context.hostToken(),
+                        heartbeatJoinTarget
+                );
+                dispatchToMainThread(() -> onHeartbeatSucceeded(context, runtime, heartbeatJoinTarget, duringSnapshotUpload));
             } catch (Exception exception) {
-                Minecraft.getInstance().execute(() -> handleHeartbeatFailure(context, exception, false));
+                dispatchToMainThread(() -> handleHeartbeatFailure(context, exception, duringSnapshotUpload));
             }
-        }, backgroundExecutor()).whenComplete((unused, error) -> Minecraft.getInstance().execute(() -> clearHeartbeatInFlight(context)));
+        }, this.backgroundExecutor).whenComplete((unused, error) -> dispatchToMainThread(() -> clearHeartbeatInFlight(context)));
     }
 
     private void confirmHostSession(String joinTarget) {
@@ -673,21 +736,61 @@ public final class SharedWorldHostingManager {
                 && HostLifecyclePolicy.shouldSendStartupHeartbeat(this.phase);
     }
 
-    private void onHeartbeatSucceeded(HostAttemptContext context, String joinTarget) {
+    private void onHeartbeatSucceeded(
+            HostAttemptContext context,
+            WorldRuntimeStatusDto runtime,
+            String joinTarget,
+            boolean duringSnapshotUpload
+    ) {
         if (!isCurrentAttempt(context)) {
             return;
         }
+        if (runtime == null || runtime.runtimeEpoch() != context.runtimeEpoch()) {
+            LOGGER.warn(
+                    "SharedWorld heartbeat returned unexpected runtime for {} (phase={}, epoch={}, releaseActive={})",
+                    context.worldId(),
+                    runtime == null ? null : runtime.phase(),
+                    runtime == null ? null : runtime.runtimeEpoch(),
+                    this.coordinatedReleaseActive
+            );
+            handleHostAuthorityLost(heartbeatAuthorityLossMessage(duringSnapshotUpload));
+            return;
+        }
+        if ("host-finalizing".equals(runtime.phase())) {
+            if (this.coordinatedReleaseActive) {
+                return;
+            }
+            LOGGER.warn(
+                    "SharedWorld heartbeat unexpectedly reported host-finalizing without coordinated release for {}",
+                    context.worldId()
+            );
+            handleHostAuthorityLost(heartbeatAuthorityLossMessage(duringSnapshotUpload));
+            return;
+        }
+        if (!"host-starting".equals(runtime.phase()) && !"host-live".equals(runtime.phase())) {
+            LOGGER.warn(
+                    "SharedWorld heartbeat returned unexpected phase {} for {}",
+                    runtime.phase(),
+                    context.worldId()
+            );
+            handleHostAuthorityLost(heartbeatAuthorityLossMessage(duringSnapshotUpload));
+            return;
+        }
         this.lastHeartbeatAt = System.currentTimeMillis();
+        String confirmedJoinTarget = runtime.joinTarget() == null || runtime.joinTarget().isBlank()
+                ? joinTarget
+                : runtime.joinTarget();
         if (this.phase == Phase.CONFIRMING_HOST
                 && this.world != null
-                && joinTarget != null
-                && joinTarget.equals(this.publishedJoinTarget)) {
+                && "host-live".equals(runtime.phase())
+                && confirmedJoinTarget != null
+                && confirmedJoinTarget.equals(this.publishedJoinTarget)) {
             this.lastAutosaveAt = this.lastHeartbeatAt;
             saveHostRecoveryMarker();
             withPlaySessionTracker(playSessionTracker -> playSessionTracker.beginHostSession(this.world.id(), this.world.name()));
             SharedWorldDevSessionBridge.setHostingSharedWorld(true, this.world.ownerUuid());
             refreshHostedPermissionLevels();
-            setPhase(Phase.RUNNING, SharedWorldText.string("screen.sharedworld.hosting_live_at", joinTarget));
+            setPhase(Phase.RUNNING, SharedWorldText.string("screen.sharedworld.hosting_live_at", confirmedJoinTarget));
         }
     }
 
@@ -710,14 +813,19 @@ public final class SharedWorldHostingManager {
             return;
         }
         if (SharedWorldApiClient.isHostNotActiveError(exception)) {
-            handleHostAuthorityLost(duringSnapshotUpload
-                    ? SharedWorldText.string("screen.sharedworld.hosting_lost_authority_upload")
-                    : (this.phase == Phase.CONFIRMING_HOST
-                    ? SharedWorldText.string("screen.sharedworld.hosting_lost_authority_confirm")
-                    : SharedWorldText.string("screen.sharedworld.hosting_lost_authority_live")));
+            handleHostAuthorityLost(heartbeatAuthorityLossMessage(duringSnapshotUpload));
             return;
         }
         LOGGER.warn(duringSnapshotUpload ? "SharedWorld snapshot upload heartbeat failed" : "SharedWorld heartbeat failed", exception);
+    }
+
+    private String heartbeatAuthorityLossMessage(boolean duringSnapshotUpload) {
+        if (duringSnapshotUpload) {
+            return SharedWorldText.string("screen.sharedworld.hosting_lost_authority_upload");
+        }
+        return this.phase == Phase.CONFIRMING_HOST
+                ? SharedWorldText.string("screen.sharedworld.hosting_lost_authority_confirm")
+                : SharedWorldText.string("screen.sharedworld.hosting_lost_authority_live");
     }
 
     private void handleHostAuthorityLost(String message) {
@@ -772,7 +880,7 @@ public final class SharedWorldHostingManager {
                         context.hostToken(),
                         progress -> applySaveSyncProgress(context, progress, false)
                 );
-                Minecraft.getInstance().execute(() -> {
+                dispatchToMainThread(() -> {
                     if (!isCurrentAttempt(context)) {
                         return;
                     }
@@ -785,7 +893,7 @@ public final class SharedWorldHostingManager {
                     return;
                 }
                 if (SharedWorldApiClient.isDeletedWorldError(exception)) {
-                    Minecraft.getInstance().execute(() -> {
+                    dispatchToMainThread(() -> {
                         if (isCurrentAttempt(context)) {
                             SharedWorldReleaseCoordinator releaseCoordinator = releaseCoordinatorOrNull();
                             if (releaseCoordinator != null) {
@@ -796,7 +904,7 @@ public final class SharedWorldHostingManager {
                     return;
                 }
                 if (SharedWorldApiClient.isMembershipRevokedError(exception)) {
-                    Minecraft.getInstance().execute(() -> {
+                    dispatchToMainThread(() -> {
                         if (isCurrentAttempt(context)) {
                             SharedWorldReleaseCoordinator releaseCoordinator = releaseCoordinatorOrNull();
                             if (releaseCoordinator != null) {
@@ -807,7 +915,7 @@ public final class SharedWorldHostingManager {
                     return;
                 }
                 if (SharedWorldApiClient.isHostNotActiveError(exception)) {
-                    Minecraft.getInstance().execute(() -> {
+                    dispatchToMainThread(() -> {
                         if (isCurrentAttempt(context)) {
                             handleHostAuthorityLost(SharedWorldText.string("screen.sharedworld.hosting_lost_authority_upload"));
                         }
@@ -815,7 +923,7 @@ public final class SharedWorldHostingManager {
                     return;
                 }
                 LOGGER.warn("SharedWorld autosave failed", exception);
-                Minecraft.getInstance().execute(() -> {
+                dispatchToMainThread(() -> {
                     if (isCurrentAttempt(context)) {
                         setPhase(Phase.RUNNING, HostLifecyclePolicy.runningStatusMessage(this.publishedJoinTarget));
                     }
@@ -828,9 +936,9 @@ public final class SharedWorldHostingManager {
                         LOGGER.warn("SharedWorld failed to clean up snapshot staging copy", cleanupException);
                     }
                 }
-                Minecraft.getInstance().execute(() -> clearSaveInFlight(context));
+                dispatchToMainThread(() -> clearSaveInFlight(context));
             }
-        }, backgroundExecutor());
+        }, this.backgroundExecutor);
     }
 
     private void fail(String message, Throwable throwable) {
@@ -849,7 +957,7 @@ public final class SharedWorldHostingManager {
             } catch (Exception exception) {
                 LOGGER.warn("SharedWorld failed to release lease after startup error", exception);
             }
-        }, backgroundExecutor());
+        }, this.backgroundExecutor);
     }
 
     private String requireHostPlayerUuid() {
@@ -936,7 +1044,7 @@ public final class SharedWorldHostingManager {
         String worldId = context == null ? null : context.worldId();
         if (worldId == null) {
             if (resetAfterRelease) {
-                Minecraft.getInstance().execute(this::resetState);
+                dispatchToMainThread(this::resetState);
             }
             return;
         }
@@ -946,9 +1054,9 @@ public final class SharedWorldHostingManager {
             } catch (Exception exception) {
                 LOGGER.warn("SharedWorld failed to release host after startup cancel", exception);
             }
-        }, backgroundExecutor()).whenComplete((unused, error) -> {
+        }, this.backgroundExecutor).whenComplete((unused, error) -> {
             if (resetAfterRelease) {
-                Minecraft.getInstance().execute(this::resetState);
+                dispatchToMainThread(this::resetState);
             }
         });
     }
@@ -993,6 +1101,10 @@ public final class SharedWorldHostingManager {
         if (isCurrentAttempt(context)) {
             this.saveInFlight.set(false);
         }
+    }
+
+    private void dispatchToMainThread(Runnable runnable) {
+        this.mainThreadExecutor.execute(runnable);
     }
 
     private void resetState() {

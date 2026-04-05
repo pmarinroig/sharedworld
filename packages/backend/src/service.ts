@@ -460,15 +460,15 @@ export class SharedWorldService {
    */
   async heartbeatHost(ctx: RequestContext, worldId: string, request: HeartbeatRequest, now = new Date()) {
     await this.requireSessionAccess(ctx, worldId);
-    const authorized = await this.requireAuthorizedRuntime(
-      ctx,
-      worldId,
-      now,
-      request.runtimeEpoch,
-      request.hostToken,
-      ["host-starting", "host-live"]
-    );
-    const updated = refreshLiveRuntime(authorized.runtime, request.joinTarget ?? null, now);
+    const resolved = await this.resolveHeartbeatRuntime(ctx, worldId, request, now);
+    if (!resolved.refreshLease) {
+      return toRuntimeStatus(
+        worldId,
+        resolved.runtime,
+        resolved.candidate
+      );
+    }
+    const updated = refreshLiveRuntime(resolved.runtime, request.joinTarget ?? null, now);
     await this.repository.upsertRuntimeRecord(updated);
     return toRuntimeStatus(
       worldId,
@@ -1181,11 +1181,42 @@ export class SharedWorldService {
     if (!resolved.runtime
       || !allowedPhases.includes(resolved.runtime.phase)
       || !matchesHostAuthorization(resolved.runtime, ctx.playerUuid, runtimeEpoch, hostToken)) {
-      throw new HttpError(409, "host_not_active", "SharedWorld host lease is no longer active for snapshot upload.");
+      throw this.hostNotActiveError();
     }
     return {
       runtime: resolved.runtime
     };
+  }
+
+  private async resolveHeartbeatRuntime(
+    ctx: RequestContext,
+    worldId: string,
+    request: HeartbeatRequest,
+    now: Date
+  ): Promise<{ runtime: WorldRuntimeRecord; candidate: RuntimeCandidate | null; refreshLease: boolean }> {
+    if (request.runtimeEpoch == null || request.runtimeEpoch < 0 || request.hostToken == null) {
+      throw this.hostNotActiveError();
+    }
+    const resolved = await this.resolveRuntimeState(worldId, now);
+    const runtime = resolved.runtime;
+    if (runtime == null || !matchesHostAuthorization(runtime, ctx.playerUuid, request.runtimeEpoch, request.hostToken)) {
+      throw this.hostNotActiveError();
+    }
+    if (runtime.phase === "host-starting" || runtime.phase === "host-live") {
+      return {
+        runtime,
+        candidate: this.runtimeCandidateFromRuntime(runtime),
+        refreshLease: true
+      };
+    }
+    if (runtime.phase === "host-finalizing") {
+      return {
+        runtime,
+        candidate: resolved.candidate,
+        refreshLease: false
+      };
+    }
+    throw this.hostNotActiveError();
   }
 
   private async resolveProgressRuntime(
@@ -1195,7 +1226,7 @@ export class SharedWorldService {
     now: Date
   ): Promise<AuthorizedRuntime> {
     if (request.runtimeEpoch == null || request.runtimeEpoch < 0 || request.hostToken == null) {
-      throw new HttpError(409, "host_not_active", "SharedWorld host lease is no longer active for snapshot upload.");
+      throw this.hostNotActiveError();
     }
     return this.requireAuthorizedRuntime(
       ctx,
@@ -1217,9 +1248,13 @@ export class SharedWorldService {
       return null;
     }
     if (!matchesHostAuthorization(runtime, ctx.playerUuid, request.runtimeEpoch, request.hostToken)) {
-      throw new HttpError(409, "host_not_active", "SharedWorld host lease is no longer active for snapshot upload.");
+      throw this.hostNotActiveError();
     }
     return runtime;
+  }
+
+  private hostNotActiveError(): HttpError {
+    return new HttpError(409, "host_not_active", "SharedWorld host lease is no longer active for snapshot upload.");
   }
 
   private runtimeToFinalizationResult(

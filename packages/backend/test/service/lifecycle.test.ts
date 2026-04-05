@@ -205,6 +205,92 @@ describe("SharedWorldService lifecycle", () => {
     expect(refreshedRuntime?.startupDeadlineAt).toBe("2099-01-03T00:02:30.000Z");
   });
 
+  test("heartbeat reports host-finalizing for the same authorized runtime without refreshing it", async () => {
+    const repository = new MemorySharedWorldRepository();
+    const { signer } = createBlobSigner();
+    const instance = createTestService(repository, authVerifier, signer, {});
+    await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
+    const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
+
+    const entered = await instance.enterSession(
+      { playerUuid: "player-owner", playerName: "Owner" },
+      world.id,
+      {},
+      new Date("2099-01-03T00:00:00.000Z")
+    );
+
+    await instance.heartbeatHost(
+      { playerUuid: "player-owner", playerName: "Owner" },
+      world.id,
+      {
+        runtimeEpoch: entered.assignment!.runtimeEpoch,
+        hostToken: entered.assignment!.hostToken,
+        joinTarget: "join.example"
+      },
+      new Date("2099-01-03T00:00:10.000Z")
+    );
+    await instance.beginFinalization(
+      { playerUuid: "player-owner", playerName: "Owner" },
+      world.id,
+      { runtimeEpoch: entered.assignment!.runtimeEpoch, hostToken: entered.assignment!.hostToken },
+      new Date("2099-01-03T00:00:20.000Z")
+    );
+
+    const heartbeat = await instance.heartbeatHost(
+      { playerUuid: "player-owner", playerName: "Owner" },
+      world.id,
+      {
+        runtimeEpoch: entered.assignment!.runtimeEpoch,
+        hostToken: entered.assignment!.hostToken,
+        joinTarget: "stale.example"
+      },
+      new Date("2099-01-03T00:00:30.000Z")
+    );
+
+    expect(heartbeat.phase).toBe("host-finalizing");
+    expect(heartbeat.runtimeEpoch).toBe(entered.assignment!.runtimeEpoch);
+    expect(heartbeat.joinTarget).toBeNull();
+
+    const runtime = await repository.getRuntimeRecord(world.id, new Date("2099-01-03T00:00:30.000Z"));
+    expect(runtime?.phase).toBe("host-finalizing");
+    expect(runtime?.joinTarget).toBeNull();
+    expect(runtime?.lastProgressAt).toBe("2099-01-03T00:00:20.000Z");
+    expect(runtime?.updatedAt).toBe("2099-01-03T00:00:20.000Z");
+  });
+
+  test("heartbeat still rejects mismatched authority after the runtime is finalizing", async () => {
+    const repository = new MemorySharedWorldRepository();
+    const { signer } = createBlobSigner();
+    const instance = createTestService(repository, authVerifier, signer, {});
+    await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
+    const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
+
+    const entered = await instance.enterSession(
+      { playerUuid: "player-owner", playerName: "Owner" },
+      world.id,
+      {},
+      new Date("2099-01-03T00:00:00.000Z")
+    );
+
+    await instance.beginFinalization(
+      { playerUuid: "player-owner", playerName: "Owner" },
+      world.id,
+      { runtimeEpoch: entered.assignment!.runtimeEpoch, hostToken: entered.assignment!.hostToken },
+      new Date("2099-01-03T00:00:10.000Z")
+    );
+
+    await expect(instance.heartbeatHost(
+      { playerUuid: "player-owner", playerName: "Owner" },
+      world.id,
+      {
+        runtimeEpoch: entered.assignment!.runtimeEpoch,
+        hostToken: "wrong-token",
+        joinTarget: "join.example"
+      },
+      new Date("2099-01-03T00:00:20.000Z")
+    )).rejects.toMatchObject({ status: 409, code: "host_not_active" });
+  });
+
   test("host-live timeout records warning, clears runtime, and clears waiters", async () => {
     const repository = new MemorySharedWorldRepository();
     const { signer } = createBlobSigner();

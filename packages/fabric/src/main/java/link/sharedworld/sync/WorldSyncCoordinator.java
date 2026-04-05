@@ -1,5 +1,6 @@
 package link.sharedworld.sync;
 
+import link.sharedworld.SharedWorldDevSessionBridge;
 import link.sharedworld.api.SharedWorldApiClient;
 import link.sharedworld.api.SharedWorldModels.DownloadPlanDto;
 import link.sharedworld.api.SharedWorldModels.DownloadPlanEntryDto;
@@ -43,6 +44,7 @@ import java.util.stream.Stream;
 
 public final class WorldSyncCoordinator {
     private static final Logger LOGGER = LoggerFactory.getLogger("sharedworld-sync");
+    private static final String DEV_SLOW_UPLOAD_MS_PROPERTY = "sharedworld.devSlowUploadMs";
     public static final String STAGE_CHECKING_LOCAL_CACHE = "checking_local_cache";
     public static final String STAGE_REQUESTING_DOWNLOAD_PLAN = "requesting_download_plan";
     public static final String STAGE_DOWNLOADING_CHANGED_FILES = "downloading_changed_files";
@@ -332,6 +334,8 @@ public final class WorldSyncCoordinator {
             return;
         }
 
+        applyConfiguredDevUploadDelay(worldId);
+
         long startedAt = System.nanoTime();
         AtomicLong uploadedBytes = new AtomicLong(0L);
         ExecutorService executor = Executors.newFixedThreadPool(policy.maxConcurrentUploads());
@@ -410,6 +414,33 @@ public final class WorldSyncCoordinator {
         } finally {
             executor.shutdownNow();
         }
+    }
+
+    private void applyConfiguredDevUploadDelay(String worldId) throws InterruptedException {
+        if (!SharedWorldDevSessionBridge.isCurrentSessionDev()) {
+            return;
+        }
+        String rawDelay = System.getProperty(DEV_SLOW_UPLOAD_MS_PROPERTY, "").trim();
+        if (rawDelay.isEmpty()) {
+            return;
+        }
+        long delayMs;
+        try {
+            delayMs = Long.parseLong(rawDelay);
+        } catch (NumberFormatException exception) {
+            LOGGER.warn("SharedWorld ignoring invalid {} value {}", DEV_SLOW_UPLOAD_MS_PROPERTY, rawDelay);
+            return;
+        }
+        if (delayMs <= 0L) {
+            return;
+        }
+        LOGGER.info(
+                "SharedWorld applying dev upload delay of {} ms for {} via {}",
+                delayMs,
+                worldId,
+                DEV_SLOW_UPLOAD_MS_PROPERTY
+        );
+        Thread.sleep(delayMs);
     }
 
     private void applyDownloadPlan(String worldId, Path worldDirectory, DownloadPlanDto plan, WorldSyncProgressListener progressListener) throws IOException, InterruptedException {

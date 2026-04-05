@@ -24,6 +24,14 @@ final class HostLifecyclePolicyTest {
     }
 
     @Test
+    void liveLeasePolicyCoversRunningAndSavingOnly() {
+        assertTrue(HostLifecyclePolicy.shouldMaintainLiveLease(SharedWorldHostingManager.Phase.RUNNING));
+        assertTrue(HostLifecyclePolicy.shouldMaintainLiveLease(SharedWorldHostingManager.Phase.SAVING));
+        assertFalse(HostLifecyclePolicy.shouldMaintainLiveLease(SharedWorldHostingManager.Phase.CONFIRMING_HOST));
+        assertFalse(HostLifecyclePolicy.shouldMaintainLiveLease(SharedWorldHostingManager.Phase.RELEASING));
+    }
+
+    @Test
     void authorityLossStageTracksHostingPhase() {
         assertEquals(
                 SharedWorldReleaseCoordinator.HostAuthorityLossStage.STARTUP,

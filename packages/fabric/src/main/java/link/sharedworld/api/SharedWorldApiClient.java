@@ -217,7 +217,7 @@ public final class SharedWorldApiClient {
         return request("GET", "/worlds/" + worldId + "/runtime", null, WorldRuntimeStatusDto.class, true);
     }
 
-    public void heartbeatHost(String worldId, long runtimeEpoch, String hostToken, String joinTarget) throws IOException, InterruptedException {
+    public WorldRuntimeStatusDto heartbeatHost(String worldId, long runtimeEpoch, String hostToken, String joinTarget) throws IOException, InterruptedException {
         ensureSession();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("runtimeEpoch", runtimeEpoch);
@@ -225,7 +225,7 @@ public final class SharedWorldApiClient {
         if (joinTarget != null) {
             body.put("joinTarget", joinTarget);
         }
-        request("POST", "/worlds/" + worldId + "/heartbeat", body, null, true);
+        return request("POST", "/worlds/" + worldId + "/heartbeat", body, WorldRuntimeStatusDto.class, true);
     }
 
     public void setHostStartupProgress(String worldId, long runtimeEpoch, String hostToken, SharedWorldModels.StartupProgressDto progress) throws IOException, InterruptedException {
