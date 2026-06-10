@@ -1,6 +1,5 @@
 import {
   HOST_LEASE_TIMEOUT_MS,
-  HANDOFF_WAITER_TIMEOUT_MS,
   type HostAssignment,
   type HostStartupProgress,
   type UncleanShutdownWarning,
@@ -36,11 +35,6 @@ export interface WorldRuntimeRecord {
   updatedAt: string;
   revokedAt: string | null;
   startupProgress: HostStartupProgress | null;
-}
-
-export function pruneWaiters<T extends RuntimeWaiter>(waiters: T[], now: Date): T[] {
-  const cutoff = now.getTime() - HANDOFF_WAITER_TIMEOUT_MS;
-  return waiters.filter((waiter) => waiter.waiting && new Date(waiter.updatedAt).getTime() >= cutoff);
 }
 
 export function choosePreferredCandidate(waiters: RuntimeCandidate[], memberships: RuntimeMembership[]): RuntimeCandidate | null {
