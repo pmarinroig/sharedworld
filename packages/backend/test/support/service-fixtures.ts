@@ -16,7 +16,7 @@ import { R2StorageProvider } from "../../src/storage.ts";
 import { SharedWorldService, type AuthVerifier, type BlobUrlSigner } from "../../src/service.ts";
 import type { StorageProvider } from "../../src/storage.ts";
 
-type LegacyHostLease = {
+type TestHostLeaseView = {
   worldId: string;
   hostUuid: string;
   hostPlayerName: string;
@@ -35,22 +35,22 @@ type LegacyHostLease = {
   revokedAt?: string | null;
 };
 
-type LegacyHostStatus = {
+type TestHostStatusView = {
   worldId: string;
-  activeLease: LegacyHostLease | null;
+  activeLease: TestHostLeaseView | null;
   nextHostUuid: string | null;
   nextHostPlayerName: string | null;
 };
 
-type LegacyClaimHostResponse = {
+type TestClaimHostResponse = {
   result: "claimed" | "already-hosted" | "busy";
-  lease: LegacyHostLease | null;
+  lease: TestHostLeaseView | null;
 };
 
-type LegacyJoinResolution = {
+type TestJoinResolution = {
   action: Awaited<ReturnType<SharedWorldService["enterSession"]>>["action"];
   world: Awaited<ReturnType<SharedWorldService["enterSession"]>>["world"];
-  lease: LegacyHostLease | null;
+  lease: TestHostLeaseView | null;
   latestManifest: Awaited<ReturnType<SharedWorldService["latestManifest"]>>;
 };
 
@@ -59,7 +59,7 @@ type RuntimeAuthorizedRequest = {
   hostToken?: string | null;
 };
 
-function runtimeToLegacyLease(runtime: WorldRuntimeStatus): LegacyHostLease | null {
+function runtimeToLeaseView(runtime: WorldRuntimeStatus): TestHostLeaseView | null {
   if (runtime.phase === "idle" || runtime.hostUuid == null || runtime.hostPlayerName == null) {
     return null;
   }
@@ -83,7 +83,7 @@ function runtimeToLegacyLease(runtime: WorldRuntimeStatus): LegacyHostLease | nu
   };
 }
 
-function runtimeToLegacyCandidateLease(runtime: WorldRuntimeStatus): LegacyHostLease | null {
+function runtimeToCandidateLeaseView(runtime: WorldRuntimeStatus): TestHostLeaseView | null {
   if ((runtime.phase !== "idle" && runtime.phase !== "handoff-waiting")
     || runtime.candidateUuid == null
     || runtime.candidatePlayerName == null) {
@@ -109,10 +109,10 @@ function runtimeToLegacyCandidateLease(runtime: WorldRuntimeStatus): LegacyHostL
   };
 }
 
-function runtimeToLegacyHostStatus(runtime: WorldRuntimeStatus): LegacyHostStatus {
+function runtimeToTestHostStatusView(runtime: WorldRuntimeStatus): TestHostStatusView {
   return {
     worldId: runtime.worldId,
-    activeLease: runtimeToLegacyLease(runtime) ?? runtimeToLegacyCandidateLease(runtime),
+    activeLease: runtimeToLeaseView(runtime) ?? runtimeToCandidateLeaseView(runtime),
     nextHostUuid: runtime.candidateUuid,
     nextHostPlayerName: runtime.candidatePlayerName
   };
@@ -139,7 +139,13 @@ async function authorizeFromCurrentRuntime(
   };
 }
 
-export class LegacyCompatibleSharedWorldService extends SharedWorldService {
+/**
+ * Test-only convenience layer over the production SharedWorldService. It adds
+ * shorthand flows (claim host, observe status as a lease-shaped view) and
+ * auto-fills epoch/token authorization from the current runtime so protocol
+ * tests stay readable. It never bypasses the production service logic.
+ */
+export class TestDriverSharedWorldService extends SharedWorldService {
   constructor(
     private readonly runtimeRepository: SharedWorldRepository,
     authVerifier: AuthVerifier,
@@ -162,7 +168,7 @@ export class LegacyCompatibleSharedWorldService extends SharedWorldService {
     worldId: string,
     request: { joinTarget?: string | null },
     now = new Date()
-  ): Promise<LegacyClaimHostResponse> {
+  ): Promise<TestClaimHostResponse> {
     const entered = await this.enterSession(ctx, worldId, {}, now);
     let runtime = entered.runtime;
     if (entered.action === "host" && entered.assignment != null && runtime.phase === "host-starting") {
@@ -181,25 +187,25 @@ export class LegacyCompatibleSharedWorldService extends SharedWorldService {
       }
     }
     if (entered.action === "host" && entered.assignment != null && runtime.hostUuid === ctx.playerUuid) {
-      return { result: "claimed", lease: runtimeToLegacyLease(runtime) };
+      return { result: "claimed", lease: runtimeToLeaseView(runtime) };
     }
     if (entered.action === "connect") {
-      return { result: "already-hosted", lease: runtimeToLegacyLease(runtime) };
+      return { result: "already-hosted", lease: runtimeToLeaseView(runtime) };
     }
-    return { result: "busy", lease: runtimeToLegacyLease(runtime) };
+    return { result: "busy", lease: runtimeToLeaseView(runtime) };
   }
 
-  async activeHost(ctx: RequestContext, worldId: string): Promise<LegacyHostStatus> {
+  async activeHost(ctx: RequestContext, worldId: string): Promise<TestHostStatusView> {
     const runtime = await this.runtimeStatus(ctx, worldId, new Date());
-    return runtimeToLegacyHostStatus(runtime);
+    return runtimeToTestHostStatusView(runtime);
   }
 
-  async resolveJoin(ctx: RequestContext, worldId: string): Promise<LegacyJoinResolution> {
+  async resolveJoin(ctx: RequestContext, worldId: string): Promise<TestJoinResolution> {
     const entered = await this.enterSession(ctx, worldId, {});
     return {
       action: entered.action,
       world: entered.world,
-      lease: runtimeToLegacyLease(entered.runtime),
+      lease: runtimeToLeaseView(entered.runtime),
       latestManifest: entered.latestManifest
     };
   }
@@ -209,14 +215,14 @@ export class LegacyCompatibleSharedWorldService extends SharedWorldService {
     worldId: string,
     request: { waiting: boolean },
     now = new Date()
-  ): Promise<LegacyHostStatus> {
+  ): Promise<TestHostStatusView> {
     if (request.waiting) {
       await this.runtimeRepository.upsertWaiterSession(worldId, ctx, `legacy_${ctx.playerUuid}`, now);
     } else {
       await this.runtimeRepository.clearWaitersForPlayer(worldId, ctx.playerUuid);
     }
     const runtime = await this.runtimeStatus(ctx, worldId, now);
-    return runtimeToLegacyHostStatus(runtime);
+    return runtimeToTestHostStatusView(runtime);
   }
 
   override async beginFinalization(ctx: RequestContext, worldId: string, request: BeginFinalizationRequest, now = new Date()) {
@@ -316,7 +322,7 @@ export function createTestService(
   storageProviderOrEnv: StorageProvider | Env = { SESSION_TTL_HOURS: "24" },
   maybeEnv?: Env
 ) {
-  return new LegacyCompatibleSharedWorldService(repository, verifier, signer, storageProviderOrEnv, maybeEnv);
+  return new TestDriverSharedWorldService(repository, verifier, signer, storageProviderOrEnv, maybeEnv);
 }
 
 function resolveStorageProviderAndEnv(storageProviderOrEnv: StorageProvider | Env, maybeEnv?: Env): [StorageProvider, Env] {
@@ -426,7 +432,7 @@ export function createStorageProviderSpy(
 }
 
 export async function claimHostForTest(
-  instance: LegacyCompatibleSharedWorldService,
+  instance: TestDriverSharedWorldService,
   player: { playerUuid: string; playerName: string },
   worldId: string,
   now = new Date("2099-01-01T00:00:00.000Z")
