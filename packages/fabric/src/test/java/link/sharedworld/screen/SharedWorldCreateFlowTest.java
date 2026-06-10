@@ -181,6 +181,38 @@ final class SharedWorldCreateFlowTest {
     }
 
     @Test
+    void createFlowSucceedsWhenTheSeedLeaseReleaseFailsAfterAGoodUpload() throws Exception {
+        Path root = Files.createTempDirectory("sharedworld-create-flow-release");
+        try {
+            Path source = root.resolve("source");
+            Files.createDirectories(source);
+            Files.writeString(source.resolve("level.dat"), "data");
+
+            FakeBackend backend = new FakeBackend();
+            backend.releaseThrows = true;
+            FakeWorkingCopyStore workingCopyStore = new FakeWorkingCopyStore(root.resolve("working"));
+            FakeSnapshotUploader uploader = new FakeSnapshotUploader();
+            SharedWorldCreateFlow flow = new SharedWorldCreateFlow(
+                    backend,
+                    path -> null,
+                    workingCopyStore,
+                    uploader,
+                    new FakeLeaseKeepAlive()
+            );
+
+            String message = flow.create(request(source), silentProgressSink());
+
+            // The snapshot is committed, so a failed lease release must not turn a good create into
+            // an error, and it must not delete the freshly created world.
+            assertEquals("screen.sharedworld.operation_created_world", message);
+            assertEquals(1, backend.releaseCalls);
+            assertEquals(0, backend.deleteCalls);
+        } finally {
+            deleteTree(root);
+        }
+    }
+
+    @Test
     void createFlowSucceedsEvenWhenKeepAliveHeartbeatsFail() throws Exception {
         Path root = Files.createTempDirectory("sharedworld-create-flow-heartbeat");
         try {
@@ -254,6 +286,7 @@ final class SharedWorldCreateFlowTest {
         private int deleteCalls;
         private String deletedWorldId;
         private boolean heartbeatThrows;
+        private boolean releaseThrows;
 
         @Override
         public CreateWorldResultDto createWorld(String name, String motdLine1, String customIconPngBase64, SharedWorldModels.ImportedWorldSourceDto importSource, String storageLinkSessionId) {
@@ -288,12 +321,15 @@ final class SharedWorldCreateFlowTest {
         }
 
         @Override
-        public void releaseHost(String worldId, boolean graceful, long runtimeEpoch, String hostToken) {
+        public void releaseHost(String worldId, boolean graceful, long runtimeEpoch, String hostToken) throws java.io.IOException {
             this.releaseCalls += 1;
             this.releasedWorldId = worldId;
             this.lastReleaseGraceful = graceful;
             assertEquals(7L, runtimeEpoch);
             assertEquals("token-7", hostToken);
+            if (this.releaseThrows) {
+                throw new java.io.IOException("release boom");
+            }
         }
 
         @Override
