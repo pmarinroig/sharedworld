@@ -13,7 +13,7 @@ import type {
   WorldUncleanShutdownWarningRecord
 } from "../repository.ts";
 import type { WorldRuntimeRecord } from "../runtime-protocol.ts";
-import { asNullableString, clampFraction, type LegacyHostLease, type Row } from "./d1-support.ts";
+import { asNullableString, clampFraction, type Row } from "./d1-support.ts";
 
 export function mapInvite(row: Row): InviteCode {
   return {
@@ -45,37 +45,6 @@ export function mapUncleanShutdownWarning(row: Row | null): WorldUncleanShutdown
     phase: phase as UncleanShutdownWarning["phase"],
     runtimeEpoch,
     recordedAt
-  };
-}
-
-export function mapLease(row: Row): LegacyHostLease {
-  return {
-    worldId: String(row.world_id),
-    hostUuid: String(row.host_uuid),
-    hostPlayerName: String(row.host_player_name),
-    status: String(row.status) as LegacyHostLease["status"],
-    runtimePhase: asNullableString(row.runtime_phase) as WorldRuntimePhase | null,
-    runtimeEpoch: row.runtime_epoch == null ? null : Number(row.runtime_epoch),
-    runtimeToken: asNullableString(row.runtime_token),
-    claimedAt: String(row.claimed_at),
-    expiresAt: String(row.expires_at),
-    updatedAt: String(row.updated_at),
-    joinTarget: asNullableString(row.join_target),
-    handoffCandidateUuid: asNullableString(row.handoff_candidate_uuid),
-    revokedAt: asNullableString(row.revoked_at),
-    startupDeadlineAt: asNullableString(row.startup_deadline_at),
-    runtimeTokenIssuedAt: asNullableString(row.runtime_token_issued_at),
-    lastProgressAt: asNullableString(row.last_progress_at),
-    startupProgress: asNullableString(row.startup_progress_label) != null
-      && asNullableString(row.startup_progress_mode) != null
-      && asNullableString(row.startup_progress_updated_at) != null
-      ? {
-          label: String(row.startup_progress_label),
-          mode: String(row.startup_progress_mode) as StartupProgressMode,
-          fraction: row.startup_progress_fraction == null ? null : clampFraction(Number(row.startup_progress_fraction)),
-          updatedAt: String(row.startup_progress_updated_at)
-        }
-      : null
   };
 }
 

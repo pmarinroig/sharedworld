@@ -586,26 +586,6 @@ export class MemorySharedWorldRepository implements SharedWorldRepository {
     this.waiters.delete(worldId);
   }
 
-  async setHandoffWaiting(worldId: string, ctx: RequestContext, waiting: boolean, now: Date): Promise<void> {
-    if (!waiting) {
-      await this.clearWaitersForPlayer(worldId, ctx.playerUuid);
-      return;
-    }
-    await this.upsertWaiterSession(worldId, ctx, `legacy_${ctx.playerUuid}`, now);
-  }
-
-  async chooseNextHost(worldId: string, now = new Date()): Promise<{ playerUuid: string; playerName: string } | null> {
-    const memberships = await this.listMemberships(worldId);
-    const waiters = await this.listActiveWaiters(worldId, now);
-    const candidate = choosePreferredCandidate(waiters.filter((waiter) => waiter.waiting), memberships);
-    return candidate == null
-      ? null
-      : {
-          playerUuid: candidate.playerUuid,
-          playerName: candidate.playerName
-        };
-  }
-
   async setPlayerPresence(worldId: string, ctx: RequestContext, request: PresenceHeartbeatRequest, now: Date): Promise<void> {
     const entries = this.presence.get(worldId) ?? new Map<string, {
       playerName: string;

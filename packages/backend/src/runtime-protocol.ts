@@ -140,6 +140,7 @@ export function timedOutUncleanShutdownWarning(runtime: WorldRuntimeRecord | nul
     hostUuid: runtime.hostUuid,
     hostPlayerName: runtime.hostPlayerName,
     phase: runtime.phase,
+    runtimeEpoch: runtime.runtimeEpoch,
     recordedAt: now.toISOString()
   };
 }

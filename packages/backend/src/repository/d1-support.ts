@@ -1,42 +1,4 @@
-import type { StartupProgressMode, WorldRuntimePhase } from "../../../shared/src/index.ts";
-
 export type Row = Record<string, unknown>;
-
-export type LegacyClaimHostRequest = {
-  joinTarget?: string | null;
-};
-
-export type LegacyHostLease = {
-  worldId: string;
-  hostUuid: string;
-  hostPlayerName: string;
-  status: "idle" | "hosting" | "finalizing" | "handoff";
-  runtimePhase?: WorldRuntimePhase | null;
-  runtimeEpoch?: number | null;
-  runtimeToken?: string | null;
-  claimedAt: string;
-  expiresAt: string;
-  updatedAt: string;
-  joinTarget: string | null;
-  handoffCandidateUuid: string | null;
-  revokedAt?: string | null;
-  startupDeadlineAt?: string | null;
-  runtimeTokenIssuedAt?: string | null;
-  lastProgressAt?: string | null;
-  startupProgress?: {
-    label: string;
-    mode: StartupProgressMode;
-    fraction: number | null;
-    updatedAt: string;
-  } | null;
-};
-
-export type LegacyHostStatus = {
-  worldId: string;
-  activeLease: LegacyHostLease | null;
-  nextHostUuid: string | null;
-  nextHostPlayerName: string | null;
-};
 
 export function normalizeBoundValues(values: unknown[]): unknown[] {
   return values.map((value) => value === undefined ? null : value);

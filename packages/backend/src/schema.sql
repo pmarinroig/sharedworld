@@ -65,31 +65,6 @@ CREATE TABLE IF NOT EXISTS invite_codes (
   FOREIGN KEY (created_by_uuid) REFERENCES users(player_uuid)
 );
 
-CREATE TABLE IF NOT EXISTS host_leases (
-  world_id TEXT PRIMARY KEY,
-  host_uuid TEXT NOT NULL,
-  host_player_name TEXT NOT NULL,
-  status TEXT NOT NULL,
-  runtime_phase TEXT,
-  runtime_epoch INTEGER NOT NULL DEFAULT 0,
-  runtime_token TEXT,
-  claimed_at TEXT NOT NULL,
-  expires_at TEXT NOT NULL,
-  join_target TEXT,
-  handoff_candidate_uuid TEXT,
-  revoked_at TEXT,
-  startup_deadline_at TEXT,
-  runtime_token_issued_at TEXT,
-  last_progress_at TEXT,
-  startup_progress_label TEXT,
-  startup_progress_mode TEXT,
-  startup_progress_fraction REAL,
-  startup_progress_updated_at TEXT,
-  updated_at TEXT NOT NULL,
-  FOREIGN KEY (world_id) REFERENCES worlds(id),
-  FOREIGN KEY (host_uuid) REFERENCES users(player_uuid)
-);
-
 CREATE TABLE IF NOT EXISTS world_runtime (
   world_id TEXT PRIMARY KEY,
   host_uuid TEXT NOT NULL,
