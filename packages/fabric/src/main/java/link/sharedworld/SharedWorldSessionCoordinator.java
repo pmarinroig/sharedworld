@@ -270,14 +270,7 @@ public final class SharedWorldSessionCoordinator {
                 : "screen.sharedworld.joining_canceling").getString();
         state.progressState = progress(state.hostChangeFlow, Component.translatable("screen.sharedworld.progress.finishing_up"), state.progressState);
         if (state.waiterSessionId == null || state.waiterSessionId.isBlank()) {
-            this.waitingState = null;
-            clearPersistedRecovery();
-            this.clientShell.clearPlaySession();
-            if (state.returnToSharedWorldMenu) {
-                this.clientShell.openMainScreen(state.parent);
-            } else {
-                this.clientShell.setScreen(state.parent);
-            }
+            exitWaitingFlowToParent(state);
             return;
         }
         this.asyncBridge.run(() -> {
@@ -293,15 +286,19 @@ public final class SharedWorldSessionCoordinator {
                 state.discardErrorMessage = SharedWorldApiClient.friendlyErrorMessage(rootCause(error));
                 return;
             }
-            this.waitingState = null;
-            clearPersistedRecovery();
-            this.clientShell.clearPlaySession();
-            if (state.returnToSharedWorldMenu) {
-                this.clientShell.openMainScreen(state.parent);
-            } else {
-                this.clientShell.setScreen(state.parent);
-            }
+            exitWaitingFlowToParent(state);
         });
+    }
+
+    private void exitWaitingFlowToParent(WaitingFlowState state) {
+        this.waitingState = null;
+        clearPersistedRecovery();
+        this.clientShell.clearPlaySession();
+        if (state.returnToSharedWorldMenu) {
+            this.clientShell.openMainScreen(state.parent);
+        } else {
+            this.clientShell.setScreen(state.parent);
+        }
     }
 
     public void resumeAfterHostStartupCancel() {
