@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import type { Env } from "../../src/env.ts";
-import { MemorySharedWorldRepository } from "../../src/memory-repository.ts";
+import { createSqliteRepository } from "../support/sqlite-d1.ts";
 import {
   authVerifier,
   claimHostForTest,
@@ -17,7 +17,7 @@ function iconBase64(bytes: Uint8Array): string {
 }
 
 async function seedGoogleDriveStorageObject(
-  repository: MemorySharedWorldRepository,
+  repository: SharedWorldRepository,
   storageKey: string,
   size = 1,
   contentType = "application/octet-stream"
@@ -36,7 +36,7 @@ async function seedGoogleDriveStorageObject(
 
 describe("SharedWorldService world management", () => {
   test("world summaries include live online player names and count", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -61,11 +61,11 @@ describe("SharedWorldService world management", () => {
     const worlds = await instance.listWorlds({ playerUuid: "player-owner", playerName: "Owner" });
     expect(worlds).toHaveLength(1);
     expect(worlds[0].onlinePlayerCount).toBe(2);
-    expect(worlds[0].onlinePlayerNames).toEqual(["Guest", "Owner"]);
+    expect(worlds[0].onlinePlayerNames).toEqual(["Owner", "Guest"]);
   });
 
   test("different players can create worlds with the same name", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-a", playerName: "Alpha", createdAt: new Date().toISOString() });
@@ -81,7 +81,7 @@ describe("SharedWorldService world management", () => {
   });
 
   test("deleting the last member purges world snapshots and orphaned blobs", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer, deleted } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -117,7 +117,7 @@ describe("SharedWorldService world management", () => {
   });
 
   test("deleting a google drive world removes snapshot blobs and custom icons through the storage provider", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const { storageProvider, deleted } = createStorageProviderSpy("google-drive");
     const instance = createTestService(repository, authVerifier, signer, storageProvider, {});
@@ -163,7 +163,7 @@ describe("SharedWorldService world management", () => {
   });
 
   test("owner delete removes world invites", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -184,7 +184,7 @@ describe("SharedWorldService world management", () => {
   });
 
   test("member delete does not remove shared storage artifacts", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const { storageProvider, deleted } = createStorageProviderSpy("google-drive");
     const instance = createTestService(repository, authVerifier, signer, storageProvider, {});
@@ -237,7 +237,7 @@ describe("SharedWorldService world management", () => {
   });
 
   test("owner delete is best effort when storage cleanup fails", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const { storageProvider, deleted } = createStorageProviderSpy("google-drive", {
       failDeletesFor: ["blobs/fail/cleanup.bin"]
@@ -297,7 +297,7 @@ describe("SharedWorldService world management", () => {
   });
 
   test("only the owner can rename a world", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -324,7 +324,7 @@ describe("SharedWorldService world management", () => {
   });
 
   test("owner can save MOTD and custom icon metadata", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const iconBytes = createPng64Bytes();
     const env: Env = { BLOBS: createBlobBucket({}) };
@@ -347,7 +347,7 @@ describe("SharedWorldService world management", () => {
   });
 
   test("replacing a custom icon deletes the old unreferenced icon blob", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer, deleted } = createBlobSigner();
     const oldIconBytes = createPng64Bytes();
     const newIconBytes = createPng64Bytes();
@@ -374,7 +374,7 @@ describe("SharedWorldService world management", () => {
   });
 
   test("request-side customIconStorageKey is ignored on update", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -396,7 +396,7 @@ describe("SharedWorldService world management", () => {
   });
 
   test("deleting as owner permanently deletes the world for all members", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -426,7 +426,7 @@ describe("SharedWorldService world management", () => {
   });
 
   test("deleting as non-owner leaves the world intact for other members", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -449,7 +449,7 @@ describe("SharedWorldService world management", () => {
   });
 
   test("deleting an active world makes session endpoints report it as deleted", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -497,7 +497,7 @@ describe("SharedWorldService world management", () => {
   });
 
   test("stale guest presence heartbeats cannot restore a player after a newer disconnect", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -537,7 +537,7 @@ describe("SharedWorldService world management", () => {
   });
 
   test("new guest sessions can replace older disconnect tombstones", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -567,6 +567,6 @@ describe("SharedWorldService world management", () => {
 
     const worlds = await instance.listWorlds({ playerUuid: "player-owner", playerName: "Owner" });
     expect(worlds[0].onlinePlayerCount).toBe(2);
-    expect(worlds[0].onlinePlayerNames).toEqual(["Guest", "Owner"]);
+    expect(worlds[0].onlinePlayerNames).toEqual(["Owner", "Guest"]);
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { MemorySharedWorldRepository } from "../../src/memory-repository.ts";
+import { createSqliteRepository } from "../support/sqlite-d1.ts";
 import { authVerifier, createBlobSigner, createTestService, googleDriveStorageProvider } from "../support/service-fixtures.ts";
 
 const OWNER_CTX = { playerUuid: "player-owner", playerName: "Owner" };
@@ -8,7 +8,7 @@ const GUEST_CTX = { playerUuid: "player-guest", playerName: "Guest" };
 
 describe("SharedWorldService storage links", () => {
   test("creating a new storage link cancels older pending sessions for the same player", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, googleDriveStorageProvider(), {});
 
@@ -26,7 +26,7 @@ describe("SharedWorldService storage links", () => {
   });
 
   test("cancelling a pending storage link marks it cancelled", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, googleDriveStorageProvider(), {});
 
@@ -38,7 +38,7 @@ describe("SharedWorldService storage links", () => {
   });
 
   test("cancelling another player's storage link is forbidden", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, googleDriveStorageProvider(), {});
 
@@ -48,7 +48,7 @@ describe("SharedWorldService storage links", () => {
   });
 
   test("completing a cancelled storage link is rejected", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, googleDriveStorageProvider(), {});
 

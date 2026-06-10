@@ -2,12 +2,12 @@ import { describe, expect, test } from "bun:test";
 
 import type { FinalizeSnapshotRequest } from "../../../shared/src/index.ts";
 
-import { MemorySharedWorldRepository } from "../../src/memory-repository.ts";
+import { createSqliteRepository } from "../support/sqlite-d1.ts";
 import { authVerifier, claimHostForTest, createBlobSigner, createStorageProviderSpy, createTestService } from "../support/service-fixtures.ts";
 
 describe("SharedWorldService snapshots and retention", () => {
   test("snapshot summaries use actual stored bytes for pack-backed artifacts", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const { storageProvider } = createStorageProviderSpy("google-drive");
     const instance = createTestService(repository, authVerifier, signer, storageProvider, {});
@@ -71,7 +71,7 @@ describe("SharedWorldService snapshots and retention", () => {
   });
 
   test("one remaining snapshot size matches used by this world", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const { storageProvider } = createStorageProviderSpy("google-drive");
     const instance = createTestService(repository, authVerifier, signer, storageProvider, {});
@@ -175,7 +175,7 @@ describe("SharedWorldService snapshots and retention", () => {
   });
 
   test("first snapshot can be finalized when baseSnapshotId is omitted", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -205,7 +205,7 @@ describe("SharedWorldService snapshots and retention", () => {
   });
 
   test("restoring a packed snapshot preserves packs and yields a usable latest manifest", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -308,7 +308,7 @@ describe("SharedWorldService snapshots and retention", () => {
     expect(latestManifest?.packs).toHaveLength(2);
     expect(latestManifest?.packs.map((pack) => pack.packId)).toEqual(["non-region", "region-bundle:region:0:0"]);
     expect(latestManifest?.packs.map((pack) => pack.hash)).toEqual(["pack-a", "region-a"]);
-    expect(latestManifest?.packs[0]?.files.map((file) => file.path)).toEqual(["level.dat", "data/foo.dat"]);
+    expect(latestManifest?.packs[0]?.files.map((file) => file.path)).toEqual(["data/foo.dat", "level.dat"]);
     expect(latestManifest?.packs[1]?.files.map((file) => file.path)).toEqual(["region/r.0.0.mca"]);
     expect(latestManifest?.packs[0]?.baseSnapshotId).toBeNull();
     expect(latestManifest?.packs[1]?.baseSnapshotId).toBeNull();
@@ -329,7 +329,7 @@ describe("SharedWorldService snapshots and retention", () => {
   });
 
   test("snapshot retention keeps recent snapshots, thins older history, and only deletes unreferenced blobs", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer, deleted } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });

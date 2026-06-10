@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { NON_REGION_PACK_ID } from "../../../shared/src/index.ts";
 import type { StorageProvider } from "../../src/storage.ts";
-import { MemorySharedWorldRepository } from "../../src/memory-repository.ts";
+import { createSqliteRepository } from "../support/sqlite-d1.ts";
 import { choosePreferredCandidate } from "../../src/runtime-protocol.ts";
 import { authVerifier, createBlobSigner, createTestService } from "../support/service-fixtures.ts";
 
@@ -18,7 +18,7 @@ describe("SharedWorldService handoff", () => {
   }
 
   test("owner-first handoff beats older non-owner waiter", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     await repository.addMembership({
@@ -39,7 +39,7 @@ describe("SharedWorldService handoff", () => {
   });
 
   test("stale waiters do not block a fresh host election", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -68,7 +68,7 @@ describe("SharedWorldService handoff", () => {
   });
 
   test("graceful release keeps handoff state and elects the next host", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -100,7 +100,7 @@ describe("SharedWorldService handoff", () => {
   });
 
   test("graceful release with no waiter returns the world to idle", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -122,7 +122,7 @@ describe("SharedWorldService handoff", () => {
   });
 
   test("forced release does not advertise a planned handoff even if another waiter remains", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -153,7 +153,7 @@ describe("SharedWorldService handoff", () => {
   });
 
   test("claim host stays blocked until finalization completes", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -199,7 +199,7 @@ describe("SharedWorldService handoff", () => {
   });
 
   test("old host cannot begin finalization after ownership moved to a newer epoch", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -256,7 +256,7 @@ describe("SharedWorldService handoff", () => {
   });
 
   test("player who claims host is removed from waiter pool", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -290,7 +290,7 @@ describe("SharedWorldService handoff", () => {
   });
 
   test("only the elected handoff host can claim during graceful handoff", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -341,7 +341,7 @@ describe("SharedWorldService handoff", () => {
   });
 
   test("handoff election moves to the next waiter when the chosen host cancels", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -392,7 +392,7 @@ describe("SharedWorldService handoff", () => {
   });
 
   test("kicked hosts can still finalize gracefully and then hand off", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -468,7 +468,7 @@ describe("SharedWorldService handoff", () => {
   });
 
   test("kicked hosts can still upload finalization blobs with current runtime headers", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const uploaded: Array<{ storageKey: string; contentType: string }> = [];
     const storageProvider: StorageProvider = {
@@ -550,7 +550,7 @@ describe("SharedWorldService handoff", () => {
   });
 
   test("blob uploads require runtime auth headers", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const uploaded: Array<{ storageKey: string; contentType: string }> = [];
     const storageProvider: StorageProvider = {
@@ -606,7 +606,7 @@ describe("SharedWorldService handoff", () => {
   });
 
   test("stale blob upload headers are rejected after same-player host authority rotates", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const uploaded: Array<{ storageKey: string; contentType: string }> = [];
     const storageProvider: StorageProvider = {
@@ -694,7 +694,7 @@ describe("SharedWorldService handoff", () => {
   });
 
   test("kicking the next waiting host candidate reselects handoff", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -760,7 +760,7 @@ describe("SharedWorldService handoff", () => {
   });
 
   test("guest presence entries are cleared after completeFinalization handoff", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -815,7 +815,7 @@ describe("SharedWorldService handoff", () => {
   });
 
   test("guest presence entries are cleared after releaseHost", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });

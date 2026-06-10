@@ -1,12 +1,7 @@
-import { Database } from "bun:sqlite";
-import { readFileSync } from "node:fs";
-
 import type { CreateWorldRequest, HostAssignment, ReleaseHostRequest } from "../../../shared/src/index.ts";
-import type { D1Database, D1PreparedStatement, D1ResultRow } from "../../src/env.ts";
-import { D1SharedWorldRepository } from "../../src/d1-repository.ts";
-import { MemorySharedWorldRepository } from "../../src/memory-repository.ts";
 import type { RequestContext, SharedWorldRepository } from "../../src/repository.ts";
 import type { AuthVerifier, BlobUrlSigner } from "../../src/service.ts";
+import { createSqliteRepository } from "./sqlite-d1.ts";
 import { createTestService, type LegacyCompatibleSharedWorldService } from "./service-fixtures.ts";
 
 export const OWNER: RequestContext = { playerUuid: "player-owner", playerName: "Owner" };
@@ -39,63 +34,6 @@ class NoopBlobSigner implements BlobUrlSigner {
   }
 }
 
-class SqliteD1Database implements D1Database {
-  constructor(private readonly db: Database) {}
-
-  prepare(query: string): D1PreparedStatement {
-    return new SqliteD1PreparedStatement(this.db, query);
-  }
-}
-
-class SqliteD1PreparedStatement implements D1PreparedStatement {
-  private values: SqliteBinding[] = [];
-
-  constructor(
-    private readonly db: Database,
-    private readonly query: string
-  ) {}
-
-  bind(...values: unknown[]): D1PreparedStatement {
-    this.values = values.map(asSqliteBinding);
-    return this;
-  }
-
-  async first<T = D1ResultRow>(): Promise<T | null> {
-    const row = this.db.query(this.query).get(...this.values) as T | null | undefined;
-    return row ?? null;
-  }
-
-  async all<T = D1ResultRow>(): Promise<{ results: T[] }> {
-    return {
-      results: this.db.query(this.query).all(...this.values) as T[]
-    };
-  }
-
-  async run(): Promise<{ success: boolean; meta?: Record<string, unknown> }> {
-    this.db.query(this.query).run(...this.values);
-    return { success: true };
-  }
-}
-
-type SqliteBinding = string | number | bigint | boolean | Uint8Array | null;
-
-function asSqliteBinding(value: unknown): SqliteBinding {
-  if (value === undefined) {
-    return null;
-  }
-  if (
-    value == null
-    || typeof value === "string"
-    || typeof value === "number"
-    || typeof value === "bigint"
-    || typeof value === "boolean"
-    || value instanceof Uint8Array
-  ) {
-    return value;
-  }
-  throw new Error(`Unsupported sqlite binding type: ${typeof value}`);
-}
-
 function createService(repository: SharedWorldRepository): LegacyCompatibleSharedWorldService {
   return createTestService(
     repository,
@@ -107,33 +45,16 @@ function createService(repository: SharedWorldRepository): LegacyCompatibleShare
   );
 }
 
-export function createMemoryFixture(): ServiceFixture<MemorySharedWorldRepository> {
-  const repository = new MemorySharedWorldRepository();
-  return {
-    label: "memory",
-    repository,
-    service: createService(repository),
-    close() {}
-  };
-}
-
-export function createD1Fixture(): ServiceFixture<D1SharedWorldRepository> {
-  const db = new Database(":memory:");
-  db.exec("PRAGMA foreign_keys = ON;");
-  db.exec(readFileSync(new URL("../../src/schema.sql", import.meta.url), "utf8"));
-  const repository = new D1SharedWorldRepository(new SqliteD1Database(db));
+export function createD1Fixture(): ServiceFixture<SharedWorldRepository> {
+  const repository = createSqliteRepository();
   return {
     label: "d1",
     repository,
     service: createService(repository),
     close() {
-      db.close(false);
+      repository.close();
     }
   };
-}
-
-export function lifecycleFixtures(): Array<ServiceFixture<SharedWorldRepository>> {
-  return [createMemoryFixture(), createD1Fixture()];
 }
 
 export async function seedUsers(repository: SharedWorldRepository, ...players: RequestContext[]) {

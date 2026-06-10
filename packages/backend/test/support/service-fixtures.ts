@@ -10,7 +10,7 @@ import type {
 } from "../../../shared/src/index.ts";
 
 import type { Env, R2Bucket } from "../../src/env.ts";
-import { MemorySharedWorldRepository } from "../../src/memory-repository.ts";
+import { createSqliteRepository } from "./sqlite-d1.ts";
 import type { RequestContext, SharedWorldRepository } from "../../src/repository.ts";
 import { SharedWorldService, type AuthVerifier, type BlobUrlSigner } from "../../src/service.ts";
 import type { StorageProvider } from "../../src/storage.ts";
@@ -308,7 +308,7 @@ export function createBlobSigner() {
 }
 
 export function createTestService(
-  repository: SharedWorldRepository = new MemorySharedWorldRepository(),
+  repository: SharedWorldRepository = createSqliteRepository(),
   verifier: AuthVerifier = authVerifier,
   signer: BlobUrlSigner = createBlobSigner().signer,
   storageProviderOrEnv: StorageProvider | Env = { SESSION_TTL_HOURS: "24" },

@@ -1,6 +1,5 @@
 import { D1SharedWorldRepository } from "./d1-repository.ts";
 import type { Env } from "./env.ts";
-import { MemorySharedWorldRepository } from "./memory-repository.ts";
 import { createRouter } from "./router.ts";
 import {
   MinecraftSessionServerAuthVerifier,
@@ -9,10 +8,11 @@ import {
 } from "./service.ts";
 import { createStorageProvider } from "./storage.ts";
 
-const fallbackRepository = new MemorySharedWorldRepository();
-
 export function createApp(env: Env): { fetch(request: Request): Promise<Response> } {
-  const repository = env.DB ? new D1SharedWorldRepository(env.DB) : fallbackRepository;
+  if (!env.DB) {
+    throw new Error("SharedWorld backend requires a D1 database binding (DB).");
+  }
+  const repository = new D1SharedWorldRepository(env.DB);
   const service = new SharedWorldService(
     repository,
     new MinecraftSessionServerAuthVerifier(

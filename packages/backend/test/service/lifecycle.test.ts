@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
-import { MemorySharedWorldRepository } from "../../src/memory-repository.ts";
+import { createSqliteRepository } from "../support/sqlite-d1.ts";
 import { authVerifier, createBlobSigner, createTestService } from "../support/service-fixtures.ts";
 
 describe("SharedWorldService lifecycle", () => {
   test("create world returns a dedicated initial upload assignment without waiter state", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -28,7 +28,7 @@ describe("SharedWorldService lifecycle", () => {
   });
 
   test("observe waiting restarts when the current waiter is promoted to host", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -66,7 +66,7 @@ describe("SharedWorldService lifecycle", () => {
   });
 
   test("observe waiting restarts when the waiter session no longer exists", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -92,7 +92,7 @@ describe("SharedWorldService lifecycle", () => {
   });
 
   test("begin finalization clears the join target and forces join resolution to wait", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -129,7 +129,7 @@ describe("SharedWorldService lifecycle", () => {
   });
 
   test("runtime status never exposes a join target during finalization", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -170,7 +170,7 @@ describe("SharedWorldService lifecycle", () => {
   });
 
   test("host-starting heartbeat extends the startup deadline on the real enter-session path", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -206,7 +206,7 @@ describe("SharedWorldService lifecycle", () => {
   });
 
   test("heartbeat reports host-finalizing for the same authorized runtime without refreshing it", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -259,7 +259,7 @@ describe("SharedWorldService lifecycle", () => {
   });
 
   test("heartbeat still rejects mismatched authority after the runtime is finalizing", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -292,7 +292,7 @@ describe("SharedWorldService lifecycle", () => {
   });
 
   test("host-live timeout records warning, clears runtime, and clears waiters", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -340,7 +340,7 @@ describe("SharedWorldService lifecycle", () => {
   });
 
   test("host-finalizing timeout uses finalization activity and records warning", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -397,7 +397,7 @@ describe("SharedWorldService lifecycle", () => {
   });
 
   test("beginFinalization resets stale startup activity so finalization does not expire immediately", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -457,7 +457,7 @@ describe("SharedWorldService lifecycle", () => {
   });
 
   test("repeated finalization progress refresh keeps host-finalizing alive", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -521,7 +521,7 @@ describe("SharedWorldService lifecycle", () => {
   });
 
   test("world summaries stop showing finalizing after a host-finalizing timeout and preserve the launch warning", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -563,7 +563,7 @@ describe("SharedWorldService lifecycle", () => {
   });
 
   test("host-starting timeout does not record an unclean shutdown warning", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -587,7 +587,7 @@ describe("SharedWorldService lifecycle", () => {
   });
 
   test("host-starting timeout preserves the previous runtime epoch for the next host assignment", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -617,7 +617,7 @@ describe("SharedWorldService lifecycle", () => {
   });
 
   test("idle worlds with warning require acknowledgement before hosting", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -651,7 +651,7 @@ describe("SharedWorldService lifecycle", () => {
   });
 
   test("warning survives forced relaunches and clears on a later graceful close", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -714,7 +714,7 @@ describe("SharedWorldService lifecycle", () => {
   });
 
   test("owner can abandon stranded finalization but non-owner cannot", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -753,7 +753,7 @@ describe("SharedWorldService lifecycle", () => {
   });
 
   test("discarded finalization blocks stale snapshot publication", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });

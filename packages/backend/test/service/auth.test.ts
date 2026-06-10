@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { AuthCompleteRequest } from "../../../shared/src/index.ts";
 
-import { MemorySharedWorldRepository } from "../../src/memory-repository.ts";
+import { createSqliteRepository } from "../support/sqlite-d1.ts";
 import { createBlobSigner, createTestService, service } from "../support/service-fixtures.ts";
 
 const DEV_AUTH_SECRET = "test-dev-auth-secret";
@@ -25,7 +25,7 @@ describe("SharedWorldService auth", () => {
   test("retries short propagation lag before succeeding", async () => {
     let attempts = 0;
     const instance = createTestService(
-      new MemorySharedWorldRepository(),
+      createSqliteRepository(),
       {
         async verifyJoin(playerName, serverId) {
           attempts += 1;
@@ -54,7 +54,7 @@ describe("SharedWorldService auth", () => {
 
   test("developer auth uses the dedicated dev endpoint", async () => {
     const instance = createTestService(
-      new MemorySharedWorldRepository(),
+      createSqliteRepository(),
       {
         async verifyJoin() {
           throw new Error("should not call Mojang verifier in dev mode");
@@ -81,7 +81,7 @@ describe("SharedWorldService auth", () => {
 
   test("developer auth keeps insecure e4mc disabled unless the backend allows it", async () => {
     const instance = createTestService(
-      new MemorySharedWorldRepository(),
+      createSqliteRepository(),
       {
         async verifyJoin() {
           throw new Error("should not call Mojang verifier in dev mode");

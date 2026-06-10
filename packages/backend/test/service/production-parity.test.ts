@@ -6,19 +6,16 @@ import {
   OWNER,
   addMember,
   createD1Fixture,
-  createMemoryFixture,
   createWorldAndReleaseSeedAssignment,
   enterAndStartHosting,
   releaseWithAssignment,
   seedUsers
 } from "../support/lifecycle.ts";
 
-for (const createFixture of [createMemoryFixture, createD1Fixture]) {
-  const labelProbe = createFixture();
-  const label = labelProbe.label;
-  labelProbe.close();
+{
+  const createFixture = createD1Fixture;
 
-  describe(`SharedWorldService production lifecycle surface (${label})`, () => {
+  describe("SharedWorldService production lifecycle surface", () => {
     let fixture = createFixture();
 
     beforeEach(() => {

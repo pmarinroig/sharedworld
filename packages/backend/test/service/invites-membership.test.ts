@@ -1,36 +1,35 @@
 import { describe, expect, test } from "bun:test";
 
-import { MemorySharedWorldRepository } from "../../src/memory-repository.ts";
+import { createSqliteRepository } from "../support/sqlite-d1.ts";
 import { authVerifier, createBlobSigner, createTestService } from "../support/service-fixtures.ts";
 
 describe("SharedWorldService invites and membership", () => {
   test("expired invite codes are rejected", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     const invite = await instance.createInvite({ playerUuid: "player-owner", playerName: "Owner" }, world.id, new Date("2026-01-01T00:00:00.000Z"));
-    invite.expiresAt = "2026-01-01T00:00:01.000Z";
 
     await expect(
       instance.redeemInvite(
         { playerUuid: "player-guest", playerName: "Guest" },
         { code: invite.code },
-        new Date("2026-01-03T00:00:00.000Z")
+        new Date("2026-01-09T00:00:00.000Z")
       )
     ).rejects.toThrow("expired");
 
     const replacement = await instance.createInvite(
       { playerUuid: "player-owner", playerName: "Owner" },
       world.id,
-      new Date("2026-01-03T00:00:00.000Z")
+      new Date("2026-01-09T00:00:00.000Z")
     );
     expect(replacement.id).not.toBe(invite.id);
   });
 
   test("owner reuses the active share code until it expires or rotates", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -59,7 +58,7 @@ describe("SharedWorldService invites and membership", () => {
   });
 
   test("share codes are reusable for multiple friends and hidden from members", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -90,7 +89,7 @@ describe("SharedWorldService invites and membership", () => {
   });
 
   test("removed members can rejoin with the same active share code", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -127,7 +126,7 @@ describe("SharedWorldService invites and membership", () => {
   });
 
   test("kicked members get membership_revoked from session endpoints while the world stays active", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -178,7 +177,7 @@ describe("SharedWorldService invites and membership", () => {
   });
 
   test("session endpoints still reject never-members with forbidden", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -196,7 +195,7 @@ describe("SharedWorldService invites and membership", () => {
   });
 
   test("only the owner can manage share codes", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -225,7 +224,7 @@ describe("SharedWorldService invites and membership", () => {
   });
 
   test("rotating a share code invalidates the previous code immediately", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -262,18 +261,20 @@ describe("SharedWorldService invites and membership", () => {
   });
 
   test("historical redeemed invite rows stay inactive", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
-    const invite = await instance.createInvite(
-      { playerUuid: "player-owner", playerName: "Owner" },
-      world.id,
-      new Date("2026-01-01T00:00:00.000Z")
-    );
-
-    invite.status = "redeemed";
+    const invite = await repository.createInvite(world.id, { playerUuid: "player-owner", playerName: "Owner" }, {
+      id: "invite_redeemed",
+      worldId: world.id,
+      code: "AAAA-BBBB-CCCC",
+      createdByUuid: "player-owner",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      expiresAt: "2026-01-08T00:00:00.000Z",
+      status: "redeemed"
+    });
 
     await expect(
       instance.redeemInvite(

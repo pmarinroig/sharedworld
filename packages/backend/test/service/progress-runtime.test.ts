@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
-import { MemorySharedWorldRepository } from "../../src/memory-repository.ts";
+import { createSqliteRepository } from "../support/sqlite-d1.ts";
 import { authVerifier, createBlobSigner, createTestService } from "../support/service-fixtures.ts";
 
 describe("SharedWorldService progress and runtime", () => {
   test("explicit startup progress is rejected once host authority moved on", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -61,7 +61,7 @@ describe("SharedWorldService progress and runtime", () => {
   });
 
   test("host startup progress is relayed in host status and cleared on release", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -103,7 +103,7 @@ describe("SharedWorldService progress and runtime", () => {
   });
 
   test("host startup progress is relayed while finalizing", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -142,7 +142,7 @@ describe("SharedWorldService progress and runtime", () => {
   });
 
   test("late startup progress after finalization handoff is ignored", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -174,7 +174,7 @@ describe("SharedWorldService progress and runtime", () => {
   });
 
   test("late startup progress after finalization to idle is ignored", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -196,7 +196,7 @@ describe("SharedWorldService progress and runtime", () => {
   });
 
   test("startup progress sent against a handoff lease is ignored", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });

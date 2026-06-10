@@ -1,5 +1,5 @@
 import { createRouter } from "../../../src/router.ts";
-import { MemorySharedWorldRepository } from "../../../src/memory-repository.ts";
+import { createSqliteRepository } from "../sqlite-d1.ts";
 import { SharedWorldService, WorkerSignedUrlSigner, type AuthVerifier } from "../../../src/service.ts";
 import type { Env } from "../../../src/env.ts";
 import type { StorageBinding, StorageProvider, StorageQuota, StoredBlob } from "../../../src/storage.ts";
@@ -157,7 +157,7 @@ function createState(publicBaseUrl: string): IntegrationState {
     ALLOW_DEV_GOOGLE_OAUTH: "true",
     DEV_GOOGLE_EMAIL: "integration-drive@example.com"
   };
-  const repository = new MemorySharedWorldRepository();
+  const repository = createSqliteRepository();
   const storageProvider = new FakeGoogleDriveStorageProvider();
   const authVerifier: AuthVerifier = {
     async verifyJoin() {

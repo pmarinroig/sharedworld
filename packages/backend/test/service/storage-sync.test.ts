@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { LocalFileDescriptor } from "../../../shared/src/index.ts";
 
-import { MemorySharedWorldRepository } from "../../src/memory-repository.ts";
+import { createSqliteRepository } from "../support/sqlite-d1.ts";
 import {
   authVerifier,
   claimHostForTest,
@@ -13,7 +13,7 @@ import {
 } from "../support/service-fixtures.ts";
 
 async function seedGoogleDriveStorageObject(
-  repository: MemorySharedWorldRepository,
+  repository: SharedWorldRepository,
   storageKey: string,
   size = 1,
   contentType = "application/octet-stream"
@@ -32,7 +32,7 @@ async function seedGoogleDriveStorageObject(
 
 describe("SharedWorldService storage and sync planning", () => {
   test("storage usage counts all referenced stored objects across retained backups", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const { storageProvider } = createStorageProviderSpy("google-drive");
     const instance = createTestService(repository, authVerifier, signer, storageProvider, {});
@@ -118,7 +118,7 @@ describe("SharedWorldService storage and sync planning", () => {
   });
 
   test("storage usage dedupes repeated references to the same stored object and includes custom icons", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const { storageProvider } = createStorageProviderSpy("google-drive");
     const instance = createTestService(repository, authVerifier, signer, storageProvider, {});
@@ -206,7 +206,7 @@ describe("SharedWorldService storage and sync planning", () => {
   });
 
   test("storage usage is scoped to the current world even on the same storage account", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const { storageProvider } = createStorageProviderSpy("google-drive");
     const instance = createTestService(repository, authVerifier, signer, storageProvider, {});
@@ -301,7 +301,7 @@ describe("SharedWorldService storage and sync planning", () => {
   });
 
   test("finalizeSnapshot rejects storage keys missing from storage metadata", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const { storageProvider } = createStorageProviderSpy("google-drive");
     const instance = createTestService(repository, authVerifier, signer, storageProvider, {});
@@ -339,7 +339,7 @@ describe("SharedWorldService storage and sync planning", () => {
   });
 
   test("finalizeSnapshot rejects unknown base snapshots", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const { storageProvider } = createStorageProviderSpy("google-drive");
     const instance = createTestService(repository, authVerifier, signer, storageProvider, {});
@@ -378,7 +378,7 @@ describe("SharedWorldService storage and sync planning", () => {
   });
 
   test("finalizeSnapshot rejects inconsistent delta ancestry metadata", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const { storageProvider } = createStorageProviderSpy("google-drive");
     const instance = createTestService(repository, authVerifier, signer, storageProvider, {});
@@ -466,7 +466,7 @@ describe("SharedWorldService storage and sync planning", () => {
   });
 
   test("finalizeSnapshot rejects duplicate paths and duplicate pack ids", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const { storageProvider } = createStorageProviderSpy("google-drive");
     const instance = createTestService(repository, authVerifier, signer, storageProvider, {});
@@ -550,7 +550,7 @@ describe("SharedWorldService storage and sync planning", () => {
   });
 
   test("download and upload planning skip unchanged files", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -666,7 +666,7 @@ describe("SharedWorldService storage and sync planning", () => {
   });
 
   test("region uploads expose delta candidates and cold downloads receive a reconstruction chain", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
@@ -776,7 +776,7 @@ describe("SharedWorldService storage and sync planning", () => {
   });
 
   test("google drive worlds advertise a conservative sync policy", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld(
@@ -806,7 +806,7 @@ describe("SharedWorldService storage and sync planning", () => {
   });
 
   test("non-region packs plan delta uploads and warm download tails", async () => {
-    const repository = new MemorySharedWorldRepository();
+    const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
