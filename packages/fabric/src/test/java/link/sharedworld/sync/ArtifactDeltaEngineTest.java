@@ -33,6 +33,38 @@ final class ArtifactDeltaEngineTest {
     }
 
     @Test
+    void deltaRoundTripReconstructsTargetThatGrewBeyondTheBase() throws Exception {
+        // Region/pack artifacts change size as a world grows; the codec must reproduce a target that
+        // is longer than its base, including a trailing partial block.
+        assertDeltaRoundTrip("AAAAABBBBBCCCCC".getBytes(), "AAAAABBBBBCCCCCDDDDDEEE".getBytes(), 5);
+    }
+
+    @Test
+    void deltaRoundTripReconstructsTargetThatShrankBelowTheBase() throws Exception {
+        assertDeltaRoundTrip("AAAAABBBBBCCCCCDDDDDEEEEE".getBytes(), "AAAAABBB".getBytes(), 5);
+    }
+
+    @Test
+    void deltaRoundTripReconstructsTargetWithNoSharedBlocks() throws Exception {
+        assertDeltaRoundTrip("AAAAABBBBB".getBytes(), "VWXYZ12345".getBytes(), 5);
+    }
+
+    private void assertDeltaRoundTrip(byte[] base, byte[] target, int blockSize) throws Exception {
+        Path baseFile = this.tempDir.resolve("rt-base.bin");
+        Path targetFile = this.tempDir.resolve("rt-target.bin");
+        Path deltaFile = this.tempDir.resolve("rt-delta.bin");
+        Path outputFile = this.tempDir.resolve("rt-output.bin");
+
+        Files.write(baseFile, base);
+        Files.write(targetFile, target);
+
+        ArtifactDeltaEngine.writeDelta(baseFile, targetFile, deltaFile, blockSize);
+        ArtifactDeltaEngine.applyDelta(baseFile, deltaFile, outputFile);
+
+        assertArrayEquals(target, Files.readAllBytes(outputFile));
+    }
+
+    @Test
     void invalidDeltaHeaderFailsWithIOException() throws Exception {
         Path baseFile = this.tempDir.resolve("base.bin");
         Path deltaFile = this.tempDir.resolve("delta-invalid.bin");

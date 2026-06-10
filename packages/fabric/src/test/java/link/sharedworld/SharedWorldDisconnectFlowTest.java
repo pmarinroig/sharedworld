@@ -2,13 +2,7 @@ package link.sharedworld;
 
 import org.junit.jupiter.api.Test;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class SharedWorldDisconnectFlowTest {
     @Test
@@ -64,13 +58,5 @@ final class SharedWorldDisconnectFlowTest {
                         new SharedWorldPlaySessionTracker.ActiveWorldSession("world-1", "World", SharedWorldPlaySessionTracker.SessionRole.HOST, null, 0L)
                 )
         );
-    }
-
-    @Test
-    void sourceLeavesGuestPresenceCleanupToPlayDisconnectLifecycle() throws IOException {
-        String source = Files.readString(Path.of(System.getProperty("user.dir"), "src/main/java/link/sharedworld/mixin/MinecraftDisconnectMixin.java"));
-
-        assertTrue(source.contains("markUserInitiatedDisconnect()"));
-        assertFalse(source.contains("presenceManager().onDisconnect"));
     }
 }

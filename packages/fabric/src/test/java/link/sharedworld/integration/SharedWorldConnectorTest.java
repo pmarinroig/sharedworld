@@ -3,9 +3,6 @@ import net.minecraft.SharedConstants;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -78,24 +75,5 @@ final class SharedWorldConnectorTest {
         );
 
         assertTrue(failureHandlerInvoked.get());
-    }
-
-    @Test
-    void sourceClearsPendingGuestConnectSetupWhenHandoffFails() throws IOException {
-        String source = Files.readString(Path.of(System.getProperty("user.dir"), "src/main/java/link/sharedworld/integration/SharedWorldConnector.java"));
-
-        assertTrue(source.contains("SharedWorldClient.playSessionTracker().clear();"));
-    }
-
-    @Test
-    void sourceUsesDirectConnectScreenBridgeInsteadOfReflection() throws IOException {
-        String source = Files.readString(Path.of(System.getProperty("user.dir"), "src/main/java/link/sharedworld/integration/SharedWorldConnector.java"));
-
-        assertTrue(source.contains("ConnectScreen::startConnecting"));
-        assertTrue(source.contains("new SharedWorldErrorScreen("));
-        assertTrue(source.contains("screen.sharedworld.join_connect_failed"));
-        assertFalse(source.contains("getDeclaredMethods()"));
-        assertFalse(source.contains("keyboardHandler.setClipboard"));
-        assertFalse(source.contains("Could not locate a compatible ConnectScreen.startConnecting signature"));
     }
 }

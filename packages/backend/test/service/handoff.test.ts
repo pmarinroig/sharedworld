@@ -38,6 +38,71 @@ describe("SharedWorldService handoff", () => {
     expect(next?.playerUuid).toBe("player-owner");
   });
 
+  describe("choosePreferredCandidate ordering", () => {
+    const member = (
+      playerUuid: string,
+      role: "owner" | "member",
+      joinedAt: string,
+      deletedAt: string | null = null
+    ) => ({ playerUuid, playerName: playerUuid, role, joinedAt, deletedAt });
+    const waiter = (playerUuid: string) => ({ playerUuid, playerName: playerUuid });
+
+    test("the owner outranks an earlier-joined member", () => {
+      const next = choosePreferredCandidate(
+        [waiter("player-member"), waiter("player-owner")],
+        [
+          member("player-member", "member", "2026-01-01T00:00:00.000Z"),
+          member("player-owner", "owner", "2026-05-01T00:00:00.000Z")
+        ]
+      );
+      expect(next?.playerUuid).toBe("player-owner");
+    });
+
+    test("between two members the earlier joiner wins", () => {
+      const next = choosePreferredCandidate(
+        [waiter("player-late"), waiter("player-early")],
+        [
+          member("player-late", "member", "2026-02-01T00:00:00.000Z"),
+          member("player-early", "member", "2026-01-01T00:00:00.000Z")
+        ]
+      );
+      expect(next?.playerUuid).toBe("player-early");
+    });
+
+    test("identical join times fall back to a stable uuid order", () => {
+      const joinedAt = "2026-01-01T00:00:00.000Z";
+      const next = choosePreferredCandidate(
+        [waiter("player-b"), waiter("player-a")],
+        [member("player-b", "member", joinedAt), member("player-a", "member", joinedAt)]
+      );
+      expect(next?.playerUuid).toBe("player-a");
+    });
+
+    test("a soft-deleted membership is never elected even if it is the owner", () => {
+      const next = choosePreferredCandidate(
+        [waiter("player-gone"), waiter("player-here")],
+        [
+          member("player-gone", "owner", "2026-01-01T00:00:00.000Z", "2026-03-01T00:00:00.000Z"),
+          member("player-here", "member", "2026-02-01T00:00:00.000Z")
+        ]
+      );
+      expect(next?.playerUuid).toBe("player-here");
+    });
+
+    test("a waiter with no membership is ignored", () => {
+      const next = choosePreferredCandidate(
+        [waiter("player-ghost"), waiter("player-real")],
+        [member("player-real", "member", "2026-01-01T00:00:00.000Z")]
+      );
+      expect(next?.playerUuid).toBe("player-real");
+    });
+
+    test("no eligible waiter resolves to null", () => {
+      expect(choosePreferredCandidate([], [])).toBeNull();
+      expect(choosePreferredCandidate([waiter("player-ghost")], [])).toBeNull();
+    });
+  });
+
   test("stale waiters do not block a fresh host election", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
