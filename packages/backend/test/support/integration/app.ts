@@ -1,6 +1,7 @@
 import { createRouter } from "../../../src/router.ts";
 import { createSqliteRepository } from "../sqlite-d1.ts";
 import { SharedWorldService, WorkerSignedUrlSigner, type AuthVerifier } from "../../../src/service.ts";
+import type { SharedWorldRepository } from "../../../src/repository.ts";
 import type { Env } from "../../../src/env.ts";
 import type { StorageBinding, StorageProvider, StorageQuota, StoredBlob } from "../../../src/storage.ts";
 
@@ -42,24 +43,44 @@ interface StoredEntry {
   contentType: string;
 }
 
+/**
+ * Mirrors the real GoogleDriveStorageProvider contract: every stored object is
+ * also recorded as a storage_objects row, which the backend uses for snapshot
+ * validation and storage usage accounting.
+ */
 class FakeGoogleDriveStorageProvider implements StorageProvider {
   readonly provider = "google-drive" as const;
   private readonly entries = new Map<string, StoredEntry>();
 
-  async exists(_binding: StorageBinding, storageKey: string): Promise<boolean> {
+  constructor(private readonly repository: SharedWorldRepository) {}
+
+  async exists(binding: StorageBinding, storageKey: string): Promise<boolean> {
     return this.entries.has(storageKey);
   }
 
   async put(
-    _binding: StorageBinding,
+    binding: StorageBinding,
     storageKey: string,
     body: ReadableStream | ArrayBuffer | Uint8Array | string,
     contentType: string
   ): Promise<void> {
+    const bytes = await toUint8Array(body);
     this.entries.set(storageKey, {
-      bytes: await toUint8Array(body),
+      bytes,
       contentType
     });
+    if (binding.storageAccountId != null) {
+      await this.repository.upsertStorageObject({
+        provider: this.provider,
+        storageAccountId: binding.storageAccountId,
+        storageKey,
+        objectId: `fake-${storageKey}`,
+        contentType,
+        size: bytes.byteLength,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+    }
   }
 
   async get(_binding: StorageBinding, storageKey: string): Promise<StoredBlob | null> {
@@ -83,8 +104,11 @@ class FakeGoogleDriveStorageProvider implements StorageProvider {
     };
   }
 
-  async delete(_binding: StorageBinding, storageKey: string): Promise<void> {
+  async delete(binding: StorageBinding, storageKey: string): Promise<void> {
     this.entries.delete(storageKey);
+    if (binding.storageAccountId != null) {
+      await this.repository.deleteStorageObject(this.provider, binding.storageAccountId, storageKey);
+    }
   }
 
   async quota(): Promise<StorageQuota> {
@@ -158,7 +182,7 @@ function createState(publicBaseUrl: string): IntegrationState {
     DEV_GOOGLE_EMAIL: "integration-drive@example.com"
   };
   const repository = createSqliteRepository();
-  const storageProvider = new FakeGoogleDriveStorageProvider();
+  const storageProvider = new FakeGoogleDriveStorageProvider(repository);
   const authVerifier: AuthVerifier = {
     async verifyJoin() {
       throw new Error("integration backend expected developer auth");

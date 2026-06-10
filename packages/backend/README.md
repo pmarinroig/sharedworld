@@ -15,6 +15,19 @@ coordination, world metadata, ownership handoff, and storage integration.
 - `migrations/`: D1 schema migrations
 - `.dev.vars.example`: local development variables template
 
+## Code Layout
+
+- `src/service.ts`: the facade the router talks to; wiring only
+- `src/service/`: one module per domain — worlds, members, snapshots,
+  sync-plan, session — plus `runtime-access.ts` for the shared authority guards
+- `src/runtime-protocol.ts`: pure runtime transitions and epoch/token rules
+- `src/d1-repository.ts`: the single storage implementation (D1/SQLite)
+- `src/storage.ts`, `src/storage/`: blob storage providers and Drive linking
+- `src/auth/`: Minecraft session auth
+
+Tests run the production repository against in-memory SQLite loaded with
+`src/schema.sql`, so there is no separate test-only persistence layer.
+
 ## Local Run
 
 ```bash

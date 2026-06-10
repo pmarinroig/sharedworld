@@ -182,6 +182,8 @@ export async function storageKeyExists(svc: ServiceContext, binding: WorldStorag
       // Unlinked worlds do not have cheap object metadata to validate against.
       return true;
     }
+    // Drive providers record every stored object in the repository; that row is the
+    // authoritative existence check (the real provider's exists() is the same lookup).
     return (await svc.repository.getStorageObject(binding.provider, binding.storageAccountId, storageKey)) != null;
   }
   if (binding.provider === "r2" && svc.storageProvider.provider === "r2" && svc.env.BLOBS == null) {

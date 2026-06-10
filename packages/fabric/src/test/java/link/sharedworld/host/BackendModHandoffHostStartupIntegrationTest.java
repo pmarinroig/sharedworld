@@ -1,10 +1,8 @@
 package link.sharedworld.host;
 
 import link.sharedworld.SharedWorldSessionCoordinator;
-import link.sharedworld.SharedWorldClient;
 import link.sharedworld.api.SharedWorldApiClient;
 import link.sharedworld.host.HostingEvents;
-import link.sharedworld.host.SharedWorldHostRecoveryStore;
 import link.sharedworld.api.SharedWorldModels;
 import link.sharedworld.integration.support.SharedWorldIntegrationBackend;
 import link.sharedworld.support.SharedWorldCoordinatorHarness;
@@ -26,6 +24,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Tag("integration")
 final class BackendModHandoffHostStartupIntegrationTest {
+    private static final java.util.concurrent.ExecutorService BACKGROUND_EXECUTOR =
+            java.util.concurrent.Executors.newFixedThreadPool(2, runnable -> {
+                Thread thread = new Thread(runnable, "sharedworld-integration-host-io");
+                thread.setDaemon(true);
+                return thread;
+            });
+
     @BeforeEach
     void resetBackend() throws Exception {
         SharedWorldIntegrationBackend.reset();
@@ -80,9 +85,9 @@ final class BackendModHandoffHostStartupIntegrationTest {
                             Runnable::run,
                             () -> 0L
                     ),
-                    new SharedWorldHostRecoveryStore(),
+                    new InMemoryHostRecoveryPersistence(),
                     HostingEvents.NONE,
-                    SharedWorldClient.ioExecutor(),
+                    BACKGROUND_EXECUTOR,
                     Runnable::run
             );
             SharedWorldSessionCoordinator coordinator = new SharedWorldSessionCoordinator(
@@ -229,6 +234,25 @@ final class BackendModHandoffHostStartupIntegrationTest {
         @Override
         public SharedWorldModels.FinalizationActionResultDto abandonFinalization(String worldId) throws Exception {
             return this.client.abandonFinalization(worldId);
+        }
+    }
+
+    private static final class InMemoryHostRecoveryPersistence implements SharedWorldHostingManager.HostRecoveryPersistence {
+        private SharedWorldHostingManager.HostRecoveryRecord record;
+
+        @Override
+        public SharedWorldHostingManager.HostRecoveryRecord load() {
+            return this.record;
+        }
+
+        @Override
+        public void save(SharedWorldHostingManager.HostRecoveryRecord record) {
+            this.record = record;
+        }
+
+        @Override
+        public void clear() {
+            this.record = null;
         }
     }
 }
