@@ -86,9 +86,7 @@ export interface WorldStorageBinding {
   storageAccountId: string | null;
 }
 
-export interface WorldUncleanShutdownWarningRecord extends UncleanShutdownWarning {
-  runtimeEpoch: number;
-}
+export type { UncleanShutdownWarning };
 
 export interface RequestContext {
   playerUuid: string;
@@ -163,8 +161,8 @@ export interface RuntimeRepository {
   upsertRuntimeRecord(runtime: WorldRuntimeRecord): Promise<void>;
   deleteRuntimeRecord(worldId: string): Promise<void>;
   getLastRuntimeEpoch(worldId: string): Promise<number>;
-  getUncleanShutdownWarning(worldId: string): Promise<WorldUncleanShutdownWarningRecord | null>;
-  setUncleanShutdownWarning(worldId: string, warning: WorldUncleanShutdownWarningRecord): Promise<void>;
+  getUncleanShutdownWarning(worldId: string): Promise<UncleanShutdownWarning | null>;
+  setUncleanShutdownWarning(worldId: string, warning: UncleanShutdownWarning): Promise<void>;
   clearUncleanShutdownWarning(worldId: string): Promise<void>;
   listActiveWaiters(worldId: string, now: Date): Promise<RuntimeWaiter[]>;
   upsertWaiterSession(worldId: string, ctx: RequestContext, waiterSessionId: string, now: Date): Promise<void>;
