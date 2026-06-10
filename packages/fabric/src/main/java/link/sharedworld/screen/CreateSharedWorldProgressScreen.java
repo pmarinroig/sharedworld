@@ -14,6 +14,10 @@ import net.minecraft.network.chat.Component;
 import java.util.concurrent.CompletableFuture;
 
 public final class CreateSharedWorldProgressScreen extends Screen {
+    // The seed lease has a fixed startup deadline; heartbeat well inside it so a slow copy/upload
+    // cannot let the lease expire mid-create.
+    private static final long LEASE_KEEPALIVE_INTERVAL_MS = 30_000L;
+
     private final SharedWorldScreen parent;
     private final CreateSharedWorldScreen.CreateDraft draft;
     private final CreateSharedWorldScreen.CreateRequest request;
@@ -28,6 +32,16 @@ public final class CreateSharedWorldProgressScreen extends Screen {
                 @Override
                 public void releaseHost(String worldId, boolean graceful, long runtimeEpoch, String hostToken) throws java.io.IOException, InterruptedException {
                     SharedWorldClient.apiClient().releaseHost(worldId, graceful, runtimeEpoch, hostToken);
+                }
+
+                @Override
+                public void heartbeatHost(String worldId, long runtimeEpoch, String hostToken) throws java.io.IOException, InterruptedException {
+                    SharedWorldClient.apiClient().heartbeatHost(worldId, runtimeEpoch, hostToken, null);
+                }
+
+                @Override
+                public void deleteWorld(String worldId) throws java.io.IOException, InterruptedException {
+                    SharedWorldClient.apiClient().deleteWorld(worldId);
                 }
 
                 @Override
@@ -54,6 +68,15 @@ public final class CreateSharedWorldProgressScreen extends Screen {
                 public void uploadSnapshot(String worldId, java.nio.file.Path worldDirectory, String hostPlayerUuid, long runtimeEpoch, String hostToken, link.sharedworld.sync.WorldSyncProgressListener progressListener) throws java.io.IOException, InterruptedException {
                     this.syncCoordinator.uploadSnapshot(worldId, worldDirectory, hostPlayerUuid, runtimeEpoch, hostToken, progressListener);
                 }
+            },
+            heartbeat -> {
+                java.util.concurrent.ScheduledExecutorService scheduler = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(runnable -> {
+                    Thread thread = new Thread(runnable, "sharedworld-create-keepalive");
+                    thread.setDaemon(true);
+                    return thread;
+                });
+                scheduler.scheduleWithFixedDelay(heartbeat, LEASE_KEEPALIVE_INTERVAL_MS, LEASE_KEEPALIVE_INTERVAL_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+                return scheduler::shutdownNow;
             }
     );
 

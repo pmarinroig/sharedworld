@@ -32,10 +32,7 @@ export async function createWorld(
   request: CreateWorldRequest,
   now: Date
 ): Promise<CreateWorldResult> {
-  const name = request.name.trim();
-  if (name.length < 3) {
-    throw new HttpError(400, "invalid_world_name", "World name must be at least 3 characters.");
-  }
+  const name = requireValidWorldName(request.name);
   if (request.storageLinkSessionId && (request.importSource?.type !== "local-save" || !request.importSource.id.trim())) {
     throw new HttpError(400, "invalid_import_source", "A local save import source is required.");
   }
@@ -82,10 +79,7 @@ export async function updateWorld(
   worldId: string,
   request: UpdateWorldRequest
 ): Promise<WorldDetails> {
-  const name = request.name.trim();
-  if (name.length < 3) {
-    throw new HttpError(400, "invalid_world_name", "World name must be at least 3 characters.");
-  }
+  const name = requireValidWorldName(request.name);
 
   const world = await requireWorldDetails(svc, worldId, ctx.playerUuid);
   requireOwner(world, ctx, "edit this world");
@@ -189,6 +183,23 @@ async function storeCustomIcon(svc: ServiceContext, binding: StorageBinding, ico
     await svc.storageProvider.put(binding, storageKey, bytes, "image/png");
   }
   return storageKey;
+}
+
+const MAX_WORLD_NAME_LENGTH = 128;
+
+/**
+ * The client caps the name field at 128 characters, but the backend must not trust that: validate
+ * both ends here so a hand-crafted request cannot store an unbounded name.
+ */
+function requireValidWorldName(rawName: string): string {
+  const name = rawName.trim();
+  if (name.length < 3) {
+    throw new HttpError(400, "invalid_world_name", "World name must be at least 3 characters.");
+  }
+  if (name.length > MAX_WORLD_NAME_LENGTH) {
+    throw new HttpError(400, "invalid_world_name", `World name must be at most ${MAX_WORLD_NAME_LENGTH} characters.`);
+  }
+  return name;
 }
 
 function normalizeMotd(line1: string | null, line2: string | null): string | null {

@@ -56,6 +56,16 @@ final class BackendModCreateFlowIntegrationTest {
                         }
 
                         @Override
+                        public void heartbeatHost(String worldId, long runtimeEpoch, String hostToken) throws java.io.IOException, InterruptedException {
+                            hostClient.heartbeatHost(worldId, runtimeEpoch, hostToken, null);
+                        }
+
+                        @Override
+                        public void deleteWorld(String worldId) throws java.io.IOException, InterruptedException {
+                            hostClient.deleteWorld(worldId);
+                        }
+
+                        @Override
                         public String canonicalAssignedPlayerUuidWithHyphens(String backendAssignedPlayerUuid) {
                             return hostClient.canonicalAssignedPlayerUuidWithHyphens(backendAssignedPlayerUuid);
                         }
@@ -73,7 +83,12 @@ final class BackendModCreateFlowIntegrationTest {
                         }
                     },
                     (worldId, worldDirectory, hostPlayerUuid, runtimeEpoch, hostToken, progressListener) ->
-                            syncCoordinator.uploadSnapshot(worldId, worldDirectory, hostPlayerUuid, runtimeEpoch, hostToken, progressListener)
+                            syncCoordinator.uploadSnapshot(worldId, worldDirectory, hostPlayerUuid, runtimeEpoch, hostToken, progressListener),
+                    heartbeat -> {
+                        heartbeat.run();
+                        return () -> {
+                        };
+                    }
             );
 
             String worldName = SharedWorldIntegrationBackend.uniqueName("Integration Create");
