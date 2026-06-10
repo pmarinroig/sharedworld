@@ -1,7 +1,10 @@
 package link.sharedworld.host;
 
 import link.sharedworld.SharedWorldSessionCoordinator;
+import link.sharedworld.SharedWorldClient;
 import link.sharedworld.api.SharedWorldApiClient;
+import link.sharedworld.host.HostingEvents;
+import link.sharedworld.host.SharedWorldHostRecoveryStore;
 import link.sharedworld.api.SharedWorldModels;
 import link.sharedworld.integration.support.SharedWorldIntegrationBackend;
 import link.sharedworld.support.SharedWorldCoordinatorHarness;
@@ -76,7 +79,11 @@ final class BackendModHandoffHostStartupIntegrationTest {
                             },
                             Runnable::run,
                             () -> 0L
-                    )
+                    ),
+                    new SharedWorldHostRecoveryStore(),
+                    HostingEvents.NONE,
+                    SharedWorldClient.ioExecutor(),
+                    Runnable::run
             );
             SharedWorldSessionCoordinator coordinator = new SharedWorldSessionCoordinator(
                     new RealSessionBackend(guestClient),

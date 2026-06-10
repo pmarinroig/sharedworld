@@ -1,9 +1,6 @@
 package link.sharedworld.host;
 
-import link.sharedworld.SharedWorldClient;
 import link.sharedworld.SharedWorldDevSessionBridge;
-import link.sharedworld.SharedWorldGuestCacheWarmer;
-import link.sharedworld.SharedWorldPlaySessionTracker;
 import link.sharedworld.SharedWorldText;
 import link.sharedworld.api.SharedWorldApiClient;
 import link.sharedworld.api.SharedWorldModels.HostAssignmentDto;
@@ -34,7 +31,6 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Consumer;
 
 public final class SharedWorldHostingManager {
     private static final Logger LOGGER = LoggerFactory.getLogger("sharedworld-hosting");
@@ -49,7 +45,7 @@ public final class SharedWorldHostingManager {
     private final ManagedWorldStore worldStore;
     private final SyncAccess syncAccess;
     private final HostRecoveryPersistence hostRecoveryStore;
-    private final PendingReleaseRecoveryChecker pendingReleaseRecoveryChecker;
+    private final HostingEvents events;
     private final WorldSnapshotCaptureCoordinator snapshotCaptureCoordinator;
     private final WorldOpenController worldOpenController;
     private final HostWorldBootstrap worldBootstrap;
@@ -82,43 +78,26 @@ public final class SharedWorldHostingManager {
     private volatile StartupMode startupMode = StartupMode.NORMAL;
     private volatile boolean startupRecoveringLocalCrash;
 
-    public SharedWorldHostingManager(SharedWorldApiClient apiClient) {
+    public SharedWorldHostingManager(
+            SharedWorldApiClient apiClient,
+            HostingEvents events,
+            Executor backgroundExecutor,
+            Executor mainThreadExecutor
+    ) {
         this(
                 apiClient,
                 new ManagedWorldStore(),
                 null,
                 null,
-                defaultStartupProgressRelay(apiClient),
+                new HostStartupProgressRelayController(
+                        apiClient::setHostStartupProgress,
+                        backgroundExecutor,
+                        System::currentTimeMillis
+                ),
                 new SharedWorldHostRecoveryStore(),
-                worldId -> {
-                    SharedWorldReleaseCoordinator releaseCoordinator = releaseCoordinatorOrNull();
-                    return releaseCoordinator != null && releaseCoordinator.hasPendingReleaseRecovery(worldId);
-                },
-                defaultBackgroundExecutor(),
-                defaultMainThreadExecutor()
-        );
-    }
-
-    SharedWorldHostingManager(
-            SharedWorldApiClient apiClient,
-            ManagedWorldStore worldStore,
-            SyncAccess syncAccess,
-            WorldOpenController worldOpenController,
-            HostStartupProgressRelayController startupProgressRelay
-    ) {
-        this(
-                apiClient,
-                worldStore,
-                syncAccess,
-                worldOpenController,
-                startupProgressRelay,
-                new SharedWorldHostRecoveryStore(),
-                worldId -> {
-                    SharedWorldReleaseCoordinator releaseCoordinator = releaseCoordinatorOrNull();
-                    return releaseCoordinator != null && releaseCoordinator.hasPendingReleaseRecovery(worldId);
-                },
-                defaultBackgroundExecutor(),
-                defaultMainThreadExecutor()
+                events,
+                backgroundExecutor,
+                mainThreadExecutor
         );
     }
 
@@ -129,29 +108,7 @@ public final class SharedWorldHostingManager {
             WorldOpenController worldOpenController,
             HostStartupProgressRelayController startupProgressRelay,
             HostRecoveryPersistence hostRecoveryStore,
-            PendingReleaseRecoveryChecker pendingReleaseRecoveryChecker
-    ) {
-        this(
-                apiClient,
-                worldStore,
-                syncAccess,
-                worldOpenController,
-                startupProgressRelay,
-                hostRecoveryStore,
-                pendingReleaseRecoveryChecker,
-                defaultBackgroundExecutor(),
-                defaultMainThreadExecutor()
-        );
-    }
-
-    SharedWorldHostingManager(
-            SharedWorldApiClient apiClient,
-            ManagedWorldStore worldStore,
-            SyncAccess syncAccess,
-            WorldOpenController worldOpenController,
-            HostStartupProgressRelayController startupProgressRelay,
-            HostRecoveryPersistence hostRecoveryStore,
-            PendingReleaseRecoveryChecker pendingReleaseRecoveryChecker,
+            HostingEvents events,
             Executor backgroundExecutor,
             Executor mainThreadExecutor
     ) {
@@ -159,7 +116,7 @@ public final class SharedWorldHostingManager {
         this.startupProgressRelay = Objects.requireNonNull(startupProgressRelay, "startupProgressRelay");
         this.worldStore = Objects.requireNonNull(worldStore, "worldStore");
         this.hostRecoveryStore = Objects.requireNonNull(hostRecoveryStore, "hostRecoveryStore");
-        this.pendingReleaseRecoveryChecker = Objects.requireNonNull(pendingReleaseRecoveryChecker, "pendingReleaseRecoveryChecker");
+        this.events = Objects.requireNonNull(events, "events");
         this.backgroundExecutor = Objects.requireNonNull(backgroundExecutor, "backgroundExecutor");
         this.mainThreadExecutor = Objects.requireNonNull(mainThreadExecutor, "mainThreadExecutor");
         this.syncAccess = syncAccess != null
@@ -172,85 +129,6 @@ public final class SharedWorldHostingManager {
         this.worldBootstrap = new HostWorldBootstrap(this.syncAccess, this.worldStore, this.worldOpenController);
     }
 
-    private static HostStartupProgressRelayController defaultStartupProgressRelay(SharedWorldApiClient apiClient) {
-        return new HostStartupProgressRelayController(
-                apiClient::setHostStartupProgress,
-                defaultBackgroundExecutor(),
-                System::currentTimeMillis
-        );
-    }
-
-    private static Executor defaultBackgroundExecutor() {
-        try {
-            return SharedWorldClient.ioExecutor();
-        } catch (ExceptionInInitializerError | NoClassDefFoundError ignored) {
-            return Runnable::run;
-        }
-    }
-
-    private static Executor defaultMainThreadExecutor() {
-        return runnable -> {
-            try {
-                Minecraft minecraft = Minecraft.getInstance();
-                if (minecraft != null) {
-                    minecraft.execute(runnable);
-                    return;
-                }
-            } catch (ExceptionInInitializerError | NoClassDefFoundError ignored) {
-            }
-            runnable.run();
-        };
-    }
-
-    private static void refreshHostedPermissionLevels() {
-        Minecraft minecraft;
-        try {
-            minecraft = Minecraft.getInstance();
-        } catch (ExceptionInInitializerError | NoClassDefFoundError ignored) {
-            return;
-        }
-        if (minecraft == null) {
-            return;
-        }
-        IntegratedServer server = minecraft.getSingleplayerServer();
-        if (server == null) {
-            return;
-        }
-
-        var playerList = server.getPlayerList();
-        if (playerList == null) {
-            return;
-        }
-
-        for (var serverPlayer : playerList.getPlayers()) {
-            playerList.sendPlayerPermissionLevel(serverPlayer);
-        }
-    }
-
-    private static void withGuestCacheWarmer(Consumer<SharedWorldGuestCacheWarmer> action) {
-        try {
-            SharedWorldGuestCacheWarmer guestCacheWarmer = SharedWorldClient.guestCacheWarmer();
-            if (guestCacheWarmer != null) {
-                action.accept(guestCacheWarmer);
-            }
-        } catch (ExceptionInInitializerError | NoClassDefFoundError ignored) {
-        }
-    }
-
-    private static void withPlaySessionTracker(Consumer<SharedWorldPlaySessionTracker> action) {
-        try {
-            action.accept(SharedWorldClient.playSessionTracker());
-        } catch (ExceptionInInitializerError | NoClassDefFoundError ignored) {
-        }
-    }
-
-    private static SharedWorldReleaseCoordinator releaseCoordinatorOrNull() {
-        try {
-            return SharedWorldClient.releaseCoordinator();
-        } catch (ExceptionInInitializerError | NoClassDefFoundError ignored) {
-            return null;
-        }
-    }
 
     /**
      * Responsibility:
@@ -307,7 +185,7 @@ public final class SharedWorldHostingManager {
         this.startupProgressRelay.reset();
         long startupAttemptId = this.startupAttemptId + 1L;
         this.startupAttemptId = startupAttemptId;
-        withGuestCacheWarmer(guestCacheWarmer -> guestCacheWarmer.pauseWorld(world.id()));
+        this.events.onHostStartupBegan(world.id());
         E4mcDomainTracker.clear();
         setPhase(Phase.PREPARING, SharedWorldText.string("screen.sharedworld.hosting_syncing_snapshot"));
 
@@ -787,9 +665,8 @@ public final class SharedWorldHostingManager {
                 && confirmedJoinTarget.equals(this.publishedJoinTarget)) {
             this.lastAutosaveAt = this.lastHeartbeatAt;
             saveHostRecoveryMarker();
-            withPlaySessionTracker(playSessionTracker -> playSessionTracker.beginHostSession(this.world.id(), this.world.name()));
             SharedWorldDevSessionBridge.setHostingSharedWorld(true, this.world.ownerUuid());
-            refreshHostedPermissionLevels();
+            this.events.onHostSessionLive(this.world.id(), this.world.name());
             setPhase(Phase.RUNNING, SharedWorldText.string("screen.sharedworld.hosting_live_at", confirmedJoinTarget));
         }
     }
@@ -799,17 +676,11 @@ public final class SharedWorldHostingManager {
             return;
         }
         if (SharedWorldApiClient.isDeletedWorldError(exception)) {
-            SharedWorldReleaseCoordinator releaseCoordinator = releaseCoordinatorOrNull();
-            if (releaseCoordinator != null) {
-                releaseCoordinator.onWorldDeleted();
-            }
+            this.events.onWorldDeleted();
             return;
         }
         if (SharedWorldApiClient.isMembershipRevokedError(exception)) {
-            SharedWorldReleaseCoordinator releaseCoordinator = releaseCoordinatorOrNull();
-            if (releaseCoordinator != null) {
-                releaseCoordinator.onMembershipRevoked();
-            }
+            this.events.onMembershipRevoked();
             return;
         }
         if (SharedWorldApiClient.isHostNotActiveError(exception)) {
@@ -834,10 +705,7 @@ public final class SharedWorldHostingManager {
         this.errorMessage = message;
         invalidateAsyncOperations();
         setPhase(Phase.ERROR, message);
-        SharedWorldReleaseCoordinator releaseCoordinator = releaseCoordinatorOrNull();
-        if (releaseCoordinator != null) {
-            releaseCoordinator.onHostAuthorityLost(session, stage, message);
-        }
+        this.events.onHostAuthorityLost(session, stage, message);
     }
 
     /**
@@ -895,10 +763,7 @@ public final class SharedWorldHostingManager {
                 if (SharedWorldApiClient.isDeletedWorldError(exception)) {
                     dispatchToMainThread(() -> {
                         if (isCurrentAttempt(context)) {
-                            SharedWorldReleaseCoordinator releaseCoordinator = releaseCoordinatorOrNull();
-                            if (releaseCoordinator != null) {
-                                releaseCoordinator.onWorldDeleted();
-                            }
+                            this.events.onWorldDeleted();
                         }
                     });
                     return;
@@ -906,10 +771,7 @@ public final class SharedWorldHostingManager {
                 if (SharedWorldApiClient.isMembershipRevokedError(exception)) {
                     dispatchToMainThread(() -> {
                         if (isCurrentAttempt(context)) {
-                            SharedWorldReleaseCoordinator releaseCoordinator = releaseCoordinatorOrNull();
-                            if (releaseCoordinator != null) {
-                                releaseCoordinator.onMembershipRevoked();
-                            }
+                            this.events.onMembershipRevoked();
                         }
                     });
                     return;
@@ -982,7 +844,7 @@ public final class SharedWorldHostingManager {
         if (worldId == null || worldId.isBlank() || hostPlayerUuid == null || hostPlayerUuid.isBlank()) {
             return new RecoveryEligibility(RecoveryEligibilityOutcome.FALLBACK_NO_MARKER, null);
         }
-        if (this.pendingReleaseRecoveryChecker.hasPendingReleaseRecovery(worldId)) {
+        if (this.events.hasPendingReleaseRecovery(worldId)) {
             return new RecoveryEligibility(RecoveryEligibilityOutcome.FALLBACK_PENDING_RELEASE, null);
         }
         HostRecoveryRecord record = this.hostRecoveryStore.load();
@@ -1108,10 +970,7 @@ public final class SharedWorldHostingManager {
     }
 
     private void resetState() {
-        if (this.world != null) {
-            withGuestCacheWarmer(guestCacheWarmer -> guestCacheWarmer.resumeWorld(this.world.id()));
-        }
-        withPlaySessionTracker(SharedWorldPlaySessionTracker::clear);
+        String clearedWorldId = this.world == null ? null : this.world.id();
         this.phase = Phase.IDLE;
         this.statusMessage = "";
         this.errorMessage = null;
@@ -1138,7 +997,7 @@ public final class SharedWorldHostingManager {
         this.startupRecoveringLocalCrash = false;
         E4mcDomainTracker.clear();
         SharedWorldDevSessionBridge.clear();
-        refreshHostedPermissionLevels();
+        this.events.onHostStateCleared(clearedWorldId);
     }
 
     private void applyStartupSyncProgress(long startupAttemptId, WorldSyncProgress progress) {
@@ -1376,10 +1235,6 @@ public final class SharedWorldHostingManager {
         void save(HostRecoveryRecord record) throws Exception;
 
         void clear();
-    }
-
-    interface PendingReleaseRecoveryChecker {
-        boolean hasPendingReleaseRecovery(String worldId);
     }
 
     interface WorldOpenController {
