@@ -9,8 +9,7 @@ import type {
 import type {
   StorageAccountRecord,
   StorageLinkSessionRecord,
-  StorageObjectRecord,
-  WorldUncleanShutdownWarningRecord
+  StorageObjectRecord
 } from "../repository.ts";
 import type { WorldRuntimeRecord } from "../runtime-protocol.ts";
 import { asNullableString, clampFraction, type Row } from "./d1-support.ts";
@@ -27,7 +26,7 @@ export function mapInvite(row: Row): InviteCode {
   };
 }
 
-export function mapUncleanShutdownWarning(row: Row | null): WorldUncleanShutdownWarningRecord | null {
+export function mapUncleanShutdownWarning(row: Row | null): UncleanShutdownWarning | null {
   if (!row) {
     return null;
   }

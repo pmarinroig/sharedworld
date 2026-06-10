@@ -4,13 +4,13 @@ import type {
   WorldRuntimeStatus
 } from "../../shared/src/index.ts";
 
-import type { WorldUncleanShutdownWarningRecord } from "./repository.ts";
+import type { UncleanShutdownWarning } from "./repository.ts";
 import type { RuntimeCandidate, WorldRuntimeRecord } from "./runtime-protocol.ts";
 
 export interface ResolvedRuntimeState {
   runtime: WorldRuntimeRecord | null;
   candidate: RuntimeCandidate | null;
-  warning: WorldUncleanShutdownWarningRecord | null;
+  warning: UncleanShutdownWarning | null;
   retiredRuntimeEpoch: number | null;
 }
 

@@ -34,7 +34,7 @@ import type {
   StorageObjectRecord,
   UserRecord,
   WorldUpdateRecord,
-  WorldUncleanShutdownWarningRecord
+  UncleanShutdownWarning
 } from "./repository.ts";
 import {
   resolveRuntimeTimeout,
@@ -757,7 +757,7 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     return row?.last_runtime_epoch == null ? 0 : Number(row.last_runtime_epoch);
   }
 
-  async getUncleanShutdownWarning(worldId: string): Promise<WorldUncleanShutdownWarningRecord | null> {
+  async getUncleanShutdownWarning(worldId: string): Promise<UncleanShutdownWarning | null> {
     const row = await this.first<Row>(
       `SELECT unclean_shutdown_host_uuid, unclean_shutdown_host_player_name, unclean_shutdown_phase, unclean_shutdown_runtime_epoch, unclean_shutdown_recorded_at
        FROM worlds
@@ -767,7 +767,7 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     return mapUncleanShutdownWarning(row);
   }
 
-  async setUncleanShutdownWarning(worldId: string, warning: WorldUncleanShutdownWarningRecord): Promise<void> {
+  async setUncleanShutdownWarning(worldId: string, warning: UncleanShutdownWarning): Promise<void> {
     await this.run(
       `UPDATE worlds
        SET unclean_shutdown_host_uuid = ?,
