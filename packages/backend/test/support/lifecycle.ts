@@ -2,7 +2,7 @@ import type { CreateWorldRequest, HostAssignment, ReleaseHostRequest } from "../
 import type { RequestContext, SharedWorldRepository } from "../../src/repository.ts";
 import type { AuthVerifier, BlobUrlSigner } from "../../src/service.ts";
 import { createSqliteRepository } from "./sqlite-d1.ts";
-import { createTestService, type LegacyCompatibleSharedWorldService } from "./service-fixtures.ts";
+import { createTestService, type TestDriverSharedWorldService } from "./service-fixtures.ts";
 
 export const OWNER: RequestContext = { playerUuid: "player-owner", playerName: "Owner" };
 export const GUEST: RequestContext = { playerUuid: "player-guest", playerName: "Guest" };
@@ -17,7 +17,7 @@ const authVerifier: AuthVerifier = {
 export type ServiceFixture<TRepository extends SharedWorldRepository> = {
   label: string;
   repository: TRepository;
-  service: LegacyCompatibleSharedWorldService;
+  service: TestDriverSharedWorldService;
   close(): void;
 };
 
@@ -34,7 +34,7 @@ class NoopBlobSigner implements BlobUrlSigner {
   }
 }
 
-function createService(repository: SharedWorldRepository): LegacyCompatibleSharedWorldService {
+function createService(repository: SharedWorldRepository): TestDriverSharedWorldService {
   return createTestService(
     repository,
     authVerifier,
