@@ -2,6 +2,7 @@ package link.sharedworld;
 
 import link.sharedworld.api.SharedWorldApiClient;
 import link.sharedworld.api.SharedWorldModels.WorldSummaryDto;
+import link.sharedworld.host.HostingEvents;
 import link.sharedworld.host.SharedWorldHostingManager;
 import link.sharedworld.host.SharedWorldReleaseCoordinator;
 import link.sharedworld.screen.HandoffWaitingScreen;
@@ -47,7 +48,12 @@ public final class SharedWorldClient implements ClientModInitializer {
         RuntimePlayerIdentity.resolveBackendPlayerUuidWithHyphens(Minecraft.getInstance().getUser());
         apiClient = new SharedWorldApiClient(SharedWorldClientConfigStore.shared().resolvedBackendBaseUrl());
         HostPlayerIdentity hostPlayerIdentity = apiClient::authenticatedWorldPlayerUuidWithHyphens;
-        hostingManager = new SharedWorldHostingManager(apiClient);
+        hostingManager = new SharedWorldHostingManager(
+                apiClient,
+                new ClientHostingEvents(),
+                IO_EXECUTOR,
+                runnable -> Minecraft.getInstance().execute(runnable)
+        );
         releaseCoordinator = new SharedWorldReleaseCoordinator(apiClient, hostingManager);
         presenceManager = new SharedWorldPresenceManager(apiClient);
         guestCacheWarmer = new SharedWorldGuestCacheWarmer(apiClient, hostPlayerIdentity);
@@ -198,6 +204,71 @@ public final class SharedWorldClient implements ClientModInitializer {
 
     public static boolean shouldOpenSharedWorldByDefault() {
         return SharedWorldViewState.shouldOpenSharedWorldByDefault();
+    }
+
+    /**
+     * Production glue between local host execution and the rest of the client.
+     * The hosting manager itself never reaches into these singletons; every
+     * cross-component effect flows through this listener.
+     */
+    private static final class ClientHostingEvents implements HostingEvents {
+        @Override
+        public void onHostStartupBegan(String worldId) {
+            guestCacheWarmer.pauseWorld(worldId);
+        }
+
+        @Override
+        public void onHostSessionLive(String worldId, String worldName) {
+            PLAY_SESSION_TRACKER.beginHostSession(worldId, worldName);
+            refreshHostedPermissionLevels();
+        }
+
+        @Override
+        public void onHostStateCleared(String worldId) {
+            if (worldId != null) {
+                guestCacheWarmer.resumeWorld(worldId);
+            }
+            PLAY_SESSION_TRACKER.clear();
+            refreshHostedPermissionLevels();
+        }
+
+        @Override
+        public void onWorldDeleted() {
+            releaseCoordinator.onWorldDeleted();
+        }
+
+        @Override
+        public void onMembershipRevoked() {
+            releaseCoordinator.onMembershipRevoked();
+        }
+
+        @Override
+        public void onHostAuthorityLost(
+                SharedWorldHostingManager.ActiveHostSession session,
+                SharedWorldReleaseCoordinator.HostAuthorityLossStage stage,
+                String message
+        ) {
+            releaseCoordinator.onHostAuthorityLost(session, stage, message);
+        }
+
+        @Override
+        public boolean hasPendingReleaseRecovery(String worldId) {
+            return releaseCoordinator.hasPendingReleaseRecovery(worldId);
+        }
+
+        private static void refreshHostedPermissionLevels() {
+            var server = Minecraft.getInstance().getSingleplayerServer();
+            if (server == null) {
+                return;
+            }
+            var playerList = server.getPlayerList();
+            if (playerList == null) {
+                return;
+            }
+            for (var serverPlayer : playerList.getPlayers()) {
+                playerList.sendPlayerPermissionLevel(serverPlayer);
+            }
+        }
     }
 
     private static final class SharedWorldThreadFactory implements ThreadFactory {

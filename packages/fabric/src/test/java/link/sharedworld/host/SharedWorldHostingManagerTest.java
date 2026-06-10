@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import link.sharedworld.api.SharedWorldApiClient;
+import link.sharedworld.host.HostingEvents;
 import link.sharedworld.api.SharedWorldModels;
 import link.sharedworld.progress.SharedWorldProgressState;
 import link.sharedworld.support.SharedWorldCoordinatorHarness;
@@ -275,7 +276,9 @@ final class SharedWorldHostingManagerTest {
                         () -> 0L
                 ),
                 new InMemoryHostRecoveryStore(),
-                worldId -> false
+                HostingEvents.NONE,
+                Runnable::run,
+                Runnable::run
         );
 
         setField(manager, "world", world("world-1", "Handoff World"));
@@ -307,7 +310,9 @@ final class SharedWorldHostingManagerTest {
                         () -> 0L
                 ),
                 new InMemoryHostRecoveryStore(),
-                worldId -> false
+                HostingEvents.NONE,
+                Runnable::run,
+                Runnable::run
         );
 
         setField(manager, "world", world("world-1", "Handoff World"));
@@ -539,7 +544,7 @@ final class SharedWorldHostingManagerTest {
             RecordingSyncAccess syncAccess,
             RecordingWorldOpenController worldOpenController,
             InMemoryHostRecoveryStore recoveryStore,
-            SharedWorldHostingManager.PendingReleaseRecoveryChecker pendingReleaseRecoveryChecker
+            PendingReleaseRecovery pendingReleaseRecovery
     ) {
         return manager(
                 apiClient,
@@ -547,7 +552,7 @@ final class SharedWorldHostingManagerTest {
                 syncAccess,
                 worldOpenController,
                 recoveryStore,
-                pendingReleaseRecoveryChecker,
+                pendingReleaseRecovery,
                 Runnable::run,
                 Runnable::run
         );
@@ -559,7 +564,7 @@ final class SharedWorldHostingManagerTest {
             RecordingSyncAccess syncAccess,
             RecordingWorldOpenController worldOpenController,
             InMemoryHostRecoveryStore recoveryStore,
-            SharedWorldHostingManager.PendingReleaseRecoveryChecker pendingReleaseRecoveryChecker,
+            PendingReleaseRecovery pendingReleaseRecovery,
             Executor backgroundExecutor,
             Executor mainThreadExecutor
     ) {
@@ -575,10 +580,24 @@ final class SharedWorldHostingManagerTest {
                         () -> 0L
                 ),
                 recoveryStore,
-                pendingReleaseRecoveryChecker,
+                events(pendingReleaseRecovery),
                 backgroundExecutor,
                 mainThreadExecutor
         );
+    }
+
+    private static HostingEvents events(PendingReleaseRecovery pendingReleaseRecovery) {
+        return new HostingEvents() {
+            @Override
+            public boolean hasPendingReleaseRecovery(String worldId) {
+                return pendingReleaseRecovery.hasPendingReleaseRecovery(worldId);
+            }
+        };
+    }
+
+    @FunctionalInterface
+    private interface PendingReleaseRecovery {
+        boolean hasPendingReleaseRecovery(String worldId);
     }
 
     private SharedWorldHostingManager manager(
@@ -586,9 +605,9 @@ final class SharedWorldHostingManagerTest {
             RecordingSyncAccess syncAccess,
             RecordingWorldOpenController worldOpenController,
             InMemoryHostRecoveryStore recoveryStore,
-            SharedWorldHostingManager.PendingReleaseRecoveryChecker pendingReleaseRecoveryChecker
+            PendingReleaseRecovery pendingReleaseRecovery
     ) {
-        return manager(apiClient(), worldStore, syncAccess, worldOpenController, recoveryStore, pendingReleaseRecoveryChecker);
+        return manager(apiClient(), worldStore, syncAccess, worldOpenController, recoveryStore, pendingReleaseRecovery);
     }
 
     private SharedWorldApiClient apiClient() {
