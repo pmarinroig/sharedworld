@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { NON_REGION_PACK_ID } from "../../../shared/src/index.ts";
 import type { StorageProvider } from "../../src/storage.ts";
 import { MemorySharedWorldRepository } from "../../src/memory-repository.ts";
+import { choosePreferredCandidate } from "../../src/runtime-protocol.ts";
 import { authVerifier, createBlobSigner, createTestService } from "../support/service-fixtures.ts";
 
 describe("SharedWorldService handoff", () => {
@@ -28,10 +29,12 @@ describe("SharedWorldService handoff", () => {
       joinedAt: "2026-01-01T00:00:00.000Z",
       deletedAt: null
     });
-    await repository.setHandoffWaiting(world.id, { playerUuid: "player-b", playerName: "Bravo" }, true, new Date());
-    await repository.setHandoffWaiting(world.id, { playerUuid: "player-owner", playerName: "Owner" }, true, new Date());
+    const now = new Date();
+    await repository.upsertWaiterSession(world.id, { playerUuid: "player-b", playerName: "Bravo" }, "wait_b", now);
+    await repository.upsertWaiterSession(world.id, { playerUuid: "player-owner", playerName: "Owner" }, "wait_owner", now);
 
-    const next = await repository.chooseNextHost(world.id);
+    const waiters = await repository.listActiveWaiters(world.id, now);
+    const next = choosePreferredCandidate(waiters.filter((waiter) => waiter.waiting), await repository.listMemberships(world.id));
     expect(next?.playerUuid).toBe("player-owner");
   });
 
@@ -50,10 +53,10 @@ describe("SharedWorldService handoff", () => {
       deletedAt: null
     });
 
-    await repository.setHandoffWaiting(
+    await repository.upsertWaiterSession(
       world.id,
       { playerUuid: "player-owner", playerName: "Owner" },
-      true,
+      "wait_owner_stale",
       new Date("2000-01-03T00:00:00.000Z")
     );
 

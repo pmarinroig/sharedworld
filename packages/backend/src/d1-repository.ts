@@ -19,7 +19,7 @@ import type {
   WorldSnapshotSummary,
   WorldSummary
 } from "../../shared/src/index.ts";
-import { HANDOFF_WAITER_TIMEOUT_MS, HOST_LEASE_TIMEOUT_MS, PLAYER_PRESENCE_TIMEOUT_MS, type SessionToken } from "../../shared/src/index.ts";
+import { HANDOFF_WAITER_TIMEOUT_MS, PLAYER_PRESENCE_TIMEOUT_MS, type SessionToken } from "../../shared/src/index.ts";
 
 import type { D1Database } from "./env.ts";
 import type {
@@ -44,12 +44,7 @@ import {
   type WorldRuntimeRecord
 } from "./runtime-protocol.ts";
 import {
-  leaseExpired,
-  runtimeToLease
-} from "./runtime-repository-support.ts";
-import {
   mapInvite,
-  mapLease,
   mapRuntimeRow,
   mapStorageAccount,
   mapStorageLinkSession,
@@ -62,9 +57,6 @@ import {
   joinMotdLines,
   normalizeBoundValues,
   sqlPlaceholders,
-  type LegacyClaimHostRequest,
-  type LegacyHostLease,
-  type LegacyHostStatus,
   type Row
 } from "./repository/d1-support.ts";
 
@@ -268,7 +260,6 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       await this.run("UPDATE worlds SET deleted_at = ? WHERE id = ?", deletedAt, worldId);
       await this.run("DELETE FROM invite_codes WHERE world_id = ?", worldId);
       await this.run("DELETE FROM handoff_waiters WHERE world_id = ?", worldId);
-      await this.run("DELETE FROM host_leases WHERE world_id = ?", worldId);
       await this.run("DELETE FROM world_runtime WHERE world_id = ?", worldId);
       await this.run("DELETE FROM world_presence WHERE world_id = ?", worldId);
       return { worldDeleted: true, deletedCustomIconStorageKey: asNullableString(world.custom_icon_storage_key) };
@@ -283,7 +274,6 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       ctx.playerUuid
     );
     await this.run("DELETE FROM handoff_waiters WHERE world_id = ? AND player_uuid = ?", worldId, ctx.playerUuid);
-    await this.run("DELETE FROM host_leases WHERE world_id = ? AND host_uuid = ?", worldId, ctx.playerUuid);
     await this.run("DELETE FROM world_runtime WHERE world_id = ? AND host_uuid = ?", worldId, ctx.playerUuid);
     await this.run("DELETE FROM world_presence WHERE world_id = ? AND player_uuid = ?", worldId, ctx.playerUuid);
 
@@ -295,7 +285,6 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       await this.run("UPDATE worlds SET deleted_at = ? WHERE id = ?", deletedAt, worldId);
       await this.run("DELETE FROM invite_codes WHERE world_id = ?", worldId);
       await this.run("DELETE FROM handoff_waiters WHERE world_id = ?", worldId);
-      await this.run("DELETE FROM host_leases WHERE world_id = ?", worldId);
       await this.run("DELETE FROM world_runtime WHERE world_id = ?", worldId);
       await this.run("DELETE FROM world_presence WHERE world_id = ?", worldId);
       return { worldDeleted: true, deletedCustomIconStorageKey: asNullableString(world.custom_icon_storage_key) };
@@ -671,15 +660,6 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     await this.run("DELETE FROM handoff_waiters WHERE world_id = ? AND player_uuid = ?", worldId, removedPlayerUuid);
     await this.run("DELETE FROM world_presence WHERE world_id = ? AND player_uuid = ?", worldId, removedPlayerUuid);
     await this.run(
-      `UPDATE host_leases
-       SET revoked_at = COALESCE(revoked_at, ?), updated_at = ?
-       WHERE world_id = ? AND host_uuid = ?`,
-      removedAt,
-      removedAt,
-      worldId,
-      removedPlayerUuid
-    );
-    await this.run(
       `UPDATE world_runtime
        SET revoked_at = COALESCE(revoked_at, ?), updated_at = ?
        WHERE world_id = ? AND host_uuid = ?`,
@@ -691,17 +671,6 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     return {
       worldId,
       removedPlayerUuid
-    };
-  }
-
-  async getHostStatus(worldId: string): Promise<LegacyHostStatus> {
-    const runtime = await this.getDisplayRuntimeRecord(worldId, new Date());
-    const next = await this.chooseNextHost(worldId);
-    return {
-      worldId,
-      activeLease: runtime == null ? null : runtimeToLease(runtime),
-      nextHostUuid: next?.playerUuid ?? null,
-      nextHostPlayerName: next?.playerName ?? null
     };
   }
 
@@ -912,141 +881,6 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     await this.run("DELETE FROM handoff_waiters WHERE world_id = ?", worldId);
   }
 
-  async claimHost(worldId: string, ctx: RequestContext, request: LegacyClaimHostRequest, now: Date): Promise<LegacyHostLease | null> {
-    const claimedAt = now.toISOString();
-    const expiresAt = new Date(now.getTime() + HOST_LEASE_TIMEOUT_MS).toISOString();
-    const existing = await this.getValidLease(worldId, now);
-
-    if (existing) {
-      if (existing.status !== "handoff") {
-        return null;
-      }
-
-      const nextHost = await this.resolveNextHost(worldId, existing);
-      if (!nextHost || nextHost.playerUuid !== ctx.playerUuid) {
-        return null;
-      }
-
-      await this.run(
-        `UPDATE host_leases
-         SET host_uuid = ?, host_player_name = ?, status = 'hosting', claimed_at = ?,
-             expires_at = ?, join_target = ?, handoff_candidate_uuid = NULL, revoked_at = NULL,
-             startup_progress_label = NULL, startup_progress_mode = NULL, startup_progress_fraction = NULL, startup_progress_updated_at = NULL,
-             updated_at = ?
-         WHERE world_id = ?`,
-        ctx.playerUuid,
-        ctx.playerName,
-        claimedAt,
-        expiresAt,
-        request.joinTarget ?? null,
-        claimedAt,
-        worldId
-      );
-      await this.run("DELETE FROM handoff_waiters WHERE world_id = ? AND player_uuid = ?", worldId, ctx.playerUuid);
-      await this.run("DELETE FROM world_presence WHERE world_id = ? AND player_uuid = ?", worldId, ctx.playerUuid);
-      return this.getRequiredLease(worldId);
-    }
-
-    const nextHost = await this.chooseNextHost(worldId);
-    if (nextHost && nextHost.playerUuid !== ctx.playerUuid) {
-      return null;
-    }
-
-    await this.run(
-      `INSERT INTO host_leases (
-         world_id, host_uuid, host_player_name, status, claimed_at,
-         expires_at, join_target, handoff_candidate_uuid, revoked_at,
-         startup_progress_label, startup_progress_mode, startup_progress_fraction, startup_progress_updated_at,
-         updated_at
-       ) VALUES (?, ?, ?, 'hosting', ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?)
-       ON CONFLICT(world_id) DO UPDATE SET
-         host_uuid = excluded.host_uuid,
-         host_player_name = excluded.host_player_name,
-         status = excluded.status,
-         claimed_at = excluded.claimed_at,
-         expires_at = excluded.expires_at,
-         join_target = excluded.join_target,
-         handoff_candidate_uuid = NULL,
-         revoked_at = NULL,
-         startup_progress_label = NULL,
-         startup_progress_mode = NULL,
-         startup_progress_fraction = NULL,
-         startup_progress_updated_at = NULL,
-         updated_at = excluded.updated_at
-       WHERE host_leases.expires_at < excluded.claimed_at`,
-      worldId,
-      ctx.playerUuid,
-      ctx.playerName,
-      claimedAt,
-      expiresAt,
-      request.joinTarget ?? null,
-      claimedAt
-    );
-
-    const lease = await this.getValidLease(worldId, now);
-    if (!lease || lease.hostUuid !== ctx.playerUuid) {
-      return null;
-    }
-    await this.run("DELETE FROM handoff_waiters WHERE world_id = ? AND player_uuid = ?", worldId, ctx.playerUuid);
-    await this.run("DELETE FROM world_presence WHERE world_id = ? AND player_uuid = ?", worldId, ctx.playerUuid);
-    return lease;
-  }
-
-  async heartbeatHost(worldId: string, ctx: RequestContext, joinTarget: string | null, now: Date): Promise<LegacyHostLease> {
-    await this.run("DELETE FROM world_presence WHERE world_id = ? AND player_uuid = ?", worldId, ctx.playerUuid);
-    const expiresAt = new Date(now.getTime() + HOST_LEASE_TIMEOUT_MS).toISOString();
-    await this.run(
-      `UPDATE host_leases
-       SET expires_at = ?, join_target = COALESCE(?, join_target), updated_at = ?
-       WHERE world_id = ? AND host_uuid = ?`,
-      expiresAt,
-      joinTarget,
-      now.toISOString(),
-      worldId,
-      ctx.playerUuid
-    );
-    const row = await this.first<Row>(
-      `SELECT world_id, host_uuid, host_player_name, status, claimed_at, expires_at,
-              join_target, handoff_candidate_uuid, revoked_at,
-              startup_progress_label, startup_progress_mode, startup_progress_fraction, startup_progress_updated_at, updated_at
-       FROM host_leases WHERE world_id = ? AND host_uuid = ?`,
-      worldId,
-      ctx.playerUuid
-    );
-    if (!row) {
-      throw new Error("Host lease not found.");
-    }
-    return mapLease(row);
-  }
-
-  async setHostStartupProgress(worldId: string, ctx: RequestContext, request: HostStartupProgressRequest, now: Date): Promise<LegacyHostLease | null> {
-    const hasProgress = request.label != null && request.mode != null;
-    await this.run(
-      `UPDATE host_leases
-       SET startup_progress_label = ?, startup_progress_mode = ?, startup_progress_fraction = ?, startup_progress_updated_at = ?, updated_at = ?
-       WHERE world_id = ? AND host_uuid = ? AND status IN ('hosting', 'finalizing')`,
-      hasProgress ? request.label : null,
-      hasProgress ? request.mode : null,
-      hasProgress ? clampFraction(request.fraction ?? null) : null,
-      hasProgress ? now.toISOString() : null,
-      now.toISOString(),
-      worldId,
-      ctx.playerUuid
-    );
-    const row = await this.first<Row>(
-      `SELECT world_id, host_uuid, host_player_name, status, claimed_at, expires_at,
-              join_target, handoff_candidate_uuid, revoked_at,
-              startup_progress_label, startup_progress_mode, startup_progress_fraction, startup_progress_updated_at, updated_at
-       FROM host_leases WHERE world_id = ? AND host_uuid = ? AND status IN ('hosting', 'finalizing')`,
-      worldId,
-      ctx.playerUuid
-    );
-    if (!row) {
-      return null;
-    }
-    return mapLease(row);
-  }
-
   async setPlayerPresence(worldId: string, ctx: RequestContext, request: PresenceHeartbeatRequest, now: Date): Promise<void> {
     await this.run(
       `INSERT INTO world_presence (world_id, player_uuid, player_name, present, guest_session_epoch, presence_sequence, updated_at)
@@ -1074,184 +908,6 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
 
   async clearWorldPresence(worldId: string): Promise<void> {
     await this.run("DELETE FROM world_presence WHERE world_id = ?", worldId);
-  }
-
-  async beginFinalization(worldId: string, ctx: RequestContext, _request: BeginFinalizationRequest, now: Date): Promise<FinalizationActionResult> {
-    await this.run(
-      `UPDATE host_leases
-       SET status = 'finalizing',
-           join_target = NULL,
-           handoff_candidate_uuid = NULL,
-           startup_progress_label = NULL,
-           startup_progress_mode = NULL,
-           startup_progress_fraction = NULL,
-           startup_progress_updated_at = NULL,
-           updated_at = ?
-       WHERE world_id = ? AND host_uuid = ? AND status IN ('hosting', 'finalizing')`,
-      now.toISOString(),
-      worldId,
-      ctx.playerUuid
-    );
-    return this.finalizationActionResult(worldId);
-  }
-
-  async completeFinalization(worldId: string, ctx: RequestContext, _request: CompleteFinalizationRequest, now: Date): Promise<FinalizationActionResult> {
-    const lease = await this.getValidLease(worldId, now);
-    if (!lease || lease.hostUuid !== ctx.playerUuid || lease.status !== "finalizing") {
-      throw new Error("SharedWorld is not currently finalizing.");
-    }
-
-    const nextHost = await this.chooseNextHost(worldId);
-    if (!nextHost) {
-      await this.run("DELETE FROM host_leases WHERE world_id = ? AND host_uuid = ?", worldId, ctx.playerUuid);
-      return {
-        worldId,
-        nextHostUuid: null,
-        nextHostPlayerName: null,
-        status: "idle"
-      };
-    }
-
-    await this.run(
-      `UPDATE host_leases
-       SET status = 'handoff',
-           expires_at = ?,
-           join_target = NULL,
-           handoff_candidate_uuid = ?,
-           revoked_at = NULL,
-           startup_progress_label = NULL,
-           startup_progress_mode = NULL,
-           startup_progress_fraction = NULL,
-           startup_progress_updated_at = NULL,
-           updated_at = ?
-       WHERE world_id = ? AND host_uuid = ? AND status = 'finalizing'`,
-      new Date(now.getTime() + HOST_LEASE_TIMEOUT_MS).toISOString(),
-      nextHost.playerUuid,
-      now.toISOString(),
-      worldId,
-      ctx.playerUuid
-    );
-    return this.finalizationActionResult(worldId);
-  }
-
-  async abandonFinalization(worldId: string, _ctx: RequestContext, _request: AbandonFinalizationRequest, now: Date): Promise<FinalizationActionResult> {
-    const lease = await this.getValidLease(worldId, now);
-    if (!lease || lease.status !== "finalizing") {
-      const status = await this.getHostStatus(worldId);
-      return {
-        worldId,
-        nextHostUuid: status.nextHostUuid,
-        nextHostPlayerName: status.nextHostPlayerName,
-        status: status.activeLease?.status ?? "idle"
-      };
-    }
-
-    const nextHost = await this.chooseNextHost(worldId);
-    if (!nextHost) {
-      await this.run("DELETE FROM host_leases WHERE world_id = ?", worldId);
-      return {
-        worldId,
-        nextHostUuid: null,
-        nextHostPlayerName: null,
-        status: "idle"
-      };
-    }
-
-    await this.run(
-      `UPDATE host_leases
-       SET status = 'handoff',
-           expires_at = ?,
-           join_target = NULL,
-           handoff_candidate_uuid = ?,
-           revoked_at = NULL,
-           startup_progress_label = NULL,
-           startup_progress_mode = NULL,
-           startup_progress_fraction = NULL,
-           startup_progress_updated_at = NULL,
-           updated_at = ?
-       WHERE world_id = ? AND status = 'finalizing'`,
-      new Date(now.getTime() + HOST_LEASE_TIMEOUT_MS).toISOString(),
-      nextHost.playerUuid,
-      now.toISOString(),
-      worldId
-    );
-    return this.finalizationActionResult(worldId);
-  }
-
-  async releaseHost(worldId: string, ctx: RequestContext, graceful: boolean, now: Date): Promise<void> {
-    if (!graceful) {
-      await this.run("DELETE FROM host_leases WHERE world_id = ? AND host_uuid = ?", worldId, ctx.playerUuid);
-      return;
-    }
-
-    const nextHost = await this.chooseNextHost(worldId);
-    if (!nextHost) {
-      await this.run("DELETE FROM host_leases WHERE world_id = ? AND host_uuid = ?", worldId, ctx.playerUuid);
-      return;
-    }
-    await this.run(
-      `UPDATE host_leases
-       SET status = 'handoff',
-           expires_at = ?,
-           join_target = NULL,
-           handoff_candidate_uuid = ?,
-           revoked_at = NULL,
-           startup_progress_label = NULL,
-           startup_progress_mode = NULL,
-           startup_progress_fraction = NULL,
-           startup_progress_updated_at = NULL,
-           updated_at = ?
-       WHERE world_id = ? AND host_uuid = ?`,
-      new Date(now.getTime() + HOST_LEASE_TIMEOUT_MS).toISOString(),
-      nextHost.playerUuid,
-      now.toISOString(),
-      worldId,
-      ctx.playerUuid
-    );
-  }
-
-  async setHandoffWaiting(worldId: string, ctx: RequestContext, waiting: boolean, now: Date): Promise<void> {
-    await this.run(
-      `INSERT INTO handoff_waiters (world_id, player_uuid, player_name, waiter_session_id, waiting, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(world_id, player_uuid) DO UPDATE SET
-         player_name = excluded.player_name,
-         waiter_session_id = excluded.waiter_session_id,
-         waiting = excluded.waiting,
-         updated_at = excluded.updated_at`,
-      worldId,
-      ctx.playerUuid,
-      ctx.playerName,
-      `legacy_${ctx.playerUuid}`,
-      waiting ? 1 : 0,
-      now.toISOString()
-    );
-  }
-
-  async chooseNextHost(worldId: string): Promise<{ playerUuid: string; playerName: string } | null> {
-    await this.run(
-      "DELETE FROM handoff_waiters WHERE world_id = ? AND updated_at < ?",
-      worldId,
-      new Date(Date.now() - HANDOFF_WAITER_TIMEOUT_MS).toISOString()
-    );
-    const row = await this.first<Row>(
-      `SELECT wm.player_uuid, wm.player_name
-       FROM world_memberships wm
-       JOIN handoff_waiters hw ON hw.world_id = wm.world_id AND hw.player_uuid = wm.player_uuid
-       WHERE wm.world_id = ? AND wm.deleted_at IS NULL AND hw.waiting = 1
-       ORDER BY CASE WHEN wm.role = 'owner' THEN 0 ELSE 1 END,
-                wm.joined_at ASC,
-                wm.player_uuid ASC
-       LIMIT 1`,
-      worldId
-    );
-    if (!row) {
-      return null;
-    }
-    return {
-      playerUuid: String(row.player_uuid),
-      playerName: String(row.player_name)
-    };
   }
 
   async getLatestSnapshot(worldId: string): Promise<SnapshotManifest | null> {
@@ -1648,61 +1304,30 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     return asNullableString(row?.custom_icon_storage_key);
   }
 
-  private async getValidLease(worldId: string, now: Date): Promise<LegacyHostLease | null> {
-    // The D1 adapter must enforce the same runtime validity semantics as the memory repository.
-    // In particular, host-starting expires by startupDeadlineAt, while host-finalizing never expires here.
+  private async preferredWaiterCandidate(worldId: string): Promise<{ playerUuid: string; playerName: string } | null> {
+    await this.run(
+      "DELETE FROM handoff_waiters WHERE world_id = ? AND updated_at < ?",
+      worldId,
+      new Date(Date.now() - HANDOFF_WAITER_TIMEOUT_MS).toISOString()
+    );
     const row = await this.first<Row>(
-      `SELECT world_id, host_uuid, host_player_name, status, runtime_phase, runtime_epoch, runtime_token,
-              claimed_at, expires_at, join_target, handoff_candidate_uuid, revoked_at,
-              startup_deadline_at, runtime_token_issued_at, last_progress_at,
-              startup_progress_label, startup_progress_mode, startup_progress_fraction, startup_progress_updated_at, updated_at
-       FROM host_leases WHERE world_id = ?`,
+      `SELECT wm.player_uuid, wm.player_name
+       FROM world_memberships wm
+       JOIN handoff_waiters hw ON hw.world_id = wm.world_id AND hw.player_uuid = wm.player_uuid
+       WHERE wm.world_id = ? AND wm.deleted_at IS NULL AND hw.waiting = 1
+       ORDER BY CASE WHEN wm.role = 'owner' THEN 0 ELSE 1 END,
+                wm.joined_at ASC,
+                wm.player_uuid ASC
+       LIMIT 1`,
       worldId
     );
-    const lease = row ? mapLease(row) : null;
-    if (lease && leaseExpired(lease, now)) {
-      await this.run("DELETE FROM host_leases WHERE world_id = ?", worldId);
+    if (!row) {
       return null;
     }
-    return lease;
-  }
-
-  private async finalizationActionResult(worldId: string): Promise<{ worldId: string; nextHostUuid: string | null; nextHostPlayerName: string | null; status: "idle" | "hosting" | "finalizing" | "handoff" }> {
-    const status = await this.getHostStatus(worldId);
     return {
-      worldId,
-      nextHostUuid: status.nextHostUuid,
-      nextHostPlayerName: status.nextHostPlayerName,
-      status: status.activeLease?.status ?? "idle"
+      playerUuid: String(row.player_uuid),
+      playerName: String(row.player_name)
     };
-  }
-
-  private async getRequiredLease(worldId: string): Promise<LegacyHostLease> {
-    const lease = await this.getValidLease(worldId, new Date());
-    if (!lease) {
-      throw new Error("Host lease not found.");
-    }
-    return lease;
-  }
-
-  private async resolveNextHost(worldId: string, lease: LegacyHostLease | null): Promise<{ playerUuid: string; playerName: string } | null> {
-    if (lease?.status === "handoff" && lease.handoffCandidateUuid) {
-      const row = await this.first<Row>(
-        `SELECT wm.player_uuid, wm.player_name
-         FROM world_memberships wm
-         JOIN handoff_waiters hw ON hw.world_id = wm.world_id AND hw.player_uuid = wm.player_uuid
-         WHERE wm.world_id = ? AND wm.player_uuid = ? AND wm.deleted_at IS NULL AND hw.waiting = 1`,
-        worldId,
-        lease.handoffCandidateUuid
-      );
-      if (row) {
-        return {
-          playerUuid: String(row.player_uuid),
-          playerName: String(row.player_name)
-        };
-      }
-    }
-    return this.chooseNextHost(worldId);
   }
 
   private async summaryLifecycle(worldId: string, now: Date): Promise<{
@@ -1720,7 +1345,7 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
         activeJoinTarget: runtime.joinTarget
       };
     }
-    const candidate = await this.chooseNextHost(worldId);
+    const candidate = await this.preferredWaiterCandidate(worldId);
     return {
       status: candidate == null ? "idle" : "handoff",
       activeHostUuid: null,
@@ -1769,10 +1394,7 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     }
     const warning = timedOutUncleanShutdownWarning(runtime, now);
     if (warning != null) {
-      await this.setUncleanShutdownWarning(worldId, {
-        ...warning,
-        runtimeEpoch: runtime.runtimeEpoch
-      });
+      await this.setUncleanShutdownWarning(worldId, warning);
       await this.deleteRuntimeRecord(worldId);
       await this.clearWaiters(worldId);
       return null;

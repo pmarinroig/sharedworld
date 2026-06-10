@@ -1086,18 +1086,14 @@ export class SharedWorldService {
     const before = await this.repository.getRuntimeRecord(worldId, now);
     const timeoutWarning = timedOutUncleanShutdownWarning(before, now);
     if (timeoutWarning != null) {
-      const warning = {
-        ...timeoutWarning,
-        runtimeEpoch: before?.runtimeEpoch ?? 0
-      };
-      await this.repository.setUncleanShutdownWarning(worldId, warning);
+      await this.repository.setUncleanShutdownWarning(worldId, timeoutWarning);
       await this.repository.deleteRuntimeRecord(worldId);
       await this.repository.clearWaiters(worldId);
       await this.repository.clearWorldPresence(worldId);
       return {
         runtime: null,
         candidate: null,
-        warning,
+        warning: timeoutWarning,
         retiredRuntimeEpoch: before?.runtimeEpoch ?? null
       };
     }
