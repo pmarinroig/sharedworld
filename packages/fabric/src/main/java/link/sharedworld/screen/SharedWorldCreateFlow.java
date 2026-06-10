@@ -9,6 +9,8 @@ import link.sharedworld.sync.WorldSyncCoordinator;
 import link.sharedworld.sync.WorldSyncProgress;
 import link.sharedworld.sync.WorldSyncProgressListener;
 import net.minecraft.network.chat.Component;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -21,6 +23,8 @@ import java.util.List;
 import java.util.stream.Stream;
 
 final class SharedWorldCreateFlow {
+    private static final Logger LOGGER = LoggerFactory.getLogger("sharedworld-create");
+
     private final CreateBackend backend;
     private final IconEncoder iconEncoder;
     private final WorkingCopyStore worldStore;
@@ -124,8 +128,13 @@ final class SharedWorldCreateFlow {
      * Release the seed lease and, when the create failed, delete the half-created world so a
      * snapshot-less ghost never lingers in the player's world list. The snapshot is finalized as the
      * last step of uploadSnapshot, so any failure reaching here means no usable snapshot exists.
+     *
+     * Once the snapshot is committed the create has succeeded, so a failure to release the seed lease
+     * is cosmetic — the lease expires on its own at its startup deadline. We log it but never turn a
+     * good create into an error screen. A failed release is only propagated when the upload itself
+     * already failed (where it just annotates the real cause).
      */
-    private void finishInitialUpload(InitialUploadLease uploadLease, Throwable uploadFailure) throws IOException, InterruptedException {
+    private void finishInitialUpload(InitialUploadLease uploadLease, Throwable uploadFailure) {
         try {
             this.backend.releaseHost(
                     uploadLease.worldId(),
@@ -133,11 +142,16 @@ final class SharedWorldCreateFlow {
                     uploadLease.runtimeEpoch(),
                     uploadLease.hostToken()
             );
-        } catch (IOException | InterruptedException exception) {
-            if (uploadFailure == null) {
-                throw exception;
+        } catch (IOException | InterruptedException | RuntimeException exception) {
+            if (uploadFailure != null) {
+                uploadFailure.addSuppressed(exception);
+            } else {
+                LOGGER.warn(
+                        "SharedWorld created '{}' but could not release its seed host lease; it will expire on its own.",
+                        uploadLease.worldId(),
+                        exception
+                );
             }
-            uploadFailure.addSuppressed(exception);
         }
         if (uploadFailure != null) {
             deleteCreatedWorldQuietly(uploadLease.worldId(), uploadFailure);
