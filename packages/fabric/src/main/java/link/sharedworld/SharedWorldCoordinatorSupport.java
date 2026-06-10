@@ -41,6 +41,11 @@ public final class SharedWorldCoordinatorSupport {
         void connect(Screen parent, String joinTarget, String worldId, String worldName, Consumer<Throwable> failureHandler);
 
         void clearPlaySession();
+
+        /** The active SharedWorld play session, or null when not in one. Test shells default to none. */
+        default SharedWorldPlaySessionTracker.ActiveWorldSession currentPlaySession() {
+            return null;
+        }
     }
 
     @FunctionalInterface
@@ -166,6 +171,11 @@ public final class SharedWorldCoordinatorSupport {
             public void clearPlaySession() {
                 SharedWorldClient.playSessionTracker().clear();
                 SharedWorldDevSessionBridge.clear();
+            }
+
+            @Override
+            public SharedWorldPlaySessionTracker.ActiveWorldSession currentPlaySession() {
+                return SharedWorldClient.playSessionTracker().currentSession();
             }
         };
     }

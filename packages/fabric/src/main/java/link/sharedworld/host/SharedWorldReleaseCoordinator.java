@@ -592,7 +592,7 @@ public final class SharedWorldReleaseCoordinator {
     }
 
     public void beginForcedGuestExit(SharedWorldTerminalReasonKind reasonKind, String message) {
-        link.sharedworld.SharedWorldPlaySessionTracker.ActiveWorldSession session = SharedWorldClient.playSessionTracker().currentSession();
+        link.sharedworld.SharedWorldPlaySessionTracker.ActiveWorldSession session = this.clientShell.currentPlaySession();
         beginForcedGuestExit(
                 session == null ? null : session.worldId(),
                 session == null ? null : session.worldName(),
