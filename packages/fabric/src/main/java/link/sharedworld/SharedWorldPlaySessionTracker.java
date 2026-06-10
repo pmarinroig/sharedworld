@@ -7,8 +7,8 @@ public final class SharedWorldPlaySessionTracker {
     private Object currentConnectionKey;
     private boolean currentConnectionKeyBound;
 
-    public synchronized void beginGuestConnect(String worldId, String worldName, String joinTarget) {
-        this.pendingGuestSession = new PendingGuestSession(worldId, worldName, joinTarget);
+    public synchronized void beginGuestConnect(String worldId, String worldName, String joinTarget, long runtimeEpoch) {
+        this.pendingGuestSession = new PendingGuestSession(worldId, worldName, joinTarget, runtimeEpoch);
         this.activeSession = null;
         this.pendingRecoverySession = null;
     }
@@ -21,6 +21,7 @@ public final class SharedWorldPlaySessionTracker {
                 worldName,
                 SessionRole.HOST,
                 null,
+                0L,
                 false,
                 false,
                 this.currentConnectionKey,
@@ -48,6 +49,7 @@ public final class SharedWorldPlaySessionTracker {
                 this.pendingGuestSession.worldName(),
                 SessionRole.GUEST,
                 this.pendingGuestSession.joinTarget(),
+                this.pendingGuestSession.runtimeEpoch(),
                 true,
                 false,
                 connectionKey,
@@ -92,7 +94,8 @@ public final class SharedWorldPlaySessionTracker {
         this.pendingRecoverySession = new RecoverySession(
                 this.activeSession.worldId(),
                 this.activeSession.worldName(),
-                this.activeSession.joinTarget()
+                this.activeSession.joinTarget(),
+                this.activeSession.runtimeEpoch()
         );
         this.activeSession = null;
         return this.pendingRecoverySession;
@@ -132,7 +135,8 @@ public final class SharedWorldPlaySessionTracker {
                 this.activeSession.worldId(),
                 this.activeSession.worldName(),
                 this.activeSession.role(),
-                this.activeSession.joinTarget()
+                this.activeSession.joinTarget(),
+                this.activeSession.runtimeEpoch()
         );
     }
 
@@ -155,13 +159,15 @@ public final class SharedWorldPlaySessionTracker {
         return recoverySession;
     }
 
-    public record RecoverySession(String worldId, String worldName, String previousJoinTarget) {
+    /** runtimeEpoch is the backend epoch the session connected under; 0 when unknown. */
+    public record RecoverySession(String worldId, String worldName, String previousJoinTarget, long runtimeEpoch) {
     }
 
-    public record ActiveWorldSession(String worldId, String worldName, SessionRole role, String joinTarget) {
+    /** runtimeEpoch is the backend epoch the session connected under; 0 when unknown. */
+    public record ActiveWorldSession(String worldId, String worldName, SessionRole role, String joinTarget, long runtimeEpoch) {
     }
 
-    private record PendingGuestSession(String worldId, String worldName, String joinTarget) {
+    private record PendingGuestSession(String worldId, String worldName, String joinTarget, long runtimeEpoch) {
     }
 
     private record ActiveSession(
@@ -169,17 +175,18 @@ public final class SharedWorldPlaySessionTracker {
             String worldName,
             SessionRole role,
             String joinTarget,
+            long runtimeEpoch,
             boolean recoveryEnabled,
             boolean userInitiatedDisconnect,
             Object connectionKey,
             boolean connectionKeyBound
     ) {
         private ActiveSession withUserInitiatedDisconnect(boolean userInitiatedDisconnect) {
-            return new ActiveSession(this.worldId, this.worldName, this.role, this.joinTarget, this.recoveryEnabled, userInitiatedDisconnect, this.connectionKey, this.connectionKeyBound);
+            return new ActiveSession(this.worldId, this.worldName, this.role, this.joinTarget, this.runtimeEpoch, this.recoveryEnabled, userInitiatedDisconnect, this.connectionKey, this.connectionKeyBound);
         }
 
         private ActiveSession withConnectionKey(Object connectionKey) {
-            return new ActiveSession(this.worldId, this.worldName, this.role, this.joinTarget, this.recoveryEnabled, this.userInitiatedDisconnect, connectionKey, true);
+            return new ActiveSession(this.worldId, this.worldName, this.role, this.joinTarget, this.runtimeEpoch, this.recoveryEnabled, this.userInitiatedDisconnect, connectionKey, true);
         }
 
         private boolean matchesConnectionKey(Object connectionKey) {

@@ -95,7 +95,8 @@ final class SharedWorldSessionCoordinatorTest {
             harness.sessionCoordinator.onUnexpectedGuestDisconnect(new SharedWorldPlaySessionTracker.RecoverySession(
                     "world-1",
                     "World",
-                    "join.example"
+                    "join.example",
+                    0L
             ));
 
             assertEquals(0L, harness.recoveryStore.load().runtimeEpoch());
@@ -163,7 +164,8 @@ final class SharedWorldSessionCoordinatorTest {
                     "world-1",
                     "World",
                     SharedWorldPlaySessionTracker.SessionRole.GUEST,
-                    "join.example"
+                    "join.example",
+                    7L
             ));
 
             assertNull(harness.recoveryStore.load());
@@ -566,6 +568,67 @@ final class SharedWorldSessionCoordinatorTest {
 
             assertTrue(harness.clientShell.actions().contains("setScreen:join-error"));
             assertNull(harness.sessionCoordinator.waitingView());
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
+    void hostDepartureRejoinDisconnectsAndEntersWaitingFlow() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            var world = SharedWorldCoordinatorHarness.world("world-1", "World", "player-owner");
+            harness.clientShell.setLocalServerState(false, true, false);
+            harness.sessionBackend.enqueueEnterResponse(SharedWorldCoordinatorHarness.waitResponse(world));
+
+            harness.sessionCoordinator.beginHostDepartureRejoin(harness.parentScreen(), "world-1", "World", "join.old");
+
+            assertEquals(1, harness.clientShell.disconnectCalls());
+            assertTrue(harness.clientShell.actions().contains("clearPlaySession"));
+            assertTrue(harness.clientShell.actions().contains("setScreen:waiting"));
+
+            harness.runUntilIdle();
+
+            assertNotNull(harness.sessionCoordinator.waitingView());
+            assertEquals(1, harness.sessionBackend.enterCalls());
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
+    void hostDepartureRejoinConnectsDirectlyWhenANewHostIsAlreadyLive() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            var world = SharedWorldCoordinatorHarness.world("world-1", "World", "player-owner");
+            harness.clientShell.setLocalServerState(false, true, false);
+            harness.sessionBackend.enqueueEnterResponse(SharedWorldCoordinatorHarness.connectResponse(world, 9L, "join.new"));
+
+            harness.sessionCoordinator.beginHostDepartureRejoin(harness.parentScreen(), "world-1", "World", "join.old");
+            harness.runUntilIdle();
+
+            assertTrue(harness.clientShell.actions().contains("connect:join.new"));
+            assertEquals(9L, harness.clientShell.lastConnectRuntimeEpoch());
+            assertNull(harness.sessionCoordinator.waitingView());
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
+    void hostDepartureRejoinIsANoOpWhileAnotherJoinFlowIsActive() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            var world = SharedWorldCoordinatorHarness.world("world-1", "World", "player-owner");
+            harness.sessionBackend.enqueueEnterResponse(SharedWorldCoordinatorHarness.waitResponse(world));
+            harness.sessionCoordinator.beginJoin(harness.parentScreen(), world);
+            harness.runUntilIdle();
+            assertNotNull(harness.sessionCoordinator.waitingView());
+
+            harness.sessionCoordinator.beginHostDepartureRejoin(harness.parentScreen(), "world-1", "World", "join.old");
+
+            assertEquals(0, harness.clientShell.disconnectCalls());
+            assertEquals(1, harness.sessionBackend.enterCalls());
         } finally {
             harness.close();
         }

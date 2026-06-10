@@ -27,7 +27,6 @@ public final class SharedWorldSessionCoordinator {
     private final HostStartupOwner hostStartupOwner;
     private final SessionUi sessionUi;
     private WaitingFlowState waitingState;
-    private ConnectedRuntimeContext pendingConnectedRuntime;
     private RecoveryFingerprint suppressedRecoveryFingerprint;
     private RecoveryFingerprint pendingRecoveredConnectFingerprint;
     private boolean autoResumeChecked;
@@ -387,22 +386,59 @@ public final class SharedWorldSessionCoordinator {
         if (recovery == null) {
             return;
         }
-        long runtimeEpoch = 0L;
-        ConnectedRuntimeContext context = this.pendingConnectedRuntime;
-        if (context != null && context.worldId.equals(recovery.worldId())) {
-            runtimeEpoch = context.runtimeEpoch;
-        }
         try {
             savePersistedRecovery(new SharedWorldRecoveryStore.RecoveryRecord(
                     recovery.worldId(),
                     recovery.worldName(),
-                    runtimeEpoch,
+                    recovery.runtimeEpoch(),
                     "disconnect-recovery",
                     recovery.previousJoinTarget(),
                     null
             ));
         } catch (Exception ignored) {
         }
+    }
+
+    /**
+     * Responsibility:
+     * Exit the current guest play session once the backend says its hosting runtime is over,
+     * then immediately re-enter the backend-owned join flow (wait / connect / host).
+     *
+     * Preconditions:
+     * The guest runtime watcher observed an authoritative non-live runtime for the connected world.
+     *
+     * Postconditions:
+     * The client leaves the dead server proactively (no vanilla timeout) and the normal
+     * enter-session flow owns what happens next.
+     *
+     * Stale-work rule:
+     * An already-active waiting flow or pending join attempt keeps ownership; this becomes a no-op.
+     *
+     * Authority source:
+     * The backend runtime status observation that triggered the departure.
+     */
+    public void beginHostDepartureRejoin(Screen parent, String worldId, String worldName, String previousJoinTarget) {
+        if (worldId == null || worldId.isBlank()) {
+            return;
+        }
+        if (this.waitingState != null || this.pendingJoinAttempt != null) {
+            return;
+        }
+        this.clientShell.disconnectFromWorld();
+        this.clientShell.clearPlaySession();
+        this.clientShell.setScreen(this.sessionUi.waiting(parent, worldId, worldName, null));
+        beginJoinAttempt(
+                parent,
+                worldId,
+                worldName,
+                null,
+                previousJoinTarget,
+                true,
+                true,
+                false,
+                null,
+                SharedWorldHostingManager.StartupMode.NORMAL
+        );
     }
 
     public boolean openRecoveryScreenIfPresent(Screen fallbackParent) {
@@ -423,24 +459,6 @@ public final class SharedWorldSessionCoordinator {
             return;
         }
         clearPersistedRecoveryIfMatches(fingerprint);
-    }
-
-    public void rememberConnectedRuntime(String worldId, String worldName, long runtimeEpoch, String previousJoinTarget) {
-        this.pendingConnectedRuntime = new ConnectedRuntimeContext(worldId, worldName, runtimeEpoch, previousJoinTarget);
-    }
-
-    private void clearPendingConnectedRuntime(String worldId, String joinTarget) {
-        ConnectedRuntimeContext context = this.pendingConnectedRuntime;
-        if (context == null) {
-            return;
-        }
-        if (!context.worldId.equals(worldId)) {
-            return;
-        }
-        if (!sameJoinTarget(context.previousJoinTarget, joinTarget)) {
-            return;
-        }
-        this.pendingConnectedRuntime = null;
     }
 
     private void maybeResumePersistedRecovery() {
@@ -737,13 +755,11 @@ public final class SharedWorldSessionCoordinator {
     }
 
     private void beginConnectHandoff(Screen parent, String worldId, String worldName, long runtimeEpoch, String joinTarget, RecoveryFingerprint resumedRecoveryFingerprint) {
-        rememberConnectedRuntime(worldId, worldName, runtimeEpoch, joinTarget);
         this.pendingRecoveredConnectFingerprint = resumedRecoveryFingerprint;
-        this.clientShell.connect(parent, joinTarget, worldId, worldName, error -> handleConnectHandoffFailure(parent, worldId, joinTarget, resumedRecoveryFingerprint, error));
+        this.clientShell.connect(parent, joinTarget, worldId, worldName, runtimeEpoch, error -> handleConnectHandoffFailure(parent, worldId, resumedRecoveryFingerprint, error));
     }
 
-    private void handleConnectHandoffFailure(Screen parent, String worldId, String joinTarget, RecoveryFingerprint resumedRecoveryFingerprint, Throwable error) {
-        clearPendingConnectedRuntime(worldId, joinTarget);
+    private void handleConnectHandoffFailure(Screen parent, String worldId, RecoveryFingerprint resumedRecoveryFingerprint, Throwable error) {
         if (resumedRecoveryFingerprint != null && resumedRecoveryFingerprint.equals(this.pendingRecoveredConnectFingerprint)) {
             this.pendingRecoveredConnectFingerprint = null;
         }
@@ -754,10 +770,6 @@ public final class SharedWorldSessionCoordinator {
                 parent,
                 new IllegalStateException(SharedWorldText.string("screen.sharedworld.join_connect_failed"))
         ));
-    }
-
-    private static boolean sameJoinTarget(String left, String right) {
-        return left == null ? right == null : left.equalsIgnoreCase(right);
     }
 
     private static String displayName(WorldSummaryDto world) {
@@ -827,9 +839,6 @@ public final class SharedWorldSessionCoordinator {
             this.hostChangeFlow = hostChangeFlow;
             this.returnToSharedWorldMenu = returnToSharedWorldMenu;
         }
-    }
-
-    private record ConnectedRuntimeContext(String worldId, String worldName, long runtimeEpoch, String previousJoinTarget) {
     }
 
     private record PendingJoinAttempt(long attemptId, String worldId, RecoveryFingerprint recoveryFingerprint, SharedWorldHostingManager.StartupMode startupMode) {

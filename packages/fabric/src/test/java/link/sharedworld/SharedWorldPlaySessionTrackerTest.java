@@ -13,11 +13,11 @@ final class SharedWorldPlaySessionTrackerTest {
         Object oldHandler = new Object();
         Object newHandler = new Object();
 
-        tracker.beginGuestConnect("world-old", "Old World", "old.example");
+        tracker.beginGuestConnect("world-old", "Old World", "old.example", 4L);
         tracker.onPlayJoin(oldHandler);
         assertNotNull(tracker.currentSession(oldHandler));
 
-        tracker.beginGuestConnect("world-new", "New World", "new.example");
+        tracker.beginGuestConnect("world-new", "New World", "new.example", 5L);
 
         assertNull(tracker.currentSession(oldHandler));
         assertNull(tracker.onDisconnect(oldHandler));
@@ -28,6 +28,7 @@ final class SharedWorldPlaySessionTrackerTest {
         assertNotNull(newSession);
         assertEquals("world-new", newSession.worldId());
         assertEquals("new.example", newSession.joinTarget());
+        assertEquals(5L, newSession.runtimeEpoch());
         assertNull(tracker.consumePendingRecovery());
     }
 
@@ -36,7 +37,7 @@ final class SharedWorldPlaySessionTrackerTest {
         SharedWorldPlaySessionTracker tracker = new SharedWorldPlaySessionTracker();
         Object handler = new Object();
 
-        tracker.beginGuestConnect("world-1", "World", "join.example");
+        tracker.beginGuestConnect("world-1", "World", "join.example", 7L);
         tracker.onPlayJoin(handler);
 
         SharedWorldPlaySessionTracker.RecoverySession recoverySession = tracker.onDisconnect(handler);
@@ -45,6 +46,7 @@ final class SharedWorldPlaySessionTrackerTest {
         assertEquals("world-1", recoverySession.worldId());
         assertEquals("World", recoverySession.worldName());
         assertEquals("join.example", recoverySession.previousJoinTarget());
+        assertEquals(7L, recoverySession.runtimeEpoch());
         assertNull(tracker.currentSession(handler));
     }
 

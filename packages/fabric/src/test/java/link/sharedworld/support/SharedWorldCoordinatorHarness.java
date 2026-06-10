@@ -353,6 +353,7 @@ public final class SharedWorldCoordinatorHarness {
         private int disconnectCalls;
         private String pendingScreenTag;
         private Throwable nextConnectFailure;
+        private long lastConnectRuntimeEpoch;
 
         @Override
         public boolean hasSingleplayerServer() {
@@ -415,7 +416,8 @@ public final class SharedWorldCoordinatorHarness {
         }
 
         @Override
-        public void connect(Screen parent, String joinTarget, String worldId, String worldName, Consumer<Throwable> failureHandler) {
+        public void connect(Screen parent, String joinTarget, String worldId, String worldName, long runtimeEpoch, Consumer<Throwable> failureHandler) {
+            this.lastConnectRuntimeEpoch = runtimeEpoch;
             if (!this.renderThread) {
                 Throwable failure = this.nextConnectFailure;
                 this.nextConnectFailure = null;
@@ -475,6 +477,10 @@ public final class SharedWorldCoordinatorHarness {
 
         public void failNextConnect(Throwable failure) {
             this.nextConnectFailure = failure;
+        }
+
+        public long lastConnectRuntimeEpoch() {
+            return this.lastConnectRuntimeEpoch;
         }
     }
 
