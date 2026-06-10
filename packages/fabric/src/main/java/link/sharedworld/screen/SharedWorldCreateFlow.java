@@ -25,12 +25,20 @@ final class SharedWorldCreateFlow {
     private final IconEncoder iconEncoder;
     private final WorkingCopyStore worldStore;
     private final SnapshotUploader snapshotUploader;
+    private final LeaseKeepAlive leaseKeepAlive;
 
-    SharedWorldCreateFlow(CreateBackend backend, IconEncoder iconEncoder, WorkingCopyStore worldStore, SnapshotUploader snapshotUploader) {
+    SharedWorldCreateFlow(
+            CreateBackend backend,
+            IconEncoder iconEncoder,
+            WorkingCopyStore worldStore,
+            SnapshotUploader snapshotUploader,
+            LeaseKeepAlive leaseKeepAlive
+    ) {
         this.backend = backend;
         this.iconEncoder = iconEncoder;
         this.worldStore = worldStore;
         this.snapshotUploader = snapshotUploader;
+        this.leaseKeepAlive = leaseKeepAlive;
     }
 
     /**
@@ -41,10 +49,13 @@ final class SharedWorldCreateFlow {
      * The request is fully populated and the caller supplies a progress sink owned by the UI.
      *
      * Postconditions:
-     * The new world exists remotely with an initial snapshot, or the flow fails without stranding the seed lease.
+     * The new world exists remotely with an initial snapshot, or the flow fails without stranding the
+     * seed lease and without leaving a snapshot-less world behind.
      *
      * Stale-work rule:
      * Initial upload always uses the exact epoch/token returned by enterSession for this create flow.
+     * A keep-alive heartbeat runs for the whole copy+upload so a large world or slow link cannot let
+     * the seed host-starting lease expire mid-create.
      *
      * Authority source:
      * Backend world creation + temporary host assignment for the initial snapshot upload.
@@ -62,17 +73,21 @@ final class SharedWorldCreateFlow {
                 request.storageLink().id()
         );
         WorldDetailsDto createdWorld = result.world();
-        HostAssignmentDto initialUploadAssignment = result.initialUploadAssignment();
+        InitialUploadLease uploadLease = requireInitialUploadLease(createdWorld.id(), createdWorld.name(), result.initialUploadAssignment());
 
-        progressSink.updateDeterminate(Component.translatable("screen.sharedworld.create_progress_copying"), "create_copy", 0.0D, 0L, 0L);
-        this.worldStore.resetWorkingCopy(createdWorld.id());
-        Path workingCopy = this.worldStore.workingCopy(createdWorld.id());
-        copyIntoManagedWorldWithProgress(request.save().directory(), workingCopy, progressSink);
-
-        InitialUploadLease uploadLease = requireInitialUploadLease(createdWorld.id(), createdWorld.name(), initialUploadAssignment);
+        // The seed lease is created host-starting with a fixed startup deadline. Copying a large
+        // save and uploading it can outlast that deadline, so keep the lease alive across both
+        // phases; a missed heartbeat must never abort create (the upload's own authority check is
+        // the real gate).
         Throwable uploadFailure = null;
-        progressSink.updateIndeterminate(Component.translatable("screen.sharedworld.create_progress_uploading"), "create_upload_prepare");
+        AutoCloseable keepAlive = this.leaseKeepAlive.start(() -> heartbeatSeedLeaseQuietly(uploadLease));
         try {
+            progressSink.updateDeterminate(Component.translatable("screen.sharedworld.create_progress_copying"), "create_copy", 0.0D, 0L, 0L);
+            this.worldStore.resetWorkingCopy(createdWorld.id());
+            Path workingCopy = this.worldStore.workingCopy(createdWorld.id());
+            copyIntoManagedWorldWithProgress(request.save().directory(), workingCopy, progressSink);
+
+            progressSink.updateIndeterminate(Component.translatable("screen.sharedworld.create_progress_uploading"), "create_upload_prepare");
             this.snapshotUploader.uploadSnapshot(
                     createdWorld.id(),
                     workingCopy,
@@ -85,7 +100,8 @@ final class SharedWorldCreateFlow {
             uploadFailure = throwable;
             throw throwable;
         } finally {
-            releaseInitialUploadLease(uploadLease, uploadFailure);
+            closeQuietly(keepAlive);
+            finishInitialUpload(uploadLease, uploadFailure);
         }
 
         progressSink.updateIndeterminate(Component.translatable("screen.sharedworld.create_progress_finishing"), "create_finish");
@@ -104,7 +120,12 @@ final class SharedWorldCreateFlow {
         );
     }
 
-    private void releaseInitialUploadLease(InitialUploadLease uploadLease, Throwable uploadFailure) throws IOException, InterruptedException {
+    /**
+     * Release the seed lease and, when the create failed, delete the half-created world so a
+     * snapshot-less ghost never lingers in the player's world list. The snapshot is finalized as the
+     * last step of uploadSnapshot, so any failure reaching here means no usable snapshot exists.
+     */
+    private void finishInitialUpload(InitialUploadLease uploadLease, Throwable uploadFailure) throws IOException, InterruptedException {
         try {
             this.backend.releaseHost(
                     uploadLease.worldId(),
@@ -113,11 +134,37 @@ final class SharedWorldCreateFlow {
                     uploadLease.hostToken()
             );
         } catch (IOException | InterruptedException exception) {
-            if (uploadFailure != null) {
-                uploadFailure.addSuppressed(exception);
-                return;
+            if (uploadFailure == null) {
+                throw exception;
             }
-            throw exception;
+            uploadFailure.addSuppressed(exception);
+        }
+        if (uploadFailure != null) {
+            deleteCreatedWorldQuietly(uploadLease.worldId(), uploadFailure);
+        }
+    }
+
+    private void deleteCreatedWorldQuietly(String worldId, Throwable uploadFailure) {
+        try {
+            this.backend.deleteWorld(worldId);
+        } catch (Exception exception) {
+            uploadFailure.addSuppressed(exception);
+        }
+    }
+
+    private void heartbeatSeedLeaseQuietly(InitialUploadLease uploadLease) {
+        try {
+            this.backend.heartbeatHost(uploadLease.worldId(), uploadLease.runtimeEpoch(), uploadLease.hostToken());
+        } catch (Exception ignored) {
+            // A transient heartbeat failure must not abort create; if the lease is truly gone the
+            // upload's own epoch/token check will surface it.
+        }
+    }
+
+    private static void closeQuietly(AutoCloseable closeable) {
+        try {
+            closeable.close();
+        } catch (Exception ignored) {
         }
     }
 
@@ -223,7 +270,21 @@ final class SharedWorldCreateFlow {
 
         void releaseHost(String worldId, boolean graceful, long runtimeEpoch, String hostToken) throws IOException, InterruptedException;
 
+        void heartbeatHost(String worldId, long runtimeEpoch, String hostToken) throws IOException, InterruptedException;
+
+        void deleteWorld(String worldId) throws IOException, InterruptedException;
+
         String canonicalAssignedPlayerUuidWithHyphens(String backendAssignedPlayerUuid);
+    }
+
+    /**
+     * Keeps the seed host-starting lease alive for the duration of the create copy+upload. The
+     * production implementation schedules a periodic heartbeat on a background thread; tests can drive
+     * the heartbeat synchronously. start() begins keeping the lease alive and returns a handle whose
+     * close() stops it.
+     */
+    interface LeaseKeepAlive {
+        AutoCloseable start(Runnable heartbeat);
     }
 
     interface ProgressSink {

@@ -80,6 +80,20 @@ describe("SharedWorldService world management", () => {
     expect(first.world.slug).not.toBe(second.world.slug);
   });
 
+  test("createWorld rejects names that are too short or too long regardless of the client cap", async () => {
+    const repository = createSqliteRepository();
+    const { signer } = createBlobSigner();
+    const instance = createTestService(repository, authVerifier, signer, {});
+    await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
+    const ctx = { playerUuid: "player-owner", playerName: "Owner" };
+
+    await expect(instance.createWorld(ctx, { name: "ab" })).rejects.toMatchObject({ code: "invalid_world_name" });
+    await expect(instance.createWorld(ctx, { name: "x".repeat(129) })).rejects.toMatchObject({ code: "invalid_world_name" });
+
+    const ok = await instance.createWorld(ctx, { name: "x".repeat(128) });
+    expect(ok.world.name).toBe("x".repeat(128));
+  });
+
   test("deleting the last member purges world snapshots and orphaned blobs", async () => {
     const repository = createSqliteRepository();
     const { signer, deleted } = createBlobSigner();
