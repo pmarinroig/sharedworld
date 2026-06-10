@@ -12,6 +12,7 @@ import type {
 import type { Env, R2Bucket } from "../../src/env.ts";
 import { createSqliteRepository } from "./sqlite-d1.ts";
 import type { RequestContext, SharedWorldRepository } from "../../src/repository.ts";
+import { R2StorageProvider } from "../../src/storage.ts";
 import { SharedWorldService, type AuthVerifier, type BlobUrlSigner } from "../../src/service.ts";
 import type { StorageProvider } from "../../src/storage.ts";
 
@@ -146,12 +147,13 @@ export class LegacyCompatibleSharedWorldService extends SharedWorldService {
     storageProviderOrEnv: StorageProvider | Env,
     maybeEnv?: Env
   ) {
+    const [storageProvider, env] = resolveStorageProviderAndEnv(storageProviderOrEnv, maybeEnv);
     super(
       runtimeRepository,
       authVerifier,
       blobSigner,
-      storageProviderOrEnv,
-      maybeEnv
+      storageProvider,
+      env
     );
   }
 
@@ -315,6 +317,13 @@ export function createTestService(
   maybeEnv?: Env
 ) {
   return new LegacyCompatibleSharedWorldService(repository, verifier, signer, storageProviderOrEnv, maybeEnv);
+}
+
+function resolveStorageProviderAndEnv(storageProviderOrEnv: StorageProvider | Env, maybeEnv?: Env): [StorageProvider, Env] {
+  if ("provider" in storageProviderOrEnv) {
+    return [storageProviderOrEnv, maybeEnv ?? {}];
+  }
+  return [new R2StorageProvider(storageProviderOrEnv), storageProviderOrEnv];
 }
 
 export function service() {

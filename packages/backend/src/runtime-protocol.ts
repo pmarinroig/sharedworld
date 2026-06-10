@@ -145,30 +145,6 @@ export function timedOutUncleanShutdownWarning(runtime: WorldRuntimeRecord | nul
   };
 }
 
-export function ensureCandidate(
-  runtime: WorldRuntimeRecord | null,
-  nextCandidate: RuntimeCandidate | null,
-  now: Date
-): WorldRuntimeRecord | null {
-  if (!runtime || runtime.phase !== "handoff-waiting") {
-    return runtime;
-  }
-
-  if (!nextCandidate) {
-    return null;
-  }
-
-  if (runtime.candidateUuid === nextCandidate.playerUuid) {
-    return runtime;
-  }
-
-  return {
-    ...runtime,
-    candidateUuid: nextCandidate.playerUuid,
-    updatedAt: now.toISOString()
-  };
-}
-
 /**
  * Responsibility:
  * Create the next authoritative host-starting runtime and host assignment token.
@@ -224,25 +200,6 @@ export function assignHostStarting(
       hostToken: runtimeToken,
       startupDeadlineAt
     }
-  };
-}
-
-export function candidateToWaitingRuntime(runtime: WorldRuntimeRecord, nextCandidate: RuntimeCandidate | null, now: Date): WorldRuntimeRecord | null {
-  if (!nextCandidate) {
-    return null;
-  }
-  return {
-    ...runtime,
-    phase: "handoff-waiting",
-    candidateUuid: nextCandidate.playerUuid,
-    runtimeToken: null,
-    joinTarget: null,
-    expiresAt: null,
-    startupDeadlineAt: null,
-    runtimeTokenIssuedAt: null,
-    lastProgressAt: null,
-    updatedAt: now.toISOString(),
-    startupProgress: null
   };
 }
 
@@ -322,15 +279,6 @@ export function moveToFinalizing(runtime: WorldRuntimeRecord, now: Date): WorldR
     updatedAt: finalizationStartedAt,
     lastProgressAt: finalizationStartedAt,
     startupProgress: null
-  };
-}
-
-export function clearHostProgress(runtime: WorldRuntimeRecord, now: Date): WorldRuntimeRecord {
-  return {
-    ...runtime,
-    startupProgress: null,
-    lastProgressAt: null,
-    updatedAt: now.toISOString()
   };
 }
 

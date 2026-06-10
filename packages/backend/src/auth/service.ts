@@ -10,7 +10,7 @@ import { HttpError } from "../http.ts";
 import { randomId, randomServerId } from "../ids.ts";
 import type { Env } from "../env.ts";
 import type { SharedWorldRepository } from "../repository.ts";
-import type { AuthVerifier } from "../service.ts";
+import type { AuthVerifier } from "./../service/context.ts";
 
 const JOIN_VERIFICATION_DELAYS_MS = [0, 150, 300, 600, 1200] as const;
 
