@@ -123,6 +123,44 @@ final class BackendModHandoffIntegrationTest {
         }
     }
 
+    @Test
+    void guestRuntimeWatchSeesEveryHostDepartureStageOnTheRealWire() throws Exception {
+        SharedWorldApiClient hostClient = SharedWorldIntegrationBackend.apiClient(SharedWorldIntegrationBackend.HOST);
+        SharedWorldApiClient guestClient = SharedWorldIntegrationBackend.apiClient(SharedWorldIntegrationBackend.GUEST);
+
+        SharedWorldModels.CreateWorldResultDto created = hostClient.createWorld(
+                SharedWorldIntegrationBackend.uniqueName("Integration Guest Watch"),
+                null,
+                null,
+                null,
+                null,
+                null
+        );
+        SharedWorldModels.HostAssignmentDto hostAssignment = created.initialUploadAssignment();
+        assertNotNull(hostAssignment);
+        SharedWorldModels.InviteCodeDto invite = hostClient.createInvite(created.world().id());
+        guestClient.redeemInvite(invite.code());
+        hostClient.heartbeatHost(created.world().id(), hostAssignment.runtimeEpoch(), hostAssignment.hostToken(), "join.example");
+        long joinedEpoch = hostAssignment.runtimeEpoch();
+
+        assertEquals(
+                link.sharedworld.SharedWorldGuestRuntimeWatchLogic.Outcome.CONTINUE,
+                link.sharedworld.SharedWorldGuestRuntimeWatchLogic.evaluate(joinedEpoch, guestClient.runtimeStatus(created.world().id()))
+        );
+
+        hostClient.beginFinalization(created.world().id(), hostAssignment.runtimeEpoch(), hostAssignment.hostToken());
+        assertEquals(
+                link.sharedworld.SharedWorldGuestRuntimeWatchLogic.Outcome.HOST_LEAVING,
+                link.sharedworld.SharedWorldGuestRuntimeWatchLogic.evaluate(joinedEpoch, guestClient.runtimeStatus(created.world().id()))
+        );
+
+        hostClient.completeFinalization(created.world().id(), hostAssignment.runtimeEpoch(), hostAssignment.hostToken());
+        assertEquals(
+                link.sharedworld.SharedWorldGuestRuntimeWatchLogic.Outcome.HOST_GONE,
+                link.sharedworld.SharedWorldGuestRuntimeWatchLogic.evaluate(joinedEpoch, guestClient.runtimeStatus(created.world().id()))
+        );
+    }
+
     private static SharedWorldModels.HostAssignmentDto observeUntilHost(
             SharedWorldApiClient guestClient,
             String worldId,

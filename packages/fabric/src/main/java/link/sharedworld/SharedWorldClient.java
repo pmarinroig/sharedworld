@@ -38,6 +38,7 @@ public final class SharedWorldClient implements ClientModInitializer {
     private static SharedWorldHostingManager hostingManager;
     private static SharedWorldReleaseCoordinator releaseCoordinator;
     private static SharedWorldPresenceManager presenceManager;
+    private static SharedWorldGuestRuntimeWatcher guestRuntimeWatcher;
     private static SharedWorldGuestCacheWarmer guestCacheWarmer;
     private static SharedWorldSessionCoordinator sessionCoordinator;
     private static final SharedWorldPlaySessionTracker PLAY_SESSION_TRACKER = new SharedWorldPlaySessionTracker();
@@ -56,12 +57,14 @@ public final class SharedWorldClient implements ClientModInitializer {
         );
         releaseCoordinator = new SharedWorldReleaseCoordinator(apiClient, hostingManager);
         presenceManager = new SharedWorldPresenceManager(apiClient);
+        guestRuntimeWatcher = new SharedWorldGuestRuntimeWatcher(apiClient);
         guestCacheWarmer = new SharedWorldGuestCacheWarmer(apiClient, hostPlayerIdentity);
         sessionCoordinator = new SharedWorldSessionCoordinator(apiClient);
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             hostingManager.tick(client);
             releaseCoordinator.tick(client);
             presenceManager.tick(client);
+            guestRuntimeWatcher.tick(client);
             guestCacheWarmer.tick(client);
             sessionCoordinator.tick(client);
             if (SharedWorldClientLifecycleRouter.routeTick(client, releaseCoordinator)) {
@@ -94,6 +97,7 @@ public final class SharedWorldClient implements ClientModInitializer {
             SharedWorldPlaySessionTracker.ActiveWorldSession activeSession
     ) {
         presenceManager.onDisconnect(activeSession);
+        guestRuntimeWatcher.onDisconnect(activeSession);
         guestCacheWarmer.onDisconnect(activeSession);
         SharedWorldReleaseCoordinator.ReleaseDisplay releaseDisplay = releaseCoordinator.onClientDisconnectReturnDisplay(client);
         SharedWorldPlaySessionTracker.RecoverySession recoverySession = PLAY_SESSION_TRACKER.onDisconnect(handler);

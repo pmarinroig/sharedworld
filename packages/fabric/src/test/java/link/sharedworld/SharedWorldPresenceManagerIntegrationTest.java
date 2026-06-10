@@ -59,7 +59,8 @@ final class SharedWorldPresenceManagerIntegrationTest {
                     world.world().id(),
                     world.world().name(),
                     SharedWorldPlaySessionTracker.SessionRole.GUEST,
-                    "join.example"
+                    "join.example",
+                    1L
             ));
             assertTrue(disconnectFinished.await(5, TimeUnit.SECONDS));
             assertEquals(List.of("HostA"), List.of(world.hostClient().listWorlds().getFirst().onlinePlayerNames()));
@@ -87,7 +88,8 @@ final class SharedWorldPresenceManagerIntegrationTest {
                 world.world().id(),
                 world.world().name(),
                 SharedWorldPlaySessionTracker.SessionRole.GUEST,
-                "join.example"
+                "join.example",
+                1L
         );
 
         manager.tickGuestSession(world.world().id(), 1_000L);

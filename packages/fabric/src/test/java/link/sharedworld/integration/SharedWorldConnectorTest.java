@@ -35,6 +35,7 @@ final class SharedWorldConnectorTest {
                 "utter-most.de.e4mc.link",
                 null,
                 "World Name",
+                0L,
                 null,
                 (parent, minecraft, address, serverData, quickPlayFlag, currentTransferState) -> {
                     invoked.set(true);
@@ -68,6 +69,7 @@ final class SharedWorldConnectorTest {
                 "utter-most.de.e4mc.link",
                 null,
                 "World Name",
+                0L,
                 null,
                 (parent, minecraft, address, serverData, quickPlay, transferState) -> {
                     throw new IllegalStateException("boom");

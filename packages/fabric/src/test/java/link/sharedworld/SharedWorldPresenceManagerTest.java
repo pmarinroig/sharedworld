@@ -18,7 +18,8 @@ final class SharedWorldPresenceManagerTest {
                     "world-1",
                     "World One",
                     SharedWorldPlaySessionTracker.SessionRole.GUEST,
-                    "join.target"
+                    "join.target",
+                    7L
             );
 
     @Test
@@ -183,7 +184,8 @@ final class SharedWorldPresenceManagerTest {
                         "world-2",
                         "World Two",
                         SharedWorldPlaySessionTracker.SessionRole.GUEST,
-                        "join.target"
+                        "join.target",
+                        7L
                 );
 
         assertFalse(SharedWorldPresenceManager.matchesForcedGuestSession(currentSession, "world-1"));
@@ -196,7 +198,8 @@ final class SharedWorldPresenceManagerTest {
                         "world-1",
                         "World One",
                         SharedWorldPlaySessionTracker.SessionRole.GUEST,
-                        "join.target"
+                        "join.target",
+                        7L
                 );
 
         assertTrue(SharedWorldPresenceManager.matchesForcedGuestSession(currentSession, "world-1"));

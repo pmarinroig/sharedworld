@@ -27,7 +27,7 @@ final class SharedWorldDisconnectFlowTest {
                         false,
                         true,
                         true,
-                        new SharedWorldPlaySessionTracker.ActiveWorldSession("world-1", "World", SharedWorldPlaySessionTracker.SessionRole.HOST, null)
+                        new SharedWorldPlaySessionTracker.ActiveWorldSession("world-1", "World", SharedWorldPlaySessionTracker.SessionRole.HOST, null, 0L)
                 )
         );
     }
@@ -40,7 +40,7 @@ final class SharedWorldDisconnectFlowTest {
                         false,
                         false,
                         false,
-                        new SharedWorldPlaySessionTracker.ActiveWorldSession("world-1", "World", SharedWorldPlaySessionTracker.SessionRole.GUEST, "join.example")
+                        new SharedWorldPlaySessionTracker.ActiveWorldSession("world-1", "World", SharedWorldPlaySessionTracker.SessionRole.GUEST, "join.example", 7L)
                 )
         );
     }
@@ -61,7 +61,7 @@ final class SharedWorldDisconnectFlowTest {
                         true,
                         true,
                         true,
-                        new SharedWorldPlaySessionTracker.ActiveWorldSession("world-1", "World", SharedWorldPlaySessionTracker.SessionRole.HOST, null)
+                        new SharedWorldPlaySessionTracker.ActiveWorldSession("world-1", "World", SharedWorldPlaySessionTracker.SessionRole.HOST, null, 0L)
                 )
         );
     }

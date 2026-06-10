@@ -38,7 +38,7 @@ public final class SharedWorldCoordinatorSupport {
 
         void openMembershipRevokedScreen(Screen parent);
 
-        void connect(Screen parent, String joinTarget, String worldId, String worldName, Consumer<Throwable> failureHandler);
+        void connect(Screen parent, String joinTarget, String worldId, String worldName, long runtimeEpoch, Consumer<Throwable> failureHandler);
 
         void clearPlaySession();
 
@@ -158,13 +158,13 @@ public final class SharedWorldCoordinatorSupport {
             }
 
             @Override
-            public void connect(Screen parent, String joinTarget, String worldId, String worldName, Consumer<Throwable> failureHandler) {
+            public void connect(Screen parent, String joinTarget, String worldId, String worldName, long runtimeEpoch, Consumer<Throwable> failureHandler) {
                 Minecraft minecraft = Minecraft.getInstance();
                 if (minecraft.isSameThread()) {
-                    SharedWorldConnector.connect(parent, joinTarget, worldId, worldName, failureHandler);
+                    SharedWorldConnector.connect(parent, joinTarget, worldId, worldName, runtimeEpoch, failureHandler);
                     return;
                 }
-                minecraft.execute(() -> SharedWorldConnector.connect(parent, joinTarget, worldId, worldName, failureHandler));
+                minecraft.execute(() -> SharedWorldConnector.connect(parent, joinTarget, worldId, worldName, runtimeEpoch, failureHandler));
             }
 
             @Override
