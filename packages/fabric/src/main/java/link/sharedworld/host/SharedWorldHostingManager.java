@@ -63,8 +63,7 @@ public final class SharedWorldHostingManager {
     private volatile String hostPlayerUuid;
     private volatile boolean startupCancelRequested;
     private volatile String publishedJoinTarget;
-    private volatile boolean coordinatedReleaseActive;
-    private volatile boolean coordinatedReleaseBackendFinalization;
+    private volatile CoordinatedRelease coordinatedRelease = CoordinatedRelease.NONE;
     private volatile long phaseStartedAt;
     private volatile long lastHeartbeatAt;
     private volatile long lastHeartbeatAttemptAt;
@@ -170,8 +169,7 @@ public final class SharedWorldHostingManager {
         this.startupRecoveringLocalCrash = false;
         this.hostSessionGeneration += 1L;
         this.publishedJoinTarget = null;
-        this.coordinatedReleaseActive = false;
-        this.coordinatedReleaseBackendFinalization = false;
+        this.coordinatedRelease = CoordinatedRelease.NONE;
         this.errorMessage = null;
         this.lastHeartbeatAt = 0L;
         this.lastHeartbeatAttemptAt = 0L;
@@ -315,8 +313,9 @@ public final class SharedWorldHostingManager {
         if (!HostLifecyclePolicy.shouldMaintainLiveLease(this.phase)) {
             return;
         }
-        if (this.coordinatedReleaseActive) {
-            if (!this.coordinatedReleaseBackendFinalization && shouldAttemptHeartbeat(now)) {
+        if (this.coordinatedRelease != CoordinatedRelease.NONE) {
+            // While the backend owns finalization, host heartbeats must stop refreshing the lease.
+            if (this.coordinatedRelease == CoordinatedRelease.ACTIVE && shouldAttemptHeartbeat(now)) {
                 heartbeat(this.publishedJoinTarget, this.phase == Phase.SAVING);
             }
             return;
@@ -327,7 +326,7 @@ public final class SharedWorldHostingManager {
     }
 
     private void driveRunningLoop(long now) {
-        if (this.phase != Phase.RUNNING || this.coordinatedReleaseActive) {
+        if (this.phase != Phase.RUNNING || this.coordinatedRelease != CoordinatedRelease.NONE) {
             return;
         }
         if (now - this.lastAutosaveAt >= AUTOSAVE_INTERVAL_MS && this.saveInFlight.compareAndSet(false, true)) {
@@ -398,13 +397,11 @@ public final class SharedWorldHostingManager {
     }
 
     public void beginCoordinatedRelease() {
-        this.coordinatedReleaseActive = true;
-        this.coordinatedReleaseBackendFinalization = false;
+        this.coordinatedRelease = CoordinatedRelease.ACTIVE;
     }
 
     public void markCoordinatedBackendFinalizationStarted() {
-        this.coordinatedReleaseActive = true;
-        this.coordinatedReleaseBackendFinalization = true;
+        this.coordinatedRelease = CoordinatedRelease.BACKEND_FINALIZING;
         if (this.phase != Phase.IDLE && this.phase != Phase.ERROR) {
             setPhase(Phase.RELEASING, SharedWorldText.string("screen.sharedworld.progress.finishing_up"));
             return;
@@ -629,13 +626,13 @@ public final class SharedWorldHostingManager {
                     context.worldId(),
                     runtime == null ? null : runtime.phase(),
                     runtime == null ? null : runtime.runtimeEpoch(),
-                    this.coordinatedReleaseActive
+                    this.coordinatedRelease != CoordinatedRelease.NONE
             );
             handleHostAuthorityLost(heartbeatAuthorityLossMessage(duringSnapshotUpload));
             return;
         }
         if ("host-finalizing".equals(runtime.phase())) {
-            if (this.coordinatedReleaseActive) {
+            if (this.coordinatedRelease != CoordinatedRelease.NONE) {
                 return;
             }
             LOGGER.warn(
@@ -977,8 +974,7 @@ public final class SharedWorldHostingManager {
         this.world = null;
         this.latestManifest = null;
         this.hostPlayerUuid = null;
-        this.coordinatedReleaseActive = false;
-        this.coordinatedReleaseBackendFinalization = false;
+        this.coordinatedRelease = CoordinatedRelease.NONE;
         this.startupCancelRequested = false;
         this.publishedJoinTarget = null;
         this.lastHeartbeatAt = 0L;
@@ -1083,7 +1079,7 @@ public final class SharedWorldHostingManager {
 
     private SharedWorldProgressState releasingProgressState() {
         return HostProgressStateFactory.releasingState(
-                this.coordinatedReleaseBackendFinalization,
+                this.coordinatedRelease == CoordinatedRelease.BACKEND_FINALIZING,
                 this.progressState
         );
     }
@@ -1099,7 +1095,7 @@ public final class SharedWorldHostingManager {
                 && this.phase != Phase.SAVING
                 && this.phase != Phase.ERROR
                 && this.phase != Phase.IDLE
-                && (this.phase != Phase.RELEASING || this.coordinatedReleaseBackendFinalization);
+                && (this.phase != Phase.RELEASING || this.coordinatedRelease == CoordinatedRelease.BACKEND_FINALIZING);
         if (!shouldRelay) {
             if (this.startupProgressRelayActive) {
                 this.startupProgressRelay.clear(progressRelayAuthority(context));
@@ -1122,7 +1118,7 @@ public final class SharedWorldHostingManager {
     }
 
     public void relayCoordinatedReleaseProgress(SharedWorldProgressState progressState) {
-        if (!this.coordinatedReleaseActive || progressState == null) {
+        if (this.coordinatedRelease == CoordinatedRelease.NONE || progressState == null) {
             return;
         }
         this.progressState = progressState;
@@ -1131,7 +1127,7 @@ public final class SharedWorldHostingManager {
     }
 
     public void clearCoordinatedReleaseProgress() {
-        if (!this.coordinatedReleaseActive && this.phase != Phase.RELEASING && this.phase != Phase.ERROR) {
+        if (this.coordinatedRelease == CoordinatedRelease.NONE && this.phase != Phase.RELEASING && this.phase != Phase.ERROR) {
             return;
         }
         HostAttemptContext context = currentAttemptContext();
@@ -1153,6 +1149,17 @@ public final class SharedWorldHostingManager {
                 context.hostToken(),
                 context.generation()
         );
+    }
+
+    /**
+     * Whether the release coordinator currently owns this host session's shutdown,
+     * and whether backend finalization has started. Once BACKEND_FINALIZING is
+     * reached, heartbeats stop refreshing the host lease.
+     */
+    enum CoordinatedRelease {
+        NONE,
+        ACTIVE,
+        BACKEND_FINALIZING
     }
 
     public enum Phase {

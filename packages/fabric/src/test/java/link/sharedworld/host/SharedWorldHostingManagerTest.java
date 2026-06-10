@@ -322,8 +322,7 @@ final class SharedWorldHostingManagerTest {
         setField(manager, "hostSessionGeneration", 1L);
         setField(manager, "startupAttemptId", 7L);
         setField(manager, "phase", SharedWorldHostingManager.Phase.RELEASING);
-        setField(manager, "coordinatedReleaseActive", true);
-        setField(manager, "coordinatedReleaseBackendFinalization", true);
+        setField(manager, "coordinatedRelease", SharedWorldHostingManager.CoordinatedRelease.BACKEND_FINALIZING);
         ((AtomicBoolean) getField(manager, "startupStarted")).set(true);
 
         manager.relayCoordinatedReleaseProgress(SharedWorldProgressState.determinate(
