@@ -1,0 +1,126 @@
+plugins {
+    id "net.fabricmc.fabric-loom" version "${loom_version}"
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = project.archives_base_name
+}
+
+// Buckets for the unobfuscated Minecraft generation; same idea as mcBuckets in the
+// classic project, but built without mappings or remapping. Select with
+// -PsharedworldMcBucket=, defaulting to the newest.
+def mcBuckets = [
+        "26.1": [
+                minecraftVersion: "26.1.2",
+                fabricApiVersion: "0.151.0+26.1.2",
+                minecraftRange  : ">=26.1- <27",
+        ],
+]
+def mcBucketName = providers.gradleProperty("sharedworldMcBucket").getOrElse("26.1")
+def mcBucket = mcBuckets[mcBucketName]
+if (mcBucket == null) {
+    throw new GradleException("Unknown sharedworldMcBucket '${mcBucketName}'. Known buckets: ${mcBuckets.keySet()}")
+}
+
+// The 26.1 generation renamed the GUI render layer wholesale ("render" became a
+// state-extraction pass) but kept every shape SharedWorld uses. Rather than fork the GUI
+// sources, the shared tree is copied at build time with these systematic renames applied.
+// Each rule is a plain rename of the same logical API; anything structural belongs in
+// src/versioned/<bucket>/ instead.
+def modernRenames = [
+        [/\bGuiGraphics\b/, "GuiGraphicsExtractor"],
+        [/\brenderContent\(/, "extractContent("],
+        [/void render\(GuiGraphicsExtractor/, "void extractRenderState(GuiGraphicsExtractor"],
+        [/\.render\(/, ".extractRenderState("],
+        [/renderBackground\(/, "extractBackground("],
+        [/renderDeferredSubtitles\(/, "extractDeferredSubtitles("],
+        [/\bDimensionDataStorage\b(?!Accessor)/, "SavedDataStorage"],
+        [/tabNavigationBar\.setWidth\(/, "tabNavigationBar.updateWidth("],
+        [/\.drawString\(/, ".text("],
+        [/\.drawCenteredString\(/, ".centeredText("],
+        [/\.hLine\(/, ".horizontalLine("],
+        [/\.vLine\(/, ".verticalLine("],
+        [/renderMenuBackgroundTexture\(/, "extractMenuBackgroundTexture("],
+        [/renderMenuBackground\(/, "extractMenuBackground("],
+        [/renderPanorama\(/, "extractPanorama("],
+        [/renderBlurredBackground\(/, "extractBlurredBackground("],
+]
+
+def prepareSharedSources = tasks.register("prepareSharedSources", Sync) {
+    inputs.property "modernRenames", modernRenames.collect { it.join(" -> ") }.join("\n")
+    from "../src/main/java"
+    into layout.buildDirectory.dir("generated/sharedMain")
+    filter { String line ->
+        String result = line
+        modernRenames.each { rule -> result = result.replaceAll(rule[0], rule[1]) }
+        result
+    }
+}
+
+sourceSets {
+    main {
+        java.srcDirs = [prepareSharedSources, "../src/versioned/${mcBucketName}/java"]
+        resources.srcDirs = ["../src/main/resources", "../src/versioned/${mcBucketName}/resources"]
+    }
+    test {
+        java.srcDirs = ["../src/test/java", "../src/versionedTest/${mcBucketName}/java"]
+        resources.srcDirs = ["../src/test/resources"]
+    }
+}
+
+repositories {
+    maven {
+        url = "https://maven.fabricmc.net/"
+    }
+    mavenCentral()
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${mcBucket.minecraftVersion}"
+
+    implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${mcBucket.fabricApiVersion}"
+    compileOnly "org.jspecify:jspecify:1.0.0"
+    testImplementation "org.junit.jupiter:junit-jupiter:5.10.2"
+    testRuntimeOnly "org.junit.platform:junit-platform-launcher"
+}
+
+loom {
+    mods {
+        sharedworld {
+            sourceSet sourceSets.main
+        }
+    }
+}
+
+processResources {
+    inputs.property "version", project.version
+    inputs.property "minecraftRange", mcBucket.minecraftRange
+
+    filesMatching("fabric.mod.json") {
+        expand "version": inputs.properties.version, "minecraftRange": inputs.properties.minecraftRange
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    it.options.release = 25
+}
+
+tasks.named("jar").configure {
+    archiveVersion = "${project.mod_version}+mc${mcBucketName}"
+}
+
+tasks.named("test").configure {
+    useJUnitPlatform {
+        excludeTags "integration"
+    }
+}
+
+java {
+    withSourcesJar()
+    sourceCompatibility = JavaVersion.VERSION_25
+    targetCompatibility = JavaVersion.VERSION_25
+}

@@ -17,14 +17,30 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 final class SharedWorldLocalizationParityTest {
     private static final Pattern KEY_PATTERN = Pattern.compile("\"((?:screen|menu)\\.sharedworld[^\"]*)\"");
-    private static final Path LANG_DIR = Path.of("src/main/resources/assets/sharedworld/lang");
+    // The fabric package root: tests run with user.dir at either the classic project
+    // (packages/fabric) or the modern one (packages/fabric/modern), which shares this source tree.
+    private static final Path PACKAGE_ROOT = findPackageRoot();
+    private static final Path LANG_DIR = PACKAGE_ROOT.resolve("src/main/resources/assets/sharedworld/lang");
     private static final Path CANONICAL_LANG_FILE = LANG_DIR.resolve("en_us.json");
+
+    private static Path findPackageRoot() {
+        Path current = Path.of(System.getProperty("user.dir")).toAbsolutePath();
+        while (current != null) {
+            if (Files.isDirectory(current.resolve("src/main/resources/assets/sharedworld/lang"))) {
+                return current;
+            }
+            current = current.getParent();
+        }
+        throw new IllegalStateException("Could not locate the fabric package root from " + System.getProperty("user.dir"));
+    }
 
     @Test
     void enUsMatchesSharedWorldTranslationKeysReferencedFromSource() throws IOException {
         Set<String> referencedKeys = new TreeSet<>();
-        collectKeys(Path.of("src/main/java"), referencedKeys);
-        collectKeys(Path.of("src/test/java"), referencedKeys);
+        collectKeys(PACKAGE_ROOT.resolve("src/main/java"), referencedKeys);
+        collectKeys(PACKAGE_ROOT.resolve("src/test/java"), referencedKeys);
+        collectKeys(PACKAGE_ROOT.resolve("src/versioned"), referencedKeys);
+        collectKeys(PACKAGE_ROOT.resolve("src/versionedTest"), referencedKeys);
 
         Set<String> definedKeys = readSharedWorldKeys(CANONICAL_LANG_FILE);
 
@@ -59,6 +75,9 @@ final class SharedWorldLocalizationParityTest {
     }
 
     private static void collectKeys(Path root, Set<String> keys) throws IOException {
+        if (!Files.isDirectory(root)) {
+            return;
+        }
         try (var stream = Files.walk(root)) {
             for (Path path : stream.filter(file -> Files.isRegularFile(file) && file.toString().endsWith(".java")).toList()) {
                 if (path.getFileName().toString().equals("SharedWorldLocalizationParityTest.java")) {

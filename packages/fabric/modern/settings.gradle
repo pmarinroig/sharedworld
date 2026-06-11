@@ -1,0 +1,15 @@
+// Build project for the unobfuscated Minecraft generation (26.1+). It shares the source
+// tree of the classic project one directory up; only the toolchain differs (Gradle 9,
+// Loom 1.16+, Java 25, no mappings/remapping).
+pluginManagement {
+    repositories {
+        maven {
+            name = "Fabric"
+            url = "https://maven.fabricmc.net/"
+        }
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+rootProject.name = "sharedworld-mod-modern"

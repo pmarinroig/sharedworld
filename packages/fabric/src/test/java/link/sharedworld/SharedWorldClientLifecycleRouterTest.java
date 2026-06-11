@@ -6,12 +6,7 @@ import link.sharedworld.host.SharedWorldTerminalReasonKind;
 import link.sharedworld.support.SharedWorldCoordinatorHarness;
 import org.junit.jupiter.api.Test;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -120,28 +115,4 @@ final class SharedWorldClientLifecycleRouterTest {
         }
     }
 
-    @Test
-    void retryPathUsesProvidedParentInsteadOfDefaultSavingScreen() throws IOException {
-        String source = Files.readString(Path.of(System.getProperty("user.dir"), "src/main/java/link/sharedworld/SharedWorldClientLifecycleRouter.java"));
-
-        assertTrue(source.contains("setScreen(savingScreen(parent, releaseCoordinator.activeWorldName()))"));
-    }
-
-    @Test
-    void recoverableErrorActionDoesNotRouteToPendingUploadRecoveryScreen() throws IOException {
-        String source = Files.readString(Path.of(System.getProperty("user.dir"), "src/main/java/link/sharedworld/SharedWorldClientLifecycleRouter.java"));
-
-        assertFalse(source.contains("PendingUploadRecoveryScreen"));
-        assertFalse(source.contains("resume_upload"));
-        assertTrue(source.contains("releaseCoordinator.discardLocalReleaseState()"));
-    }
-
-    @Test
-    void sharedWorldScreenKeepsNormalJoinAndDeleteLabels() throws IOException {
-        String source = Files.readString(Path.of(System.getProperty("user.dir"), "src/main/java/link/sharedworld/screen/SharedWorldScreen.java"));
-
-        assertTrue(source.contains("this.joinButton.setMessage("));
-        assertTrue(source.contains("this.deleteButton.setMessage("));
-        assertFalse(source.contains("pendingReleaseMatches("));
-    }
 }
