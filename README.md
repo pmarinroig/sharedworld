@@ -4,13 +4,13 @@ Keep a Minecraft world going with friends without running a dedicated server.
 
 ## Install
 
-SharedWorld currently supports Fabric on Minecraft `1.21.11`.
+SharedWorld currently supports Fabric on Minecraft `1.21.6-11` and `26.1.x`.
 
 To use it, install:
 
 - SharedWorld
 - Fabric API
-- `e4mc 6.1.0`
+- `e4mc 6.1.2`
 
 If you create a SharedWorld, you will also need to link Google Drive so the mod
 can store that world's backups and handoff data in the app data folder.
