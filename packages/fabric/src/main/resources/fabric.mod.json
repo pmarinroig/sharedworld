@@ -15,16 +15,14 @@
     ]
   },
   "mixins": [
-    "sharedworld.mixins.json"
+    "sharedworld.mixins.json",
+    "sharedworld-versioned.mixins.json"
   ],
   "depends": {
     "fabricloader": ">=0.18.2",
-    "minecraft": "~1.21.11",
+    "minecraft": "${minecraftRange}",
     "java": ">=21",
     "fabric-api": "*",
-    "e4mc": [
-      "6.1.0",
-      "6.0.6"
-    ]
+    "e4mc": ">=6.0.6 <7.0.0"
   }
 }

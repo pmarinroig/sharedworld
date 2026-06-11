@@ -1,0 +1,12 @@
+{
+  "required": true,
+  "package": "link.sharedworld.mixin.versioned",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "ChunkStorageWorkerAccessor",
+    "MinecraftServerHostPermissionMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

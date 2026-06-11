@@ -24,6 +24,28 @@ base {
     archivesName = project.archives_base_name
 }
 
+// One source tree builds one jar per Minecraft "bucket": a range of Minecraft versions that
+// share the same API surface for everything SharedWorld touches. Version-specific code lives
+// in src/versioned/<bucket>/ and is swapped in per build. Select with -PsharedworldMcBucket=.
+def mcBuckets = [
+        "1.21.11": [
+                minecraftVersion: "1.21.11",
+                fabricApiVersion: "0.141.3+1.21.11",
+                minecraftRange  : ">=1.21.11 <1.22",
+        ],
+        "1.21.9" : [
+                minecraftVersion: "1.21.9",
+                fabricApiVersion: "0.134.1+1.21.9",
+                minecraftRange  : ">=1.21.9 <1.21.11",
+        ],
+]
+def mcBucketName = providers.gradleProperty("sharedworldMcBucket").getOrElse("1.21.11")
+def mcBucket = mcBuckets[mcBucketName]
+if (mcBucket == null) {
+    throw new GradleException("Unknown sharedworldMcBucket '${mcBucketName}'. Known buckets: ${mcBuckets.keySet()}")
+}
+def isDefaultMcBucket = mcBucketName == "1.21.11"
+
 def localModsDir = file("local/mods")
 def patchedLocalModsDir = file("$buildDir/patched-local-mods")
 def extractedLocalJijDir = file("$buildDir/local-jij")
@@ -38,6 +60,13 @@ patchedLocalModsDir.mkdirs()
 extractedLocalJijDir.mkdirs()
 
 sourceSets {
+    main {
+        java.srcDir("src/versioned/${mcBucketName}/java")
+        resources.srcDir("src/versioned/${mcBucketName}/resources")
+    }
+    test {
+        java.srcDir("src/versionedTest/${mcBucketName}/java")
+    }
     devHelper {
         java.srcDir("src/devhelper/java")
         resources.srcDir("src/devhelper/resources")
@@ -137,17 +166,22 @@ tasks.register("extractLocalNestedModJars", Copy) {
 }
 
 dependencies {
-    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    minecraft "com.mojang:minecraft:${mcBucket.minecraftVersion}"
     mappings loom.officialMojangMappings()
 
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
-    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${mcBucket.fabricApiVersion}"
+    // Minecraft 1.21.11+ exposes jspecify on the mod compile classpath; older versions do
+    // not, so SharedWorld brings its own copy for the @Nullable annotations it uses.
+    compileOnly "org.jspecify:jspecify:1.0.0"
     // Loom's source-set classpath grouping is not enough on its own for our fake
     // client runs; package the helper as a real runtime mod so the login bypass
     // mixin is actually present when HostA/GuestB connect through e4mc.
     // A clean checkout needs one priming build to materialize that jar before
     // Loom can checksum it as a local runtime mod.
-    if (!skipDevHelperRuntime.get()) {
+    // The dev helper only exists for local fake-account runs, which always use the default
+    // bucket; its login mixin tracks that Minecraft version only.
+    if (!skipDevHelperRuntime.get() && isDefaultMcBucket) {
         modLocalRuntime(devHelperRuntimeJar)
     }
     testImplementation "org.junit.jupiter:junit-jupiter:5.10.2"
@@ -222,21 +256,30 @@ gradle.taskGraph.whenReady { graph ->
 tasks.named("configureLaunch").configure {
     dependsOn(tasks.named("prepareLocalMods"))
     dependsOn(tasks.named("extractLocalNestedModJars"))
-    dependsOn(devHelperJarTask)
+    if (isDefaultMcBucket) {
+        dependsOn(devHelperJarTask)
+    }
 }
 
 tasks.named("generateRemapClasspath").configure {
     dependsOn(tasks.named("prepareLocalMods"))
     dependsOn(tasks.named("extractLocalNestedModJars"))
-    dependsOn(devHelperJarTask)
+    if (isDefaultMcBucket) {
+        dependsOn(devHelperJarTask)
+    }
 }
 
 processResources {
     inputs.property "version", project.version
+    inputs.property "minecraftRange", mcBucket.minecraftRange
 
     filesMatching("fabric.mod.json") {
-        expand "version": inputs.properties.version
+        expand "version": inputs.properties.version, "minecraftRange": inputs.properties.minecraftRange
     }
+}
+
+tasks.named("remapJar").configure {
+    archiveVersion = "${project.mod_version}+mc${mcBucketName}"
 }
 
 tasks.named("processDevHelperResources").configure {

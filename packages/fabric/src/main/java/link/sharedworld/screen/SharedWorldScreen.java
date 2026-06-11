@@ -175,7 +175,7 @@ public final class SharedWorldScreen extends Screen {
                             this.releaseWidgetFocus();
                         }
                     }
-                    this.nextAutoRefreshAt = net.minecraft.util.Util.getMillis() + this.autoRefreshIntervalMs();
+                    this.nextAutoRefreshAt = link.sharedworld.util.MonotonicClock.millis() + this.autoRefreshIntervalMs();
                     this.updateButtons();
                 }));
     }
@@ -196,7 +196,7 @@ public final class SharedWorldScreen extends Screen {
             return;
         }
 
-        long now = net.minecraft.util.Util.getMillis();
+        long now = link.sharedworld.util.MonotonicClock.millis();
         if (!this.refreshInFlight && now >= this.nextAutoRefreshAt) {
             this.refreshWorlds();
         }

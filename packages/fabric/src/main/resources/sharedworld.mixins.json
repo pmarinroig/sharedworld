@@ -12,7 +12,6 @@
     "E4mcSingleplayerOwnerCompatNamedMixin",
     "EntityStorageAccessor",
     "IntegratedServerForcedGameTypeMixin",
-    "MinecraftServerHostPermissionMixin",
     "MinecraftDisconnectMixin",
     "MultiplayerScreenMixin",
     "PersistentEntitySectionManagerAccessor",

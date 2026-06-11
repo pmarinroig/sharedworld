@@ -4,6 +4,7 @@ import link.sharedworld.SharedWorldClient;
 import link.sharedworld.SharedWorldCustomIconStore.SelectedIcon;
 import link.sharedworld.SharedWorldText;
 import link.sharedworld.api.SharedWorldApiClient;
+import link.sharedworld.versioned.GuiBlit;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.AbstractWidget;
@@ -12,9 +13,7 @@ import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.FaviconTexture;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
-import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.Identifier;
 import net.minecraft.util.FormattedCharSequence;
 
 import java.nio.file.Path;
@@ -22,8 +21,8 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 abstract class AbstractSharedWorldMetadataScreen extends Screen {
-    private static final Identifier SCROLLER_SPRITE = Identifier.withDefaultNamespace("widget/scroller");
-    private static final Identifier SCROLLER_BACKGROUND_SPRITE = Identifier.withDefaultNamespace("widget/scroller_background");
+    private static final String SCROLLER_SPRITE = "minecraft:widget/scroller";
+    private static final String SCROLLER_BACKGROUND_SPRITE = "minecraft:widget/scroller_background";
     private static final int FORM_WIDTH = 240;
     private static final int NAME_FIELD_WIDTH = 160;
     private static final int MOTD_FIELD_WIDTH = FORM_WIDTH;
@@ -295,7 +294,7 @@ abstract class AbstractSharedWorldMetadataScreen extends Screen {
         }
         guiGraphics.drawString(this.font, Component.translatable("screen.sharedworld.motd"), left, this.motdLabelY, 0xFFA0A0A0);
         guiGraphics.drawString(this.font, Component.translatable("screen.sharedworld.server_icon"), left, this.iconLabelY, 0xFFA0A0A0);
-        guiGraphics.blit(RenderPipelines.GUI_TEXTURED, this.previewIconTexture.textureLocation(), left, this.iconPreviewY, 0.0F, 0.0F, 32, 32, 32, 32);
+        GuiBlit.favicon(guiGraphics, this.previewIconTexture, left, this.iconPreviewY, 32);
         if (!this.safeStatusMessage().isBlank()) {
             this.drawWrappedLines(guiGraphics, this.wrapMessage(this.safeStatusMessage()), left, this.statusY, 0xFFA0A0A0);
         }
@@ -318,8 +317,8 @@ abstract class AbstractSharedWorldMetadataScreen extends Screen {
         int thumbY = this.viewportTop + (int) Math.round((this.scrollOffset / this.maxScroll()) * trackTravel);
         int x = this.scrollbarX();
 
-        guiGraphics.blitSprite(RenderPipelines.GUI_TEXTURED, SCROLLER_BACKGROUND_SPRITE, x, this.viewportTop, SCROLLBAR_WIDTH, viewportHeight);
-        guiGraphics.blitSprite(RenderPipelines.GUI_TEXTURED, SCROLLER_SPRITE, x, thumbY, SCROLLBAR_WIDTH, thumbHeight);
+        GuiBlit.sprite(guiGraphics, SCROLLER_BACKGROUND_SPRITE, x, this.viewportTop, SCROLLBAR_WIDTH, viewportHeight);
+        GuiBlit.sprite(guiGraphics, SCROLLER_SPRITE, x, thumbY, SCROLLBAR_WIDTH, thumbHeight);
     }
 
     private void layoutForm() {

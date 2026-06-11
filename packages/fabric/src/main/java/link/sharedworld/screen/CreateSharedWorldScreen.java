@@ -21,9 +21,8 @@ import net.minecraft.client.gui.screens.FaviconTexture;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
-import net.minecraft.client.renderer.RenderPipelines;
+import link.sharedworld.versioned.GuiBlit;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.Identifier;
 import net.minecraft.util.FormattedCharSequence;
 
 import java.awt.Desktop;
@@ -43,12 +42,12 @@ import java.util.stream.Stream;
 public final class CreateSharedWorldScreen extends Screen {
     private static final int FOOTER_HEIGHT = 36;
     private static final int CONTENT_MARGIN = 12;
-    private static final Identifier EDIT_ICON_SPRITE = Identifier.fromNamespaceAndPath("sharedworld", "edit_icon");
-    private static final Identifier EDIT_ICON_HIGHLIGHTED_SPRITE = Identifier.fromNamespaceAndPath("sharedworld", "edit_icon_highlighted");
-    private static final Identifier DELETE_ICON_SPRITE = Identifier.fromNamespaceAndPath("sharedworld", "delete_icon");
-    private static final Identifier DELETE_ICON_HIGHLIGHTED_SPRITE = Identifier.fromNamespaceAndPath("sharedworld", "delete_icon_highlighted");
-    private static final Identifier UNREACHABLE_SPRITE = Identifier.withDefaultNamespace("server_list/unreachable");
-    private static final Identifier PING_5_SPRITE = Identifier.withDefaultNamespace("server_list/ping_5");
+    private static final String EDIT_ICON_SPRITE = "sharedworld:edit_icon";
+    private static final String EDIT_ICON_HIGHLIGHTED_SPRITE = "sharedworld:edit_icon_highlighted";
+    private static final String DELETE_ICON_SPRITE = "sharedworld:delete_icon";
+    private static final String DELETE_ICON_HIGHLIGHTED_SPRITE = "sharedworld:delete_icon_highlighted";
+    private static final String UNREACHABLE_SPRITE = "minecraft:server_list/unreachable";
+    private static final String PING_5_SPRITE = "minecraft:server_list/ping_5";
     private static final int FOOTER_BUTTON_WIDTH = 150;
     private static final int STORAGE_LEFT_PADDING = 36;
     private static final int STORAGE_COPY_TOP = 56;
@@ -270,7 +269,7 @@ public final class CreateSharedWorldScreen extends Screen {
             this.renderStorageDecorations(guiGraphics);
         }
 
-        guiGraphics.blit(RenderPipelines.GUI_TEXTURED, FOOTER_SEPARATOR, 0, this.height - this.layout.getFooterHeight() - 2, 0.0F, 0.0F, this.width, 2, 32, 2);
+        GuiBlit.footerSeparator(guiGraphics, this.height - this.layout.getFooterHeight() - 2, this.width);
     }
 
     void onSaveSelected(LocalSaveCatalog.LocalSaveOption save) {
@@ -303,14 +302,14 @@ public final class CreateSharedWorldScreen extends Screen {
 
         guiGraphics.drawString(this.font, Component.translatable("screen.sharedworld.world_name"), left, top + 24, 0xFFA0A0A0);
         guiGraphics.drawString(this.font, Component.translatable("screen.sharedworld.motd"), left, top + 78, 0xFFA0A0A0);
-        guiGraphics.blit(RenderPipelines.GUI_TEXTURED, this.previewTexture.textureLocation(), iconX, iconY, 0.0F, 0.0F, 48, 48, 48, 48);
+        GuiBlit.favicon(guiGraphics, this.previewTexture, iconX, iconY, 48);
 
         if (this.iconHovered) {
             guiGraphics.fill(iconX, iconY, iconX + 48, iconY + 48, 0x80000000);
-            Identifier actionSprite = this.selectedIcon != null
+            String actionSprite = this.selectedIcon != null
                     ? DELETE_ICON_HIGHLIGHTED_SPRITE
                     : EDIT_ICON_HIGHLIGHTED_SPRITE;
-            guiGraphics.blitSprite(RenderPipelines.GUI_TEXTURED, actionSprite, iconX + 12, iconY + 12, 24, 24);
+            GuiBlit.sprite(guiGraphics, actionSprite, iconX + 12, iconY + 12, 24, 24);
         }
 
         this.renderServerCardPreview(guiGraphics, left, top + 134);
@@ -370,7 +369,7 @@ public final class CreateSharedWorldScreen extends Screen {
         int contentX = rowX + SharedWorldServerList.CONTENT_PADDING;
         int contentY = rowY + SharedWorldServerList.CONTENT_PADDING;
         SharedWorldServerList.renderSelectedOutline(guiGraphics, rowX, rowY, true);
-        guiGraphics.blit(RenderPipelines.GUI_TEXTURED, this.previewTexture.textureLocation(), contentX, contentY, 0.0F, 0.0F, 32, 32, 32, 32);
+        GuiBlit.favicon(guiGraphics, this.previewTexture, contentX, contentY, 32);
         SharedWorldServerList.renderRowContents(
                 guiGraphics,
                 this.font,

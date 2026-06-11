@@ -20,6 +20,7 @@ final class SharedWorldE4mcCompatibilityTest {
         assertArrayEquals(new int[]{6, 1, 0}, SharedWorldE4mcCompatibility.parseVersionTriplet("6.1.0"));
         assertArrayEquals(new int[]{6, 1, 0}, SharedWorldE4mcCompatibility.parseVersionTriplet("6.1.0+fabric"));
         assertArrayEquals(new int[]{6, 0, 6}, SharedWorldE4mcCompatibility.parseVersionTriplet("e4mc-6.0.6"));
+        assertArrayEquals(new int[]{6, 1, 2}, SharedWorldE4mcCompatibility.parseVersionTriplet("6.1.2+modern"));
     }
 
     @Test
@@ -36,6 +37,7 @@ final class SharedWorldE4mcCompatibilityTest {
         assertFalse(SharedWorldE4mcCompatibility.shouldApplyServerboundKeyPacketCompatMixin("6.1.0"));
         assertFalse(SharedWorldE4mcCompatibility.shouldApplyServerboundKeyPacketCompatMixin("6.1.0+fabric"));
         assertFalse(SharedWorldE4mcCompatibility.shouldApplyServerboundKeyPacketCompatMixin("6.1.1"));
+        assertFalse(SharedWorldE4mcCompatibility.shouldApplyServerboundKeyPacketCompatMixin("6.1.2+modern"));
         assertFalse(SharedWorldE4mcCompatibility.shouldApplyServerboundKeyPacketCompatMixin("missing"));
     }
 
