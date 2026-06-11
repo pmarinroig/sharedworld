@@ -1,0 +1,11 @@
+{
+  "required": true,
+  "package": "link.sharedworld.mixin.versioned",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "MinecraftServerHostPermissionMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
