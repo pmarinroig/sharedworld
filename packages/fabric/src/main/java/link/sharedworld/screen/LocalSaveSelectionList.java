@@ -4,9 +4,9 @@ import com.mojang.blaze3d.platform.NativeImage;
 import link.sharedworld.versioned.GuiBlit;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
+import link.sharedworld.versioned.VersionedSelectionEntry;
 import net.minecraft.client.gui.components.ObjectSelectionList;
 import net.minecraft.client.gui.screens.FaviconTexture;
-import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 
 import java.io.IOException;
@@ -54,7 +54,7 @@ final class LocalSaveSelectionList extends ObjectSelectionList<LocalSaveSelectio
         return 270;
     }
 
-    final class Entry extends ObjectSelectionList.Entry<Entry> {
+    final class Entry extends VersionedSelectionEntry<Entry> {
         private final LocalSaveCatalog.LocalSaveOption save;
         private final FaviconTexture iconTexture;
         private long loadedSignature = Long.MIN_VALUE;
@@ -82,7 +82,7 @@ final class LocalSaveSelectionList extends ObjectSelectionList<LocalSaveSelectio
         }
 
         @Override
-        public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        protected boolean sharedworldMouseClicked(double mouseX, double mouseY, boolean doubleClick) {
             LocalSaveSelectionList.this.setSelected(this);
             LocalSaveSelectionList.this.owner.onSaveSelected(this.save);
             if (doubleClick) {

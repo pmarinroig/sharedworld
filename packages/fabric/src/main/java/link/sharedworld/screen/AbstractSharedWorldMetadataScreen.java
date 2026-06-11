@@ -5,14 +5,13 @@ import link.sharedworld.SharedWorldCustomIconStore.SelectedIcon;
 import link.sharedworld.SharedWorldText;
 import link.sharedworld.api.SharedWorldApiClient;
 import link.sharedworld.versioned.GuiBlit;
+import link.sharedworld.versioned.VersionedScreen;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.FaviconTexture;
-import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.FormattedCharSequence;
 
@@ -20,7 +19,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
-abstract class AbstractSharedWorldMetadataScreen extends Screen {
+abstract class AbstractSharedWorldMetadataScreen extends VersionedScreen {
     private static final String SCROLLER_SPRITE = "minecraft:widget/scroller";
     private static final String SCROLLER_BACKGROUND_SPRITE = "minecraft:widget/scroller_background";
     private static final int FORM_WIDTH = 240;
@@ -118,28 +117,27 @@ abstract class AbstractSharedWorldMetadataScreen extends Screen {
     }
 
     @Override
-    public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
-        if (this.isOverScrollbar(event.x(), event.y())) {
+    protected boolean sharedworldMouseClicked(double mouseX, double mouseY) {
+        if (this.isOverScrollbar(mouseX, mouseY)) {
             this.draggingScrollbar = true;
-            this.scrollToMouse(event.y());
+            this.scrollToMouse(mouseY);
             return true;
         }
-        return super.mouseClicked(event, doubleClick);
+        return false;
     }
 
     @Override
-    public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
+    protected boolean sharedworldMouseDragged(double mouseX, double mouseY) {
         if (this.draggingScrollbar) {
-            this.scrollToMouse(event.y());
+            this.scrollToMouse(mouseY);
             return true;
         }
-        return super.mouseDragged(event, dragX, dragY);
+        return false;
     }
 
     @Override
-    public boolean mouseReleased(MouseButtonEvent event) {
+    protected void sharedworldMouseReleased() {
         this.draggingScrollbar = false;
-        return super.mouseReleased(event);
     }
 
     @Override

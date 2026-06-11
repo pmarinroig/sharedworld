@@ -38,6 +38,11 @@ def mcBuckets = [
                 fabricApiVersion: "0.134.1+1.21.9",
                 minecraftRange  : ">=1.21.9 <1.21.11",
         ],
+        "1.21.6" : [
+                minecraftVersion: "1.21.6",
+                fabricApiVersion: "0.128.2+1.21.6",
+                minecraftRange  : ">=1.21.6 <1.21.9",
+        ],
 ]
 def mcBucketName = providers.gradleProperty("sharedworldMcBucket").getOrElse("1.21.11")
 def mcBucket = mcBuckets[mcBucketName]
@@ -45,6 +50,17 @@ if (mcBucket == null) {
     throw new GradleException("Unknown sharedworldMcBucket '${mcBucketName}'. Known buckets: ${mcBuckets.keySet()}")
 }
 def isDefaultMcBucket = mcBucketName == "1.21.11"
+
+// Compatibility probing: override the selected bucket's Minecraft/fabric-api pair without
+// touching the bucket map, e.g. to ask "what breaks on 1.20.4?" before creating a bucket:
+//   ./gradlew compileJava -PsharedworldProbeMinecraft=1.20.4 -PsharedworldProbeFabricApi=0.97.3+1.20.4
+def probeMinecraft = providers.gradleProperty("sharedworldProbeMinecraft")
+def probeFabricApi = providers.gradleProperty("sharedworldProbeFabricApi")
+if (probeMinecraft.isPresent()) {
+    mcBucket = new LinkedHashMap(mcBucket)
+    mcBucket.minecraftVersion = probeMinecraft.get()
+    mcBucket.fabricApiVersion = probeFabricApi.getOrElse(mcBucket.fabricApiVersion)
+}
 
 def localModsDir = file("local/mods")
 def patchedLocalModsDir = file("$buildDir/patched-local-mods")

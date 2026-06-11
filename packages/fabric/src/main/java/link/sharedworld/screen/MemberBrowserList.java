@@ -4,8 +4,8 @@ import link.sharedworld.SharedWorldText;
 import link.sharedworld.api.SharedWorldModels.WorldMembershipDto;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
+import link.sharedworld.versioned.VersionedSelectionEntry;
 import net.minecraft.client.gui.components.ObjectSelectionList;
-import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 
 import java.util.List;
@@ -43,7 +43,7 @@ final class MemberBrowserList extends ObjectSelectionList<MemberBrowserList.Entr
         return this.width - 12;
     }
 
-    final class Entry extends ObjectSelectionList.Entry<Entry> {
+    final class Entry extends VersionedSelectionEntry<Entry> {
         private final WorldMembershipDto membership;
 
         Entry(WorldMembershipDto membership) {
@@ -62,7 +62,7 @@ final class MemberBrowserList extends ObjectSelectionList<MemberBrowserList.Entr
         }
 
         @Override
-        public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        protected boolean sharedworldMouseClicked(double mouseX, double mouseY, boolean doubleClick) {
             MemberBrowserList.this.setSelected(this);
             MemberBrowserList.this.owner.onMemberSelected(this.membership);
             return true;

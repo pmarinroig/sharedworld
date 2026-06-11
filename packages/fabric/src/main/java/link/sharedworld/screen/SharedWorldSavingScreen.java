@@ -76,7 +76,7 @@ public final class SharedWorldSavingScreen extends Screen {
         this.renderPanorama(guiGraphics, partialTick);
         this.renderBlurredBackground(guiGraphics);
         renderMenuBackgroundTexture(guiGraphics, MENU_BACKGROUND, 0, 0, 0.0F, 0.0F, this.width, this.height);
-        this.minecraft.gui.renderDeferredSubtitles();
+        link.sharedworld.versioned.ClientCompat.drawDeferredSubtitles(this.minecraft);
     }
 
     @Override

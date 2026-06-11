@@ -23,9 +23,8 @@ import net.minecraft.client.gui.layouts.LinearLayout;
 import net.minecraft.client.gui.navigation.ScreenRectangle;
 import net.minecraft.client.gui.screens.FaviconTexture;
 import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.client.input.KeyEvent;
-import net.minecraft.client.input.MouseButtonEvent;
 import link.sharedworld.versioned.GuiBlit;
+import link.sharedworld.versioned.VersionedScreen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.FormattedCharSequence;
 
@@ -38,7 +37,7 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.function.Consumer;
 
-public final class EditSharedWorldScreen extends Screen {
+public final class EditSharedWorldScreen extends VersionedScreen {
     private static final int FOOTER_HEIGHT = 36;
     private static final int CONTENT_MARGIN = 12;
     private static final String EDIT_ICON_HIGHLIGHTED_SPRITE = "sharedworld:edit_icon_highlighted";
@@ -180,16 +179,13 @@ public final class EditSharedWorldScreen extends Screen {
     }
 
     @Override
-    public boolean keyPressed(KeyEvent event) {
-        if (this.tabNavigationBar != null && this.tabNavigationBar.keyPressed(event)) {
-            return true;
-        }
-        return super.keyPressed(event);
+    protected TabNavigationBar sharedworldTabNavigationBar() {
+        return this.tabNavigationBar;
     }
 
     @Override
-    public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
-        if (this.tabManager.getCurrentTab() == this.detailsTab && this.isIconHovered((int) event.x(), (int) event.y())) {
+    protected boolean sharedworldMouseClicked(double mouseX, double mouseY) {
+        if (this.tabManager.getCurrentTab() == this.detailsTab && this.isIconHovered((int) mouseX, (int) mouseY)) {
             if (!this.isOwner()) {
                 return true;
             }
@@ -200,7 +196,7 @@ public final class EditSharedWorldScreen extends Screen {
             }
             return true;
         }
-        return super.mouseClicked(event, doubleClick);
+        return false;
     }
 
     @Override

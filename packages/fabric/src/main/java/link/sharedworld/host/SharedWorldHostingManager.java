@@ -246,7 +246,7 @@ public final class SharedWorldHostingManager {
         }
         if ((minecraft.hasSingleplayerServer() || minecraft.level != null || minecraft.getConnection() != null)
                 && this.cancelDisconnectIssued.compareAndSet(false, true)) {
-            minecraft.disconnectFromWorld(null);
+            link.sharedworld.versioned.ClientCompat.disconnectFromWorld(minecraft);
         }
         return true;
     }
@@ -482,7 +482,7 @@ public final class SharedWorldHostingManager {
 
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.hasSingleplayerServer() || minecraft.level != null || minecraft.getConnection() != null) {
-            minecraft.execute(() -> minecraft.disconnectFromWorld(null));
+            minecraft.execute(() -> link.sharedworld.versioned.ClientCompat.disconnectFromWorld(minecraft));
             return;
         }
 

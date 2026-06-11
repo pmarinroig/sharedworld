@@ -45,9 +45,9 @@ final class RuntimePlayerIdentityTest {
 
         GameProfile profile = RuntimePlayerIdentity.insecureDialtoneProfile(packet);
 
-        assertEquals(expectedUuid, profile.id());
-        assertEquals("GuestB", profile.name());
-        assertNotEquals(offlinePlayerUuid("GuestB"), profile.id());
+        assertEquals(expectedUuid, link.sharedworld.versioned.ClientCompat.profileId(profile));
+        assertEquals("GuestB", link.sharedworld.versioned.ClientCompat.profileName(profile));
+        assertNotEquals(offlinePlayerUuid("GuestB"), link.sharedworld.versioned.ClientCompat.profileId(profile));
     }
 
     private static UUID offlinePlayerUuid(String playerName) {

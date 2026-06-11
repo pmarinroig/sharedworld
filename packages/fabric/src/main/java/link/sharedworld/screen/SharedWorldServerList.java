@@ -11,9 +11,9 @@ import link.sharedworld.versioned.GuiBlit;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.Font;
+import link.sharedworld.versioned.VersionedSelectionEntry;
 import net.minecraft.client.gui.components.ObjectSelectionList;
 import net.minecraft.client.gui.screens.FaviconTexture;
-import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.FormattedCharSequence;
 
@@ -91,7 +91,7 @@ public final class SharedWorldServerList extends ObjectSelectionList<SharedWorld
         return ROW_WIDTH;
     }
 
-    public final class Entry extends ObjectSelectionList.Entry<Entry> {
+    public final class Entry extends VersionedSelectionEntry<Entry> {
         private final WorldSummaryDto world;
         private final FaviconTexture iconTexture;
         private long lastIconSignature = Long.MIN_VALUE;
@@ -143,22 +143,22 @@ public final class SharedWorldServerList extends ObjectSelectionList<SharedWorld
         }
 
         @Override
-        public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        protected boolean sharedworldMouseClicked(double mouseX, double mouseY, boolean doubleClick) {
             SharedWorldServerList.this.setSelected(this);
             SharedWorldServerList.this.screen.onEntrySelected(this.world);
             int left = this.getContentX();
             int top = this.getContentY();
-            double mouseX = this.normalizeIconCoordinate(event.x(), left);
-            double mouseY = this.normalizeIconCoordinate(event.y(), top);
-            if (this.isJoinButton(mouseX, mouseY)) {
+            double localX = this.normalizeIconCoordinate(mouseX, left);
+            double localY = this.normalizeIconCoordinate(mouseY, top);
+            if (this.isJoinButton(localX, localY)) {
                 SharedWorldServerList.this.screen.joinSelected();
                 return true;
             }
-            if (this.isMoveUpButton(mouseX, mouseY) && SharedWorldServerList.this.screen.canMoveWorld(this.world, -1)) {
+            if (this.isMoveUpButton(localX, localY) && SharedWorldServerList.this.screen.canMoveWorld(this.world, -1)) {
                 SharedWorldServerList.this.screen.moveWorld(this.world, -1);
                 return true;
             }
-            if (this.isMoveDownButton(mouseX, mouseY) && SharedWorldServerList.this.screen.canMoveWorld(this.world, 1)) {
+            if (this.isMoveDownButton(localX, localY) && SharedWorldServerList.this.screen.canMoveWorld(this.world, 1)) {
                 SharedWorldServerList.this.screen.moveWorld(this.world, 1);
                 return true;
             }

@@ -214,7 +214,7 @@ final class WorldSnapshotCaptureCoordinator {
         public void close() throws IOException, InterruptedException {
             try {
                 awaitServerTask(this.server, () -> {
-                    server.setAutoSave(this.previousAutoSave);
+                    WorldFlushCompat.setAutoSave(server, this.previousAutoSave);
                     LOGGER.info(
                             "SharedWorld restored vanilla autosave={} after snapshot window for {}",
                             this.previousAutoSave,
@@ -247,9 +247,9 @@ final class WorldSnapshotCaptureCoordinator {
                 return NoOpAutoSaveWindow.INSTANCE;
             }
 
-            this.previousAutoSave = this.server.isAutoSave();
+            this.previousAutoSave = WorldFlushCompat.isAutoSave(this.server);
             LOGGER.info("SharedWorld disabling vanilla autosave for snapshot window on {}", this.worldId);
-            this.server.setAutoSave(false);
+            WorldFlushCompat.setAutoSave(this.server, false);
             this.autoSaveDisabled = true;
 
             try {
@@ -301,7 +301,7 @@ final class WorldSnapshotCaptureCoordinator {
             if (!this.autoSaveDisabled) {
                 return;
             }
-            this.server.setAutoSave(this.previousAutoSave);
+            WorldFlushCompat.setAutoSave(this.server, this.previousAutoSave);
             this.autoSaveDisabled = false;
             LOGGER.info(
                     "SharedWorld restored vanilla autosave={} after abandoning snapshot window open for {}",

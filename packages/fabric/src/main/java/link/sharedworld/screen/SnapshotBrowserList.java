@@ -4,8 +4,8 @@ import link.sharedworld.SharedWorldText;
 import link.sharedworld.api.SharedWorldModels.WorldSnapshotSummaryDto;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
+import link.sharedworld.versioned.VersionedSelectionEntry;
 import net.minecraft.client.gui.components.ObjectSelectionList;
-import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 
 import java.time.Instant;
@@ -48,7 +48,7 @@ final class SnapshotBrowserList extends ObjectSelectionList<SnapshotBrowserList.
         return this.width - 12;
     }
 
-    final class Entry extends ObjectSelectionList.Entry<Entry> {
+    final class Entry extends VersionedSelectionEntry<Entry> {
         private final WorldSnapshotSummaryDto snapshot;
 
         Entry(WorldSnapshotSummaryDto snapshot) {
@@ -68,7 +68,7 @@ final class SnapshotBrowserList extends ObjectSelectionList<SnapshotBrowserList.
         }
 
         @Override
-        public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        protected boolean sharedworldMouseClicked(double mouseX, double mouseY, boolean doubleClick) {
             SnapshotBrowserList.this.setSelected(this);
             SnapshotBrowserList.this.owner.onSnapshotSelected(this.snapshot);
             return true;

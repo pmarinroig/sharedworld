@@ -134,7 +134,7 @@ public final class SharedWorldCoordinatorSupport {
 
             @Override
             public void disconnectFromWorld() {
-                Minecraft.getInstance().disconnectFromWorld(null);
+                link.sharedworld.versioned.ClientCompat.disconnectFromWorld(Minecraft.getInstance());
             }
 
             @Override

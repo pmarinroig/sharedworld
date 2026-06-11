@@ -36,7 +36,6 @@ def modernRenames = [
         [/void render\(GuiGraphicsExtractor/, "void extractRenderState(GuiGraphicsExtractor"],
         [/\.render\(/, ".extractRenderState("],
         [/renderBackground\(/, "extractBackground("],
-        [/renderDeferredSubtitles\(/, "extractDeferredSubtitles("],
         [/\bDimensionDataStorage\b(?!Accessor)/, "SavedDataStorage"],
         [/tabNavigationBar\.setWidth\(/, "tabNavigationBar.updateWidth("],
         [/\.drawString\(/, ".text("],
