@@ -1,14 +1,13 @@
 package link.sharedworld.screen;
 
 import com.mojang.blaze3d.platform.NativeImage;
+import link.sharedworld.versioned.GuiBlit;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.ObjectSelectionList;
 import net.minecraft.client.gui.screens.FaviconTexture;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
-import net.minecraft.client.renderer.RenderPipelines;
-import net.minecraft.util.Util;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -20,9 +19,11 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.FormatStyle;
 import java.util.List;
+import java.util.Locale;
 
 final class LocalSaveSelectionList extends ObjectSelectionList<LocalSaveSelectionList.Entry> {
-    private static final DateTimeFormatter DATE_FORMAT = Util.localizedDateFormatter(FormatStyle.SHORT);
+    private static final DateTimeFormatter DATE_FORMAT =
+            DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT).withLocale(Locale.getDefault());
     private final CreateSharedWorldScreen owner;
 
     LocalSaveSelectionList(Minecraft minecraft, int width, int height, int y, int itemHeight, CreateSharedWorldScreen owner) {
@@ -68,7 +69,7 @@ final class LocalSaveSelectionList extends ObjectSelectionList<LocalSaveSelectio
             this.refreshIconIfNeeded();
             int x = this.getContentX();
             int y = this.getContentY();
-            guiGraphics.blit(RenderPipelines.GUI_TEXTURED, this.iconTexture.textureLocation(), x, y, 0.0F, 0.0F, 32, 32, 32, 32);
+            GuiBlit.favicon(guiGraphics, this.iconTexture, x, y, 32);
             guiGraphics.drawString(LocalSaveSelectionList.this.minecraft.font, Component.literal(this.save.displayName()), x + 36, y + 1, 0xFFFFFFFF);
             guiGraphics.drawString(
                     LocalSaveSelectionList.this.minecraft.font,

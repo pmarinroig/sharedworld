@@ -1,86 +1,46 @@
 package link.sharedworld.host;
 
-import net.minecraft.server.permissions.LevelBasedPermissionSet;
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class SharedWorldHostPermissionPolicyTest {
+    private static final String OWNER_UUID = "00000000-0000-0000-0000-000000000001";
+
     @Test
-    void hostingOwnerGetsOwnerPermissions() {
-        assertSame(
-                LevelBasedPermissionSet.OWNER,
-                SharedWorldHostPermissionPolicy.effectivePermissions(
-                        LevelBasedPermissionSet.ALL,
-                        true,
-                        "00000000-0000-0000-0000-000000000001",
-                        "00000000-0000-0000-0000-000000000001"
-                )
-        );
+    void hostingOwnerHasOwnerPermissions() {
+        assertTrue(SharedWorldHostPermissionPolicy.hasSharedWorldOwnerPermissions(true, OWNER_UUID, OWNER_UUID));
     }
 
     @Test
-    void hostingRemoteOwnerGetsOwnerPermissions() {
-        assertSame(
-                LevelBasedPermissionSet.OWNER,
-                SharedWorldHostPermissionPolicy.effectivePermissions(
-                        LevelBasedPermissionSet.MODERATOR,
-                        true,
-                        "00000000-0000-0000-0000-000000000001",
-                        "00000000-0000-0000-0000-000000000001"
-                )
-        );
+    void ownerUuidComparisonIsCanonical() {
+        assertTrue(SharedWorldHostPermissionPolicy.hasSharedWorldOwnerPermissions(
+                true,
+                OWNER_UUID.replace("-", "").toUpperCase(),
+                OWNER_UUID
+        ));
     }
 
     @Test
-    void hostingNonOwnerLocalHostFallsBackToAll() {
-        assertSame(
-                LevelBasedPermissionSet.ALL,
-                SharedWorldHostPermissionPolicy.effectivePermissions(
-                        LevelBasedPermissionSet.ADMIN,
-                        true,
-                        "00000000-0000-0000-0000-000000000002",
-                        "00000000-0000-0000-0000-000000000001"
-                )
-        );
+    void nonOwnerDoesNotGetOwnerPermissions() {
+        assertFalse(SharedWorldHostPermissionPolicy.hasSharedWorldOwnerPermissions(
+                true,
+                "00000000-0000-0000-0000-000000000002",
+                OWNER_UUID
+        ));
     }
 
     @Test
-    void hostingNonOwnerRemoteGuestFallsBackToAll() {
-        assertSame(
-                LevelBasedPermissionSet.ALL,
-                SharedWorldHostPermissionPolicy.effectivePermissions(
-                        LevelBasedPermissionSet.MODERATOR,
-                        true,
-                        "00000000-0000-0000-0000-000000000003",
-                        "00000000-0000-0000-0000-000000000001"
-                )
-        );
+    void notHostingNeverGrantsOwnerPermissions() {
+        assertFalse(SharedWorldHostPermissionPolicy.hasSharedWorldOwnerPermissions(false, OWNER_UUID, OWNER_UUID));
     }
 
     @Test
-    void hostingWithoutOwnerUuidFallsBackToAllForEveryone() {
-        assertSame(
-                LevelBasedPermissionSet.ALL,
-                SharedWorldHostPermissionPolicy.effectivePermissions(
-                        LevelBasedPermissionSet.OWNER,
-                        true,
-                        "00000000-0000-0000-0000-000000000001",
-                        null
-                )
-        );
-    }
-
-    @Test
-    void nonHostingSessionKeepsVanillaPermissions() {
-        assertSame(
-                LevelBasedPermissionSet.ADMIN,
-                SharedWorldHostPermissionPolicy.effectivePermissions(
-                        LevelBasedPermissionSet.ADMIN,
-                        false,
-                        "00000000-0000-0000-0000-000000000001",
-                        "00000000-0000-0000-0000-000000000001"
-                )
-        );
+    void missingIdentitiesNeverGrantOwnerPermissions() {
+        assertFalse(SharedWorldHostPermissionPolicy.hasSharedWorldOwnerPermissions(true, null, OWNER_UUID));
+        assertFalse(SharedWorldHostPermissionPolicy.hasSharedWorldOwnerPermissions(true, " ", OWNER_UUID));
+        assertFalse(SharedWorldHostPermissionPolicy.hasSharedWorldOwnerPermissions(true, OWNER_UUID, null));
+        assertFalse(SharedWorldHostPermissionPolicy.hasSharedWorldOwnerPermissions(true, OWNER_UUID, " "));
     }
 }

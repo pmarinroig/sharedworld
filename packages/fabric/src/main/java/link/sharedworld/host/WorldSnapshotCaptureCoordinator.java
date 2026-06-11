@@ -5,6 +5,7 @@ import link.sharedworld.mixin.EntityStorageAccessor;
 import link.sharedworld.mixin.PersistentEntitySectionManagerAccessor;
 import link.sharedworld.mixin.ServerLevelEntityManagerAccessor;
 import link.sharedworld.sync.ManagedWorldStore;
+import link.sharedworld.versioned.WorldFlushCompat;
 import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.thread.ConsecutiveExecutor;
@@ -255,7 +256,7 @@ final class WorldSnapshotCaptureCoordinator {
                 List<CompletableFuture<?>> drainFutures = new ArrayList<>();
                 List<ConsecutiveExecutor> entityDeserializerQueues = new ArrayList<>();
                 for (ServerLevel level : this.server.getAllLevels()) {
-                    drainFutures.add(level.getChunkSource().chunkMap.synchronize(false));
+                    drainFutures.add(WorldFlushCompat.synchronizeChunks(level));
 
                     PersistentEntitySectionManager<?> entityManager = ((ServerLevelEntityManagerAccessor) level).sharedworld$getEntityManager();
                     EntityPersistentStorage<?> permanentStorage = ((PersistentEntitySectionManagerAccessor) entityManager).sharedworld$getPermanentStorage();

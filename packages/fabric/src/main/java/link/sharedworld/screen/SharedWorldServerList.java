@@ -6,6 +6,8 @@ import link.sharedworld.SharedWorldClient;
 import link.sharedworld.SharedWorldText;
 import link.sharedworld.api.SharedWorldModels.WorldSummaryDto;
 import link.sharedworld.sync.ManagedWorldStore;
+import link.sharedworld.util.MonotonicClock;
+import link.sharedworld.versioned.GuiBlit;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.Font;
@@ -13,10 +15,7 @@ import net.minecraft.client.gui.components.ObjectSelectionList;
 import net.minecraft.client.gui.screens.FaviconTexture;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
-import net.minecraft.client.renderer.RenderPipelines;
-import net.minecraft.resources.Identifier;
 import net.minecraft.util.FormattedCharSequence;
-import net.minecraft.util.Util;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -38,19 +37,19 @@ public final class SharedWorldServerList extends ObjectSelectionList<SharedWorld
     static final int PLAYER_COUNT_GAP = 15;
     static final int DETAILS_GAP = 5;
 
-    private static final Identifier JOIN_SPRITE = Identifier.withDefaultNamespace("server_list/join");
-    private static final Identifier JOIN_HIGHLIGHTED_SPRITE = Identifier.withDefaultNamespace("server_list/join_highlighted");
-    private static final Identifier MOVE_UP_SPRITE = Identifier.withDefaultNamespace("server_list/move_up");
-    private static final Identifier MOVE_UP_HIGHLIGHTED_SPRITE = Identifier.withDefaultNamespace("server_list/move_up_highlighted");
-    private static final Identifier MOVE_DOWN_SPRITE = Identifier.withDefaultNamespace("server_list/move_down");
-    private static final Identifier MOVE_DOWN_HIGHLIGHTED_SPRITE = Identifier.withDefaultNamespace("server_list/move_down_highlighted");
-    private static final Identifier UNREACHABLE_SPRITE = Identifier.withDefaultNamespace("server_list/unreachable");
-    private static final Identifier PING_5_SPRITE = Identifier.withDefaultNamespace("server_list/ping_5");
-    private static final Identifier PINGING_1_SPRITE = Identifier.withDefaultNamespace("server_list/pinging_1");
-    private static final Identifier PINGING_2_SPRITE = Identifier.withDefaultNamespace("server_list/pinging_2");
-    private static final Identifier PINGING_3_SPRITE = Identifier.withDefaultNamespace("server_list/pinging_3");
-    private static final Identifier PINGING_4_SPRITE = Identifier.withDefaultNamespace("server_list/pinging_4");
-    private static final Identifier PINGING_5_SPRITE = Identifier.withDefaultNamespace("server_list/pinging_5");
+    private static final String JOIN_SPRITE = "minecraft:server_list/join";
+    private static final String JOIN_HIGHLIGHTED_SPRITE = "minecraft:server_list/join_highlighted";
+    private static final String MOVE_UP_SPRITE = "minecraft:server_list/move_up";
+    private static final String MOVE_UP_HIGHLIGHTED_SPRITE = "minecraft:server_list/move_up_highlighted";
+    private static final String MOVE_DOWN_SPRITE = "minecraft:server_list/move_down";
+    private static final String MOVE_DOWN_HIGHLIGHTED_SPRITE = "minecraft:server_list/move_down_highlighted";
+    private static final String UNREACHABLE_SPRITE = "minecraft:server_list/unreachable";
+    private static final String PING_5_SPRITE = "minecraft:server_list/ping_5";
+    private static final String PINGING_1_SPRITE = "minecraft:server_list/pinging_1";
+    private static final String PINGING_2_SPRITE = "minecraft:server_list/pinging_2";
+    private static final String PINGING_3_SPRITE = "minecraft:server_list/pinging_3";
+    private static final String PINGING_4_SPRITE = "minecraft:server_list/pinging_4";
+    private static final String PINGING_5_SPRITE = "minecraft:server_list/pinging_5";
 
     private final SharedWorldScreen screen;
     private final ManagedWorldStore worldStore = new ManagedWorldStore();
@@ -98,7 +97,7 @@ public final class SharedWorldServerList extends ObjectSelectionList<SharedWorld
         private long lastIconSignature = Long.MIN_VALUE;
         private Component statusIconTooltip;
         private List<Component> onlinePlayersTooltip;
-        private Identifier statusIcon = PING_5_SPRITE;
+        private String statusIcon = PING_5_SPRITE;
 
         private Entry(WorldSummaryDto world) {
             this.world = world;
@@ -111,7 +110,7 @@ public final class SharedWorldServerList extends ObjectSelectionList<SharedWorld
             int top = this.getContentY();
             this.refreshIconIfNeeded();
             this.refreshStatusPresentation();
-            this.drawIcon(guiGraphics, left, top, this.iconTexture.textureLocation());
+            this.drawIcon(guiGraphics, left, top);
             this.drawHoverControls(guiGraphics, left, top, mouseX, mouseY, hovered);
             renderRowContents(
                     guiGraphics,
@@ -198,8 +197,8 @@ public final class SharedWorldServerList extends ObjectSelectionList<SharedWorld
             }
         }
 
-        private void drawIcon(GuiGraphics guiGraphics, int x, int y, Identifier textureLocation) {
-            guiGraphics.blit(RenderPipelines.GUI_TEXTURED, textureLocation, x, y, 0.0F, 0.0F, 32, 32, 32, 32);
+        private void drawIcon(GuiGraphics guiGraphics, int x, int y) {
+            GuiBlit.favicon(guiGraphics, this.iconTexture, x, y, 32);
         }
 
         private void drawHoverControls(GuiGraphics guiGraphics, int x, int y, int mouseX, int mouseY, boolean hovered) {
@@ -210,8 +209,8 @@ public final class SharedWorldServerList extends ObjectSelectionList<SharedWorld
             double localX = mouseX - x;
             double localY = mouseY - y;
             guiGraphics.fill(x, y, x + 32, y + 32, 0xA0000000);
-            guiGraphics.blitSprite(
-                    RenderPipelines.GUI_TEXTURED,
+            GuiBlit.sprite(
+                    guiGraphics,
                     this.isJoinButton(localX, localY) ? JOIN_HIGHLIGHTED_SPRITE : JOIN_SPRITE,
                     x,
                     y,
@@ -220,8 +219,8 @@ public final class SharedWorldServerList extends ObjectSelectionList<SharedWorld
             );
 
             if (SharedWorldServerList.this.screen.canMoveWorld(this.world, -1)) {
-                guiGraphics.blitSprite(
-                        RenderPipelines.GUI_TEXTURED,
+                GuiBlit.sprite(
+                        guiGraphics,
                         this.isMoveUpButton(localX, localY) ? MOVE_UP_HIGHLIGHTED_SPRITE : MOVE_UP_SPRITE,
                         x,
                         y,
@@ -231,8 +230,8 @@ public final class SharedWorldServerList extends ObjectSelectionList<SharedWorld
             }
 
             if (SharedWorldServerList.this.screen.canMoveWorld(this.world, 1)) {
-                guiGraphics.blitSprite(
-                        RenderPipelines.GUI_TEXTURED,
+                GuiBlit.sprite(
+                        guiGraphics,
                         this.isMoveDownButton(localX, localY) ? MOVE_DOWN_HIGHLIGHTED_SPRITE : MOVE_DOWN_SPRITE,
                         x,
                         y,
@@ -333,8 +332,8 @@ public final class SharedWorldServerList extends ObjectSelectionList<SharedWorld
         return players;
     }
 
-    private static Identifier animatedPingingSprite(int rowIndex) {
-        int frame = (int) ((Util.getMillis() / 100L + (long) rowIndex * 2L) & 7L);
+    private static String animatedPingingSprite(int rowIndex) {
+        int frame = (int) ((MonotonicClock.millis() / 100L + (long) rowIndex * 2L) & 7L);
         if (frame > 4) {
             frame = 8 - frame;
         }
@@ -372,7 +371,7 @@ public final class SharedWorldServerList extends ObjectSelectionList<SharedWorld
             String name,
             String motd,
             Component playerCount,
-            Identifier statusIcon
+            String statusIcon
     ) {
         int left = rowX + CONTENT_PADDING;
         int top = rowY + CONTENT_PADDING;
@@ -388,7 +387,7 @@ public final class SharedWorldServerList extends ObjectSelectionList<SharedWorld
             guiGraphics.drawString(font, lines.get(index), textLeft, top + DETAIL_Y_OFFSET + (index * DETAIL_LINE_SPACING), 0xFF808080);
         }
         guiGraphics.drawString(font, playerCount, playerCountX, top + TITLE_Y_OFFSET, 0xFF808080);
-        guiGraphics.blitSprite(RenderPipelines.GUI_TEXTURED, statusIcon, iconRight, top, 10, 8);
+        GuiBlit.sprite(guiGraphics, statusIcon, iconRight, top, 10, 8);
     }
 
     static List<FormattedCharSequence> detailLines(Font font, String motd, int width) {

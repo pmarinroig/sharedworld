@@ -1,7 +1,7 @@
-package link.sharedworld.mixin;
+package link.sharedworld.mixin.versioned;
 
 import link.sharedworld.SharedWorldDevSessionBridge;
-import link.sharedworld.host.SharedWorldHostPermissionPolicy;
+import link.sharedworld.versioned.HostPermissionsCompat;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.permissions.LevelBasedPermissionSet;
 import net.minecraft.server.players.NameAndId;
@@ -15,7 +15,7 @@ abstract class MinecraftServerHostPermissionMixin {
     @Inject(method = "getProfilePermissions", at = @At("RETURN"), cancellable = true)
     private void sharedworld$applySharedWorldOwnerPermissions(NameAndId profile, CallbackInfoReturnable<LevelBasedPermissionSet> cir) {
         cir.setReturnValue(
-                SharedWorldHostPermissionPolicy.effectivePermissions(
+                HostPermissionsCompat.effectivePermissions(
                         cir.getReturnValue(),
                         SharedWorldDevSessionBridge.isHostingSharedWorld(),
                         profile.id() == null ? null : profile.id().toString(),

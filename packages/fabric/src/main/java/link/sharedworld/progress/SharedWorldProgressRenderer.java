@@ -1,12 +1,12 @@
 package link.sharedworld.progress;
 
+import link.sharedworld.util.MonotonicClock;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.LoadingDotsWidget;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
 import net.minecraft.util.ARGB;
-import net.minecraft.util.Util;
 
 public final class SharedWorldProgressRenderer {
     private static final int TITLE_Y_OFFSET = -36;
@@ -91,7 +91,7 @@ public final class SharedWorldProgressRenderer {
 
         float segmentWidth = Math.max(0.025F, (clampedEnd - clampedStart) * 0.28F);
         float travel = Math.max(0.0F, (clampedEnd - clampedStart) - segmentWidth);
-        float cycle = (float) ((Util.getMillis() % 1400L) / 1400.0D);
+        float cycle = (float) ((MonotonicClock.millis() % 1400L) / 1400.0D);
         float pingPong = cycle <= 0.5F ? cycle * 2.0F : (1.0F - cycle) * 2.0F;
         float highlightStart = clampedStart + (travel * pingPong);
         float highlightEnd = Math.min(clampedEnd, highlightStart + segmentWidth);
