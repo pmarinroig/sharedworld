@@ -15,6 +15,8 @@ import java.util.concurrent.CompletableFuture;
 public final class RedeemInviteScreen extends link.sharedworld.versioned.VersionedScreen {
     private final SharedWorldScreen parent;
     private EditBox codeBox;
+    private Button doneButton;
+    private boolean redeemInFlight;
     private String statusMessage = "";
 
     public RedeemInviteScreen(SharedWorldScreen parent) {
@@ -31,9 +33,10 @@ public final class RedeemInviteScreen extends link.sharedworld.versioned.Version
         this.addRenderableWidget(this.codeBox);
         this.setInitialFocus(this.codeBox);
 
-        this.addRenderableWidget(Button.builder(Component.translatable("screen.sharedworld.done"), button -> this.submit())
+        this.doneButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sharedworld.done"), button -> this.submit())
                 .bounds(centerX - 100, this.height / 4 + 96, 200, 20)
                 .build());
+        this.doneButton.active = !this.redeemInFlight;
         this.addRenderableWidget(Button.builder(Component.translatable("screen.sharedworld.cancel"), button -> {
                     this.parent.clearTransientFocus();
                     this.minecraft.setScreen(this.parent);
@@ -52,17 +55,25 @@ public final class RedeemInviteScreen extends link.sharedworld.versioned.Version
                 92,
                 0xFFA0A0A0
         );
-        guiGraphics.drawString(this.font, this.statusMessage, this.width / 2 - 100, 158, 0xFFA0A0A0);
+        // Keep the status line clear of the height-relative buttons on small
+        // scaled windows (fixed 158 can land on the Done button there).
+        int statusY = Math.min(158, this.height / 4 + 96 - 12);
+        guiGraphics.drawString(this.font, this.statusMessage, this.width / 2 - 100, statusY, 0xFFA0A0A0);
         super.render(guiGraphics, mouseX, mouseY, partialTick);
     }
 
     private void submit() {
+        if (this.redeemInFlight) {
+            return;
+        }
         String code = this.codeBox.getValue().trim().toUpperCase();
         if (code.isEmpty()) {
             this.statusMessage = SharedWorldText.string("screen.sharedworld.invite_code_required");
             return;
         }
 
+        this.redeemInFlight = true;
+        this.doneButton.active = false;
         this.statusMessage = SharedWorldText.string("screen.sharedworld.redeem_adding_world");
         CompletableFuture
                 .supplyAsync(() -> {
@@ -73,6 +84,10 @@ public final class RedeemInviteScreen extends link.sharedworld.versioned.Version
                     }
                 }, SharedWorldClient.ioExecutor())
                 .whenComplete((result, error) -> Minecraft.getInstance().execute(() -> {
+                    this.redeemInFlight = false;
+                    if (this.doneButton != null) {
+                        this.doneButton.active = true;
+                    }
                     if (error != null) {
                         this.parent.clearTransientFocus();
                         this.minecraft.setScreen(new SharedWorldErrorScreen(
