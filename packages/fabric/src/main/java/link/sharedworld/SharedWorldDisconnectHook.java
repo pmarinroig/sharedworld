@@ -1,24 +1,22 @@
-package link.sharedworld.mixin;
+package link.sharedworld;
 
-import link.sharedworld.SharedWorldClient;
-import link.sharedworld.SharedWorldDisconnectFlow;
-import link.sharedworld.SharedWorldPlaySessionTracker;
 import net.minecraft.client.Minecraft;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import net.minecraft.network.chat.Component;
-import org.spongepowered.asm.mixin.Mixin;
-import org.spongepowered.asm.mixin.injection.At;
-import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-@Mixin(Minecraft.class)
-public class MinecraftDisconnectMixin {
+/**
+ * Shared body for the per-bucket disconnect mixins
+ * (src/versioned/&lt;bucket&gt;/.../mixin/versioned/MinecraftDisconnectMixin). The
+ * hooked method differs per Minecraft version, but the decision logic is
+ * version-agnostic and lives here so the mixins stay one-line delegations.
+ */
+public final class SharedWorldDisconnectHook {
     private static final Logger LOGGER = LoggerFactory.getLogger("sharedworld-disconnect");
 
-    @Inject(method = "disconnectFromWorld", at = @At("HEAD"))
-    private void sharedworld$markUserInitiatedDisconnect(Component message, CallbackInfo callbackInfo) {
-        Minecraft minecraft = (Minecraft) (Object) this;
+    private SharedWorldDisconnectHook() {
+    }
+
+    public static void onDisconnect(Minecraft minecraft) {
         SharedWorldPlaySessionTracker.ActiveWorldSession session = SharedWorldClient.playSessionTracker().currentSession();
         SharedWorldDisconnectFlow.DisconnectAction action = SharedWorldDisconnectFlow.decide(
                 SharedWorldClient.releaseCoordinator().consumeDisconnectPassThrough(),

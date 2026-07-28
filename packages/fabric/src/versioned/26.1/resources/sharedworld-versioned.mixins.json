@@ -3,7 +3,10 @@
   "package": "link.sharedworld.mixin.versioned",
   "compatibilityLevel": "JAVA_21",
   "client": [
-    "MinecraftServerHostPermissionMixin"
+    "ChatComponentMixin",
+    "MinecraftDisconnectMixin",
+    "MinecraftServerHostPermissionMixin",
+    "MultiplayerScreenMixin"
   ],
   "injectors": {
     "defaultRequire": 1

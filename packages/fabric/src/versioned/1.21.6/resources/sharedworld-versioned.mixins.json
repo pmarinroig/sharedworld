@@ -3,8 +3,11 @@
   "package": "link.sharedworld.mixin.versioned",
   "compatibilityLevel": "JAVA_21",
   "client": [
+    "ChatComponentMixin",
     "ChunkStorageWorkerAccessor",
-    "MinecraftServerHostPermissionMixin"
+    "MinecraftDisconnectMixin",
+    "MinecraftServerHostPermissionMixin",
+    "MultiplayerScreenMixin"
   ],
   "injectors": {
     "defaultRequire": 1

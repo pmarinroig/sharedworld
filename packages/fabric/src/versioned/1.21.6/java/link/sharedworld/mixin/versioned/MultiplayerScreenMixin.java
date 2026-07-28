@@ -1,4 +1,4 @@
-package link.sharedworld.mixin;
+package link.sharedworld.mixin.versioned;
 
 import link.sharedworld.SharedWorldClient;
 import net.minecraft.client.gui.components.Button;
@@ -11,7 +11,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(JoinMultiplayerScreen.class)
-public abstract class MultiplayerScreenMixin extends Screen {
+abstract class MultiplayerScreenMixin extends Screen {
     private boolean sharedworld$redirected;
     private Button sharedworld$button;
 
@@ -32,10 +32,6 @@ public abstract class MultiplayerScreenMixin extends Screen {
         }
     }
 
-    @Inject(method = "repositionElements", at = @At("TAIL"))
-    private void sharedworld$repositionButton(CallbackInfo callbackInfo) {
-        if (this.sharedworld$button != null) {
-            this.sharedworld$button.setPosition(this.width - 106, 8);
-        }
-    }
+    // 1.21.6's JoinMultiplayerScreen does not override repositionElements;
+    // resize re-runs init(), which re-adds the button at the right position.
 }

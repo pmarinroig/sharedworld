@@ -35,6 +35,19 @@ public final class E4mcDomainTracker {
         }
     }
 
+    /**
+     * Single entry point for the per-bucket chat mixins: suppression wins,
+     * otherwise the message is observed for a copy-to-clipboard join target.
+     * Returns true when the message must be cancelled.
+     */
+    public static boolean interceptMessage(Component message) {
+        if (shouldSuppressMessage(message)) {
+            return true;
+        }
+        observeMessage(message);
+        return false;
+    }
+
     public static boolean shouldSuppressMessage(Component message) {
         String pending = pendingSuppressedMessageTarget;
         if (pending == null || pending.isBlank()) {

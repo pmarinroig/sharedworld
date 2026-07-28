@@ -4,7 +4,6 @@
   "plugin": "link.sharedworld.mixin.SharedWorldMixinConfigPlugin",
   "compatibilityLevel": "JAVA_21",
   "client": [
-    "ChatComponentMixin",
     "DimensionDataStorageAccessor",
     "DisconnectedScreenMixin",
     "E4mcQuiclimeSessionMixin",
@@ -12,8 +11,6 @@
     "E4mcSingleplayerOwnerCompatNamedMixin",
     "EntityStorageAccessor",
     "IntegratedServerForcedGameTypeMixin",
-    "MinecraftDisconnectMixin",
-    "MultiplayerScreenMixin",
     "PersistentEntitySectionManagerAccessor",
     "ServerLevelEntityManagerAccessor",
     "ServerboundKeyPacketCompatMixin"

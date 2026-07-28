@@ -1,4 +1,4 @@
-package link.sharedworld.mixin;
+package link.sharedworld.mixin.versioned;
 
 import link.sharedworld.integration.E4mcDomainTracker;
 import net.minecraft.client.gui.components.ChatComponent;
@@ -9,10 +9,9 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(ChatComponent.class)
-public abstract class ChatComponentMixin {
+abstract class ChatComponentMixin {
     @Inject(
             method = {
-                    "addMessage(Lnet/minecraft/network/chat/Component;)V",
                     "addClientSystemMessage(Lnet/minecraft/network/chat/Component;)V",
                     "addServerSystemMessage(Lnet/minecraft/network/chat/Component;)V"
             },
@@ -20,10 +19,8 @@ public abstract class ChatComponentMixin {
             cancellable = true
     )
     private void sharedworld$trackClipboardTargets(Component message, CallbackInfo callbackInfo) {
-        if (E4mcDomainTracker.shouldSuppressMessage(message)) {
+        if (E4mcDomainTracker.interceptMessage(message)) {
             callbackInfo.cancel();
-            return;
         }
-        E4mcDomainTracker.observeMessage(message);
     }
 }
