@@ -63,6 +63,7 @@ export function mapRuntimeRow(row: Row): WorldRuntimeRecord {
     lastProgressAt: asNullableString(row.last_progress_at),
     updatedAt: String(row.updated_at),
     revokedAt: asNullableString(row.revoked_at),
+    hostMinecraftVersion: asNullableString(row.host_minecraft_version),
     startupProgress: asNullableString(row.startup_progress_label) != null
       && asNullableString(row.startup_progress_mode) != null
       && asNullableString(row.startup_progress_updated_at) != null

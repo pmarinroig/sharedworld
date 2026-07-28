@@ -673,7 +673,8 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       `SELECT world_id, host_uuid, host_player_name, runtime_phase, runtime_epoch, runtime_token,
               claimed_at, expires_at, join_target, candidate_uuid, revoked_at,
               startup_deadline_at, runtime_token_issued_at, last_progress_at,
-              startup_progress_label, startup_progress_mode, startup_progress_fraction, startup_progress_updated_at, updated_at
+              startup_progress_label, startup_progress_mode, startup_progress_fraction, startup_progress_updated_at, updated_at,
+              host_minecraft_version
        FROM world_runtime WHERE world_id = ?`,
       worldId
     );
@@ -686,8 +687,9 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
          world_id, host_uuid, host_player_name, runtime_phase, runtime_epoch, runtime_token,
          claimed_at, expires_at, join_target, candidate_uuid, revoked_at,
          startup_deadline_at, runtime_token_issued_at, last_progress_at,
-         startup_progress_label, startup_progress_mode, startup_progress_fraction, startup_progress_updated_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         startup_progress_label, startup_progress_mode, startup_progress_fraction, startup_progress_updated_at, updated_at,
+         host_minecraft_version
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(world_id) DO UPDATE SET
          host_uuid = excluded.host_uuid,
          host_player_name = excluded.host_player_name,
@@ -706,7 +708,8 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
          startup_progress_mode = excluded.startup_progress_mode,
          startup_progress_fraction = excluded.startup_progress_fraction,
          startup_progress_updated_at = excluded.startup_progress_updated_at,
-         updated_at = excluded.updated_at`,
+         updated_at = excluded.updated_at,
+         host_minecraft_version = excluded.host_minecraft_version`,
       runtime.worldId,
       runtime.hostUuid,
       runtime.hostPlayerName,
@@ -725,7 +728,8 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       runtime.startupProgress?.mode ?? null,
       runtime.startupProgress?.fraction ?? null,
       runtime.startupProgress?.updatedAt ?? null,
-      runtime.updatedAt
+      runtime.updatedAt,
+      runtime.hostMinecraftVersion ?? null
     );
   }
 
@@ -946,7 +950,7 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       worldId
     );
     const rows = await this.all<Row>(
-      `SELECT s.id, s.created_at, s.created_by_uuid
+      `SELECT s.id, s.created_at, s.created_by_uuid, s.data_version, s.minecraft_version
        FROM snapshots s
        WHERE s.world_id = ?
        ORDER BY s.created_at DESC, s.id DESC`,
@@ -987,6 +991,8 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
         snapshotId: String(row.id),
         createdAt: String(row.created_at),
         createdByUuid: String(row.created_by_uuid),
+        dataVersion: row.data_version == null ? null : Number(row.data_version),
+        minecraftVersion: asNullableString(row.minecraft_version),
         fileCount: snapshot.files.length + packedFiles.length,
         totalSize: snapshot.files.reduce((sum, file) => sum + file.size, 0) + packedFiles.reduce((sum, file) => sum + file.size, 0),
         totalCompressedSize: Number(storedBytes?.used ?? 0),
@@ -1015,13 +1021,15 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
   async finalizeSnapshot(worldId: string, ctx: RequestContext, request: FinalizeSnapshotRequest, now: Date): Promise<SnapshotManifest> {
     const snapshotId = `snapshot_${crypto.randomUUID().replace(/-/g, "")}`;
     await this.run(
-      `INSERT INTO snapshots (id, world_id, created_at, created_by_uuid, base_snapshot_id)
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO snapshots (id, world_id, created_at, created_by_uuid, base_snapshot_id, data_version, minecraft_version)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       snapshotId,
       worldId,
       now.toISOString(),
       ctx.playerUuid,
-      request.baseSnapshotId ?? null
+      request.baseSnapshotId ?? null,
+      request.dataVersion ?? null,
+      request.minecraftVersion ?? null
     );
     for (const file of request.files) {
       await this.run(
@@ -1175,6 +1183,10 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     );
     const lifecycle = await this.summaryLifecycle(worldId, new Date());
     const latest = await this.getLatestSnapshot(worldId);
+    const latestVersions = await this.first<Row>(
+      "SELECT data_version, minecraft_version FROM snapshots WHERE world_id = ? ORDER BY created_at DESC, id DESC LIMIT 1",
+      worldId
+    );
     const onlinePlayers = await this.listOnlinePlayers(worldId, new Date());
     return {
       id: String(world.id),
@@ -1188,6 +1200,8 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       status: lifecycle.status,
       lastSnapshotId: latest?.snapshotId ?? null,
       lastSnapshotAt: latest?.createdAt ?? null,
+      lastSnapshotDataVersion: latestVersions == null ? null : (latestVersions.data_version == null ? null : Number(latestVersions.data_version)),
+      lastSnapshotMinecraftVersion: latestVersions == null ? null : asNullableString(latestVersions.minecraft_version),
       activeHostUuid: lifecycle.activeHostUuid,
       activeHostPlayerName: lifecycle.activeHostPlayerName,
       activeJoinTarget: lifecycle.activeJoinTarget,

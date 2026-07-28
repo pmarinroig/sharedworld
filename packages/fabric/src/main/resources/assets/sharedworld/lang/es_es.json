@@ -232,5 +232,7 @@
   "screen.sharedworld.waiting_error_unexpected_host": "Shared World devolvió una respuesta de host inesperada durante la espera.",
   "screen.sharedworld.waiting_error_missing_waiter_session": "A los datos de espera de Shared World les faltaba la sesión del participante en espera.",
   "screen.sharedworld.waiting_error_unknown_action": "Shared World devolvió una acción de espera desconocida.",
-  "screen.sharedworld.waiting_error_invalid_response": "Shared World devolvió una respuesta de espera no válida."
+  "screen.sharedworld.waiting_error_invalid_response": "Shared World devolvió una respuesta de espera no válida.",
+  "screen.sharedworld.error_host_version_mismatch": "El anfitrión actual juega en Minecraft %s, pero tú estás en %s. Usa la misma versión de Minecraft que el anfitrión para unirte.",
+  "screen.sharedworld.error_snapshot_newer_client": "Este mundo se guardó por última vez en Minecraft %s, que es más reciente que tu %s. Actualiza Minecraft para alojarlo: abrirlo aquí podría corromper el mundo."
 }

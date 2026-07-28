@@ -91,6 +91,8 @@ export interface WorldSummary {
   storageProvider: StorageProviderType;
   storageLinked: boolean;
   storageAccountEmail: string | null;
+  lastSnapshotDataVersion: number | null;
+  lastSnapshotMinecraftVersion: string | null;
 }
 
 export interface WorldMembership {
@@ -196,6 +198,7 @@ export interface WorldRuntimeStatus {
   revokedAt: string | null;
   startupProgress: HostStartupProgress | null;
   uncleanShutdownWarning: UncleanShutdownWarning | null;
+  hostMinecraftVersion: string | null;
 }
 
 export interface EnterSessionRequest {
@@ -243,6 +246,7 @@ export interface HeartbeatRequest {
   runtimeEpoch?: number | null;
   hostToken?: string | null;
   joinTarget?: string | null;
+  minecraftVersion?: string | null;
 }
 
 export interface HostStartupProgressRequest {
@@ -338,6 +342,8 @@ export interface WorldSnapshotSummary {
   snapshotId: string;
   createdAt: string;
   createdByUuid: string;
+  dataVersion: number | null;
+  minecraftVersion: string | null;
   fileCount: number;
   totalSize: number;
   totalCompressedSize: number;
@@ -417,6 +423,8 @@ export interface FinalizeSnapshotRequest {
   runtimeEpoch?: number | null;
   hostToken?: string | null;
   baseSnapshotId?: string | null;
+  dataVersion?: number | null;
+  minecraftVersion?: string | null;
   files: ManifestFile[];
   packs?: SnapshotPack[];
 }

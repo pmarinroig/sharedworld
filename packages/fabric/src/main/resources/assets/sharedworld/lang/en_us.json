@@ -232,5 +232,7 @@
   "screen.sharedworld.waiting_error_unexpected_host": "Shared World returned an unexpected host response while waiting.",
   "screen.sharedworld.waiting_error_missing_waiter_session": "Shared World waiting data was missing the waiter session.",
   "screen.sharedworld.waiting_error_unknown_action": "Shared World returned an unknown waiting action.",
-  "screen.sharedworld.waiting_error_invalid_response": "Shared World returned an invalid waiting response."
+  "screen.sharedworld.waiting_error_invalid_response": "Shared World returned an invalid waiting response.",
+  "screen.sharedworld.error_host_version_mismatch": "The current host is playing on Minecraft %s, but you are on %s. Match the host's Minecraft version to join.",
+  "screen.sharedworld.error_snapshot_newer_client": "This world was last saved on Minecraft %s, which is newer than your %s. Update Minecraft to host it - opening it here could corrupt the world."
 }

@@ -32,4 +32,25 @@ public final class ClientCompat {
     public static String profileName(com.mojang.authlib.GameProfile profile) {
         return profile.name();
     }
+
+    /** The running client's world data version, or a permissive maximum when undetectable. */
+    public static int currentDataVersion() {
+        try {
+            net.minecraft.WorldVersion version = net.minecraft.SharedConstants.getCurrentVersion();
+            return version == null ? Integer.MAX_VALUE : version.dataVersion().version();
+        } catch (RuntimeException exception) {
+            // Headless/undetected version: never block on an unknowable comparison.
+            return Integer.MAX_VALUE;
+        }
+    }
+
+    /** The running client's Minecraft version name (for example "1.21.11"), or null. */
+    public static String currentMinecraftVersion() {
+        try {
+            net.minecraft.WorldVersion version = net.minecraft.SharedConstants.getCurrentVersion();
+            return version == null ? null : version.name();
+        } catch (RuntimeException exception) {
+            return null;
+        }
+    }
 }

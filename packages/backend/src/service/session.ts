@@ -330,7 +330,10 @@ export async function heartbeatHost(
   if (runtime.phase !== "host-starting" && runtime.phase !== "host-live") {
     throw hostNotActiveError();
   }
-  const updated = refreshLiveRuntime(runtime, request.joinTarget ?? null, now);
+  const refreshed = refreshLiveRuntime(runtime, request.joinTarget ?? null, now);
+  const updated = request.minecraftVersion != null && request.minecraftVersion.trim().length > 0
+    ? { ...refreshed, hostMinecraftVersion: request.minecraftVersion.trim() }
+    : refreshed;
   await svc.repository.upsertRuntimeRecord(updated);
   return toRuntimeStatus(worldId, updated, runtimeCandidateFromRuntime(updated));
 }

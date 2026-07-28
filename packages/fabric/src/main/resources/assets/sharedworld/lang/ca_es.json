@@ -232,5 +232,7 @@
   "screen.sharedworld.waiting_error_unexpected_host": "Shared World ha retornat una resposta d'host inesperada mentre esperava.",
   "screen.sharedworld.waiting_error_missing_waiter_session": "A les dades d'espera de Shared World els faltava la sessió del participant en espera.",
   "screen.sharedworld.waiting_error_unknown_action": "Shared World ha retornat una acció d'espera desconeguda.",
-  "screen.sharedworld.waiting_error_invalid_response": "Shared World ha retornat una resposta d'espera no vàlida."
+  "screen.sharedworld.waiting_error_invalid_response": "Shared World ha retornat una resposta d'espera no vàlida.",
+  "screen.sharedworld.error_host_version_mismatch": "L'amfitrió actual juga a Minecraft %s, però tu ets a %s. Fes servir la mateixa versió de Minecraft que l'amfitrió per unir-t'hi.",
+  "screen.sharedworld.error_snapshot_newer_client": "Aquest món es va desar per última vegada a Minecraft %s, que és més recent que la teva %s. Actualitza Minecraft per allotjar-lo: obrir-lo aquí podria corrompre el món."
 }

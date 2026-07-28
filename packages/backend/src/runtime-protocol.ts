@@ -35,6 +35,7 @@ export interface WorldRuntimeRecord {
   updatedAt: string;
   revokedAt: string | null;
   startupProgress: HostStartupProgress | null;
+  hostMinecraftVersion: string | null;
 }
 
 export function choosePreferredCandidate(waiters: RuntimeCandidate[], memberships: RuntimeMembership[]): RuntimeCandidate | null {
@@ -182,7 +183,8 @@ export function assignHostStarting(
     lastProgressAt: null,
     updatedAt: issuedAt,
     revokedAt: null,
-    startupProgress: null
+    startupProgress: null,
+    hostMinecraftVersion: null
   };
   return {
     runtime,
@@ -349,7 +351,8 @@ export function toRuntimeStatus(
       updatedAt: null,
       revokedAt: null,
       startupProgress: null,
-      uncleanShutdownWarning: publicWarning
+      uncleanShutdownWarning: publicWarning,
+      hostMinecraftVersion: null
     };
   }
   return {
@@ -367,7 +370,8 @@ export function toRuntimeStatus(
     updatedAt: runtime.updatedAt,
     revokedAt: runtime.revokedAt,
     startupProgress: runtime.startupProgress,
-    uncleanShutdownWarning: publicWarning
+    uncleanShutdownWarning: publicWarning,
+    hostMinecraftVersion: runtime.hostMinecraftVersion
   };
 }
 

@@ -800,6 +800,7 @@ final class SharedWorldHostingManagerTest {
                 null,
                 null,
                 null,
+                null,
                 null
         );
     }

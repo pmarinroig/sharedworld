@@ -27,6 +27,7 @@ describe("D1SharedWorldRepository", () => {
       lastProgressAt: "2099-01-03T00:00:10.000Z",
       updatedAt: "2099-01-03T00:00:10.000Z",
       revokedAt: null,
+    hostMinecraftVersion: null,
       startupProgress: {
         label: "Preparing world",
         mode: "indeterminate",

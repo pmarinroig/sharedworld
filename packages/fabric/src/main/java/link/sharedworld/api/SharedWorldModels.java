@@ -43,8 +43,37 @@ public final class SharedWorldModels {
             String[] onlinePlayerNames,
             String storageProvider,
             boolean storageLinked,
-            String storageAccountEmail
+            String storageAccountEmail,
+            Integer lastSnapshotDataVersion,
+            String lastSnapshotMinecraftVersion
     ) {
+        /** Pre-guardrail arity: callers without version knowledge leave both fields null. */
+        public WorldSummaryDto(
+                String id,
+                String slug,
+                String name,
+                String ownerUuid,
+                String motd,
+                String customIconStorageKey,
+                SignedBlobUrlDto customIconDownload,
+                int memberCount,
+                String status,
+                String lastSnapshotId,
+                String lastSnapshotAt,
+                String activeHostUuid,
+                String activeHostPlayerName,
+                String activeJoinTarget,
+                int onlinePlayerCount,
+                String[] onlinePlayerNames,
+                String storageProvider,
+                boolean storageLinked,
+                String storageAccountEmail
+        ) {
+            this(id, slug, name, ownerUuid, motd, customIconStorageKey, customIconDownload, memberCount, status,
+                    lastSnapshotId, lastSnapshotAt, activeHostUuid, activeHostPlayerName, activeJoinTarget,
+                    onlinePlayerCount, onlinePlayerNames, storageProvider, storageLinked, storageAccountEmail,
+                    null, null);
+        }
     }
 
     public record WorldMembershipDto(
@@ -362,7 +391,8 @@ public final class SharedWorldModels {
             String lastProgressAt,
             String revokedAt,
             StartupProgressDto startupProgress,
-            UncleanShutdownWarningDto uncleanShutdownWarning
+            UncleanShutdownWarningDto uncleanShutdownWarning,
+            String hostMinecraftVersion
     ) {
         public WorldRuntimeStatusDto(
                 String worldId,
@@ -393,7 +423,8 @@ public final class SharedWorldModels {
                     lastProgressAt,
                     null,
                     startupProgress,
-                    uncleanShutdownWarning
+                    uncleanShutdownWarning,
+                    null
             );
         }
 
@@ -425,6 +456,7 @@ public final class SharedWorldModels {
                     lastProgressAt,
                     null,
                     startupProgress,
+                    null,
                     null
             );
         }

@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS world_runtime (
   startup_progress_fraction REAL,
   startup_progress_updated_at TEXT,
   updated_at TEXT NOT NULL,
+  host_minecraft_version TEXT,
   FOREIGN KEY (world_id) REFERENCES worlds(id),
   FOREIGN KEY (host_uuid) REFERENCES users(player_uuid)
 );
@@ -124,6 +125,8 @@ CREATE TABLE IF NOT EXISTS snapshots (
   created_at TEXT NOT NULL,
   created_by_uuid TEXT NOT NULL,
   base_snapshot_id TEXT,
+  data_version INTEGER,
+  minecraft_version TEXT,
   FOREIGN KEY (world_id) REFERENCES worlds(id),
   FOREIGN KEY (created_by_uuid) REFERENCES users(player_uuid)
 );

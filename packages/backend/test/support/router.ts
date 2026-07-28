@@ -109,7 +109,9 @@ export function worldSummaryFixture(overrides: Partial<WorldSummary> = {}): Worl
     onlinePlayerNames: overrides.onlinePlayerNames ?? [],
     storageProvider: overrides.storageProvider ?? "google-drive",
     storageLinked: overrides.storageLinked ?? false,
-    storageAccountEmail: overrides.storageAccountEmail ?? null
+    storageAccountEmail: overrides.storageAccountEmail ?? null,
+    lastSnapshotDataVersion: overrides.lastSnapshotDataVersion ?? null,
+    lastSnapshotMinecraftVersion: overrides.lastSnapshotMinecraftVersion ?? null
   };
 }
 
@@ -151,7 +153,8 @@ export function runtimeStatusFixture(overrides: Partial<WorldRuntimeStatus> = {}
     updatedAt: overrides.updatedAt ?? "2099-01-01T00:00:00.000Z",
     revokedAt: overrides.revokedAt ?? null,
     startupProgress: overrides.startupProgress ?? null,
-    uncleanShutdownWarning: overrides.uncleanShutdownWarning ?? null
+    uncleanShutdownWarning: overrides.uncleanShutdownWarning ?? null,
+    hostMinecraftVersion: overrides.hostMinecraftVersion ?? null
   };
 }
 

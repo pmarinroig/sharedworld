@@ -530,11 +530,36 @@ public final class SharedWorldSessionCoordinator {
         if ("connect".equals(result.action())) {
             String target = result.runtime() != null ? result.runtime().joinTarget() : null;
             if (target != null && !target.isBlank()) {
+                String hostVersion = result.runtime().hostMinecraftVersion();
+                String localVersion = link.sharedworld.versioned.ClientCompat.currentMinecraftVersion();
+                if (link.sharedworld.host.WorldVersionGatePolicy.decideGuestJoin(hostVersion, localVersion)
+                        == link.sharedworld.host.WorldVersionGatePolicy.GuestDecision.BLOCK_VERSION_MISMATCH) {
+                    this.clientShell.setScreen(this.sessionUi.joinError(
+                            parent,
+                            new IllegalStateException(SharedWorldText.string(
+                                    "screen.sharedworld.error_host_version_mismatch", hostVersion, localVersion))
+                    ));
+                    return;
+                }
                 beginConnectHandoff(parent, result.world().id(), worldName, result.runtime().runtimeEpoch(), target, resumedRecoveryFingerprint);
                 return;
             }
         }
         if ("host".equals(result.action()) && result.assignment() != null) {
+            Integer snapshotDataVersion = result.world() != null ? result.world().lastSnapshotDataVersion() : null;
+            if (link.sharedworld.host.WorldVersionGatePolicy.decideHost(
+                    snapshotDataVersion, link.sharedworld.versioned.ClientCompat.currentDataVersion())
+                    == link.sharedworld.host.WorldVersionGatePolicy.HostDecision.BLOCK_SNAPSHOT_NEWER) {
+                String snapshotVersion = result.world().lastSnapshotMinecraftVersion();
+                this.clientShell.setScreen(this.sessionUi.joinError(
+                        parent,
+                        new IllegalStateException(SharedWorldText.string(
+                                "screen.sharedworld.error_snapshot_newer_client",
+                                snapshotVersion == null ? String.valueOf(snapshotDataVersion) : snapshotVersion,
+                                String.valueOf(link.sharedworld.versioned.ClientCompat.currentMinecraftVersion())))
+                ));
+                return;
+            }
             clearPersistedRecoveryIfMatches(resumedRecoveryFingerprint);
             this.hostStartupOwner.beginHosting(parent, result, startupMode);
             this.clientShell.setScreen(this.sessionUi.hostAcquired(parent, result));

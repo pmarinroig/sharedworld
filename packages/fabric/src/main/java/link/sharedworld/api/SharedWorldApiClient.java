@@ -225,6 +225,10 @@ public final class SharedWorldApiClient {
         if (joinTarget != null) {
             body.put("joinTarget", joinTarget);
         }
+        String minecraftVersion = link.sharedworld.versioned.ClientCompat.currentMinecraftVersion();
+        if (minecraftVersion != null) {
+            body.put("minecraftVersion", minecraftVersion);
+        }
         return request("POST", "/worlds/" + worldId + "/heartbeat", body, WorldRuntimeStatusDto.class, true);
     }
 
@@ -337,6 +341,11 @@ public final class SharedWorldApiClient {
         body.put("runtimeEpoch", runtimeEpoch);
         body.put("hostToken", hostToken);
         body.put("baseSnapshotId", baseSnapshotId);
+        String minecraftVersion = link.sharedworld.versioned.ClientCompat.currentMinecraftVersion();
+        if (minecraftVersion != null) {
+            body.put("dataVersion", link.sharedworld.versioned.ClientCompat.currentDataVersion());
+            body.put("minecraftVersion", minecraftVersion);
+        }
         body.put("files", files);
         body.put("packs", packs);
         return request(
