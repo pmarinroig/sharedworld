@@ -101,6 +101,12 @@ sourceSets {
         compileClasspath += sourceSets.main.compileClasspath + sourceSets.main.output
         runtimeClasspath += output + compileClasspath + sourceSets.main.runtimeClasspath
     }
+    devHelperE2e {
+        java.srcDir("src/devhelperE2e/java")
+        resources.srcDir("src/devhelperE2e/resources")
+        compileClasspath += sourceSets.main.compileClasspath + sourceSets.main.output + sourceSets.devHelper.output
+        runtimeClasspath += output + compileClasspath + sourceSets.main.runtimeClasspath
+    }
 }
 
 def devHelperJarTask = tasks.register("devHelperJar", Jar) {
@@ -109,6 +115,13 @@ def devHelperJarTask = tasks.register("devHelperJar", Jar) {
 }
 
 def devHelperRuntimeJar = files(devHelperJarTask)
+
+def devHelperE2eJarTask = tasks.register("devHelperE2eJar", Jar) {
+    archiveClassifier = "dev-e2e"
+    from sourceSets.devHelperE2e.output
+}
+
+def devHelperE2eRuntimeJar = files(devHelperE2eJarTask)
 
 repositories {
     maven {
@@ -207,10 +220,14 @@ dependencies {
     // mixin is actually present when HostA/GuestB connect through e4mc.
     // A clean checkout needs one priming build to materialize that jar before
     // Loom can checksum it as a local runtime mod.
-    // The dev helper only exists for local fake-account runs, which always use the default
-    // bucket; its login mixin tracks that Minecraft version only.
-    if (!skipDevHelperRuntime.get() && isDefaultMcBucket) {
+    // The dev helper (login bypass) is per-bucket so manual two-client playtests work on
+    // every classic bucket; the e2e driver mod uses default-bucket-only input APIs and
+    // stays pinned there.
+    if (!skipDevHelperRuntime.get()) {
         modLocalRuntime(devHelperRuntimeJar)
+        if (isDefaultMcBucket) {
+            modLocalRuntime(devHelperE2eRuntimeJar)
+        }
     }
     testImplementation "org.junit.jupiter:junit-jupiter:5.10.2"
     if (localModsDir.exists()) {
@@ -235,6 +252,9 @@ loom {
         }
         sharedworldDevHelper {
             sourceSet sourceSets.devHelper
+        }
+        sharedworldDevE2e {
+            sourceSet sourceSets.devHelperE2e
         }
     }
     runs {
@@ -335,16 +355,18 @@ gradle.taskGraph.whenReady { graph ->
 tasks.named("configureLaunch").configure {
     dependsOn(tasks.named("prepareLocalMods"))
     dependsOn(tasks.named("extractLocalNestedModJars"))
+    dependsOn(devHelperJarTask)
     if (isDefaultMcBucket) {
-        dependsOn(devHelperJarTask)
+        dependsOn(devHelperE2eJarTask)
     }
 }
 
 tasks.named("generateRemapClasspath").configure {
     dependsOn(tasks.named("prepareLocalMods"))
     dependsOn(tasks.named("extractLocalNestedModJars"))
+    dependsOn(devHelperJarTask)
     if (isDefaultMcBucket) {
-        dependsOn(devHelperJarTask)
+        dependsOn(devHelperE2eJarTask)
     }
 }
 
@@ -363,6 +385,16 @@ tasks.named("remapJar").configure {
 }
 
 tasks.named("processDevHelperResources").configure {
+    inputs.property "version", project.version
+    inputs.property "minecraftRange", mcBucket.minecraftRange
+    inputs.property "javaVersion", "21"
+
+    filesMatching("fabric.mod.json") {
+        expand "version": inputs.properties.version, "minecraftRange": inputs.properties.minecraftRange, "javaVersion": inputs.properties.javaVersion
+    }
+}
+
+tasks.named("processDevHelperE2eResources").configure {
     inputs.property "version", project.version
 
     filesMatching("fabric.mod.json") {

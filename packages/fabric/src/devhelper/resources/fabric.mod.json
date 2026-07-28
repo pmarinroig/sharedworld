@@ -3,24 +3,19 @@
   "id": "sharedworld-dev-helper",
   "version": "${version}",
   "name": "SharedWorld Dev Helper",
-  "description": "Local-only helper mod for fake-account SharedWorld e2e testing.",
+  "description": "Local-only helper mod for fake-account SharedWorld testing (dev login bypass).",
   "authors": [
     "pau"
   ],
   "environment": "client",
-  "entrypoints": {
-    "client": [
-      "link.sharedworld.devhelper.e2e.SharedWorldE2eDriver"
-    ]
-  },
   "mixins": [
     "sharedworld-dev-helper.mixins.json"
   ],
   "depends": {
     "fabricloader": ">=0.18.2",
     "fabric-api": "*",
-    "minecraft": "~1.21.11",
-    "java": ">=21",
+    "minecraft": "${minecraftRange}",
+    "java": ">=${javaVersion}",
     "sharedworld": "*"
   }
 }

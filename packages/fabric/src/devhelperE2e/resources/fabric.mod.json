@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "sharedworld-dev-e2e",
+  "version": "${version}",
+  "name": "SharedWorld Dev E2E Driver",
+  "description": "Local-only automated e2e driver; pinned to the default bucket's Minecraft version.",
+  "authors": [
+    "pau"
+  ],
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "link.sharedworld.devhelper.e2e.SharedWorldE2eDriver"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.18.2",
+    "fabric-api": "*",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "sharedworld": "*",
+    "sharedworld-dev-helper": "*"
+  }
+}
