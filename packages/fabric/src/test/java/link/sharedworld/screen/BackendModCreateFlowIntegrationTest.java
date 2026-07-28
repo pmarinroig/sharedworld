@@ -5,8 +5,8 @@ import link.sharedworld.api.SharedWorldModels;
 import link.sharedworld.integration.support.SharedWorldIntegrationBackend;
 import link.sharedworld.sync.ManagedWorldStore;
 import link.sharedworld.sync.WorldSyncCoordinator;
+import link.sharedworld.versioned.NbtCompat;
 import net.minecraft.nbt.CompoundTag;
-import net.minecraft.nbt.NbtIo;
 import net.minecraft.network.chat.Component;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
@@ -37,7 +37,7 @@ final class BackendModCreateFlowIntegrationTest {
             Files.createDirectories(source.resolve("data"));
             CompoundTag levelTag = new CompoundTag();
             levelTag.put("Data", new CompoundTag());
-            NbtIo.writeCompressed(levelTag, source.resolve("level.dat"));
+            NbtCompat.writeCompressed(levelTag, source.resolve("level.dat"));
             Files.writeString(source.resolve("data").resolve("notes.txt"), "hello");
 
             ManagedWorldStore managedWorldStore = new ManagedWorldStore(root.resolve("managed"));

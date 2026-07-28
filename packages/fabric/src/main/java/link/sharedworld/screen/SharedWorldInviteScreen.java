@@ -11,7 +11,7 @@ import net.minecraft.network.chat.Component;
 
 import java.util.concurrent.CompletableFuture;
 
-public final class SharedWorldInviteScreen extends Screen {
+public final class SharedWorldInviteScreen extends link.sharedworld.versioned.VersionedScreen {
     private final SharedWorldScreen parent;
     private final WorldSummaryDto world;
     private boolean started;

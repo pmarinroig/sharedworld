@@ -2,7 +2,7 @@
   "required": true,
   "package": "link.sharedworld.mixin",
   "plugin": "link.sharedworld.mixin.SharedWorldMixinConfigPlugin",
-  "compatibilityLevel": "JAVA_21",
+  "compatibilityLevel": "${mixinCompatibilityLevel}",
   "client": [
     "DisconnectedScreenMixin",
     "E4mcQuiclimeSessionMixin",

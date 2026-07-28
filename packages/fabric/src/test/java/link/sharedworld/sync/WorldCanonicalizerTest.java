@@ -2,8 +2,6 @@ package link.sharedworld.sync;
 
 import link.sharedworld.versioned.NbtCompat;
 import net.minecraft.nbt.CompoundTag;
-import net.minecraft.nbt.NbtAccounter;
-import net.minecraft.nbt.NbtIo;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -41,19 +39,19 @@ final class WorldCanonicalizerTest {
 
         CompoundTag level = new CompoundTag();
         level.put("Data", data);
-        NbtIo.writeCompressed(level, source.resolve("level.dat"));
-        NbtIo.writeCompressed(guestPlayer, source.resolve("playerdata").resolve(GUEST_UUID + ".dat"));
+        NbtCompat.writeCompressed(level, source.resolve("level.dat"));
+        NbtCompat.writeCompressed(guestPlayer, source.resolve("playerdata").resolve(GUEST_UUID + ".dat"));
 
         List<PreparedWorldFile> canonicalFiles = WorldCanonicalizer.scanCanonical(source, HOST_UUID);
         Path canonical = this.tempDir.resolve("canonical");
         writePreparedFiles(canonicalFiles, canonical);
 
-        CompoundTag canonicalLevel = NbtIo.readCompressed(canonical.resolve("level.dat"), NbtAccounter.unlimitedHeap());
+        CompoundTag canonicalLevel = NbtCompat.readCompressed(canonical.resolve("level.dat"));
         assertFalse(NbtCompat.getCompoundOrEmpty(canonicalLevel, "Data").contains("Player"));
 
         WorldCanonicalizer.materializeHostPlayer(canonical, GUEST_UUID);
 
-        CompoundTag materialized = NbtIo.readCompressed(canonical.resolve("level.dat"), NbtAccounter.unlimitedHeap());
+        CompoundTag materialized = NbtCompat.readCompressed(canonical.resolve("level.dat"));
         CompoundTag materializedData = NbtCompat.getCompoundOrEmpty(materialized, "Data");
 
         assertEquals("Handoff Regression", NbtCompat.getStringOr(materializedData, "LevelName", ""));

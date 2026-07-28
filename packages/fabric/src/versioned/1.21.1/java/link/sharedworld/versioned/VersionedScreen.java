@@ -101,4 +101,13 @@ public abstract class VersionedScreen extends Screen {
         }
         return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
     }
+
+    /** Version-neutral initial-focus hook (vanilla's no-arg setInitialFocus is 1.20.5+). */
+    protected void sharedworldSetInitialFocus() {
+    }
+
+    @Override
+    protected void setInitialFocus() {
+        this.sharedworldSetInitialFocus();
+    }
 }

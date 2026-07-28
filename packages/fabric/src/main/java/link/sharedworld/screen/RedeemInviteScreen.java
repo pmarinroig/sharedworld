@@ -12,7 +12,7 @@ import net.minecraft.network.chat.Component;
 
 import java.util.concurrent.CompletableFuture;
 
-public final class RedeemInviteScreen extends Screen {
+public final class RedeemInviteScreen extends link.sharedworld.versioned.VersionedScreen {
     private final SharedWorldScreen parent;
     private EditBox codeBox;
     private String statusMessage = "";

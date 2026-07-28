@@ -48,6 +48,12 @@ def mcBuckets = [
                 fabricApiVersion: "0.102.0+1.21",
                 minecraftRange  : ">=1.21 <1.21.2",
         ],
+        "1.20.1" : [
+                minecraftVersion: "1.20",
+                fabricApiVersion: "0.92.11+1.20.1",
+                minecraftRange  : ">=1.20 <1.20.2",
+                javaRelease     : 17,
+        ],
 ]
 def mcBucketName = providers.gradleProperty("sharedworldMcBucket").getOrElse("1.21.11")
 def mcBucket = mcBuckets[mcBucketName]
@@ -55,6 +61,9 @@ if (mcBucket == null) {
     throw new GradleException("Unknown sharedworldMcBucket '${mcBucketName}'. Known buckets: ${mcBuckets.keySet()}")
 }
 def isDefaultMcBucket = mcBucketName == "1.21.11"
+// Ship jars target the oldest Java their players run (1.20.1 = stock launcher Java 17).
+def bucketJavaRelease = (mcBucket.javaRelease ?: 21) as int
+def bucketMixinCompatibilityLevel = "JAVA_${bucketJavaRelease}"
 
 // Compatibility probing: override the selected bucket's Minecraft/fabric-api pair without
 // touching the bucket map, e.g. to ask "what breaks on 1.20.4?" before creating a bucket:
@@ -97,6 +106,7 @@ sourceSets {
     }
     devHelper {
         java.srcDir("src/devhelper/java")
+        java.srcDir("src/devhelperVersioned/${mcBucketName}/java")
         resources.srcDir("src/devhelper/resources")
         compileClasspath += sourceSets.main.compileClasspath + sourceSets.main.output
         runtimeClasspath += output + compileClasspath + sourceSets.main.runtimeClasspath
@@ -373,10 +383,14 @@ tasks.named("generateRemapClasspath").configure {
 processResources {
     inputs.property "version", project.version
     inputs.property "minecraftRange", mcBucket.minecraftRange
-    inputs.property "javaVersion", "21"
+    inputs.property "javaVersion", "${bucketJavaRelease}"
+    inputs.property "mixinCompatibilityLevel", bucketMixinCompatibilityLevel
 
     filesMatching("fabric.mod.json") {
         expand "version": inputs.properties.version, "minecraftRange": inputs.properties.minecraftRange, "javaVersion": inputs.properties.javaVersion
+    }
+    filesMatching("sharedworld.mixins.json") {
+        expand "mixinCompatibilityLevel": inputs.properties.mixinCompatibilityLevel
     }
 }
 
@@ -387,10 +401,14 @@ tasks.named("remapJar").configure {
 tasks.named("processDevHelperResources").configure {
     inputs.property "version", project.version
     inputs.property "minecraftRange", mcBucket.minecraftRange
-    inputs.property "javaVersion", "21"
+    inputs.property "javaVersion", "${bucketJavaRelease}"
+    inputs.property "mixinCompatibilityLevel", bucketMixinCompatibilityLevel
 
     filesMatching("fabric.mod.json") {
         expand "version": inputs.properties.version, "minecraftRange": inputs.properties.minecraftRange, "javaVersion": inputs.properties.javaVersion
+    }
+    filesMatching("sharedworld-dev-helper.mixins.json") {
+        expand "mixinCompatibilityLevel": inputs.properties.mixinCompatibilityLevel
     }
 }
 
@@ -403,7 +421,7 @@ tasks.named("processDevHelperE2eResources").configure {
 }
 
 tasks.withType(JavaCompile).configureEach {
-    it.options.release = 21
+    it.options.release = bucketJavaRelease
 }
 
 tasks.named("test").configure {
@@ -430,8 +448,8 @@ tasks.register("integrationTest", Test) {
 
 java {
     withSourcesJar()
-    sourceCompatibility = JavaVersion.VERSION_21
-    targetCompatibility = JavaVersion.VERSION_21
+    sourceCompatibility = JavaVersion.toVersion(bucketJavaRelease)
+    targetCompatibility = JavaVersion.toVersion(bucketJavaRelease)
 }
 
 publishing {

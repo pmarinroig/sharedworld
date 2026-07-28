@@ -10,8 +10,6 @@ import link.sharedworld.sync.ManagedWorldStore;
 import net.minecraft.client.gui.screens.Screen;
 import link.sharedworld.versioned.NbtCompat;
 import net.minecraft.nbt.CompoundTag;
-import net.minecraft.nbt.NbtAccounter;
-import net.minecraft.nbt.NbtIo;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -148,7 +146,7 @@ final class BackendModHandoffHostStartupIntegrationTest {
             assertTrue(clientShell.actions().contains("setScreen:host-acquired"));
             assertNotNull(worldOpenController.openedWorldDirectory);
 
-            CompoundTag level = NbtIo.readCompressed(worldOpenController.openedWorldDirectory.resolve("level.dat"), NbtAccounter.unlimitedHeap());
+            CompoundTag level = NbtCompat.readCompressed(worldOpenController.openedWorldDirectory.resolve("level.dat"));
             CompoundTag data = NbtCompat.getCompoundOrEmpty(level, "Data");
 
             assertEquals("Integration Handoff World", NbtCompat.getStringOr(data, "LevelName", ""));
@@ -183,8 +181,8 @@ final class BackendModHandoffHostStartupIntegrationTest {
 
         CompoundTag level = new CompoundTag();
         level.put("Data", data);
-        NbtIo.writeCompressed(level, source.resolve("level.dat"));
-        NbtIo.writeCompressed(guestPlayer, source.resolve("playerdata").resolve(SharedWorldIntegrationBackend.GUEST.playerUuidHyphenated() + ".dat"));
+        NbtCompat.writeCompressed(level, source.resolve("level.dat"));
+        NbtCompat.writeCompressed(guestPlayer, source.resolve("playerdata").resolve(SharedWorldIntegrationBackend.GUEST.playerUuidHyphenated() + ".dat"));
     }
 
     private static void deleteTree(Path root) throws Exception {

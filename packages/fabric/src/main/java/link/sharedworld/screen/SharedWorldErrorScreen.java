@@ -8,7 +8,7 @@ import net.minecraft.util.FormattedCharSequence;
 
 import java.util.List;
 
-public final class SharedWorldErrorScreen extends Screen {
+public final class SharedWorldErrorScreen extends link.sharedworld.versioned.VersionedScreen {
     private final Screen parent;
     private final Component body;
     private final Component buttonLabel;

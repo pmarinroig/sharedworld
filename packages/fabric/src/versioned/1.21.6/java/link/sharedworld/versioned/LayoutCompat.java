@@ -45,4 +45,9 @@ public final class LayoutCompat {
     public static LayoutSettings defaultCellSetting(LinearLayout layout) {
         return layout.defaultCellSetting();
     }
+
+    /** Tab lists are TabManager-managed here; registration happens on tab switch. */
+    public static <L extends VersionedSelectionList<?>> L registerTabList(L list, Consumer<? super L> screenAdder) {
+        return list;
+    }
 }

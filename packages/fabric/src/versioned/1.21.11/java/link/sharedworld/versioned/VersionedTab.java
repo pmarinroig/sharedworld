@@ -17,4 +17,12 @@ public abstract class VersionedTab implements Tab {
     public Component getTabExtraNarration() {
         return this.sharedworldTabExtraNarration();
     }
+
+    /** Hands a selection list to the tab manager where lists are widgets. */
+    protected final void sharedworldVisitListChild(
+            java.util.function.Consumer<net.minecraft.client.gui.components.AbstractWidget> consumer,
+            VersionedSelectionList<?> list
+    ) {
+        consumer.accept(list);
+    }
 }

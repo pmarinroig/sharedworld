@@ -19,8 +19,6 @@ import link.sharedworld.sync.WorldSyncProgressListener;
 import net.minecraft.client.gui.screens.Screen;
 import link.sharedworld.versioned.NbtCompat;
 import net.minecraft.nbt.CompoundTag;
-import net.minecraft.nbt.NbtAccounter;
-import net.minecraft.nbt.NbtIo;
 
 import java.io.IOException;
 import java.io.Reader;
@@ -322,7 +320,7 @@ public final class SharedWorldIntegrationFixtures {
         }
 
         public String stableMarker() throws IOException {
-            CompoundTag level = NbtIo.readCompressed(this.resources.levelPath(), NbtAccounter.unlimitedHeap());
+            CompoundTag level = NbtCompat.readCompressed(this.resources.levelPath());
             return NbtCompat.getStringOr(NbtCompat.getCompoundOrEmpty(level, "Data"), "SharedWorldStableMarker", "");
         }
 
@@ -380,7 +378,7 @@ public final class SharedWorldIntegrationFixtures {
 
             CompoundTag level = new CompoundTag();
             level.put("Data", data);
-            NbtIo.writeCompressed(level, workingCopy.resolve("level.dat"));
+            NbtCompat.writeCompressed(level, workingCopy.resolve("level.dat"));
             Files.writeString(workingCopy.resolve("data").resolve("notes.txt"), "original-release-notes");
         }
 

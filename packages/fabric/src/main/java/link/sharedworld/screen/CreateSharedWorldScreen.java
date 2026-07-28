@@ -124,7 +124,8 @@ public final class CreateSharedWorldScreen extends VersionedScreen {
 
         this.layout.visitWidgets(this::addRenderableWidget);
 
-        this.saveList = new LocalSaveSelectionList(this.minecraft, 0, 0, 0, 36, this);
+        this.saveList = link.sharedworld.versioned.LayoutCompat.registerTabList(
+                new LocalSaveSelectionList(this.minecraft, 0, 0, 0, 36, this), this::addRenderableWidget);
         this.saveList.setSaves(this.localSaves, this.selectedSave == null ? null : this.selectedSave.id());
 
         this.nameBox = new EditBox(this.font, 0, 0, 220, 20, Component.translatable("screen.sharedworld.world_name"));
@@ -197,7 +198,7 @@ public final class CreateSharedWorldScreen extends VersionedScreen {
     }
 
     @Override
-    protected void setInitialFocus() {
+    protected void sharedworldSetInitialFocus() {
         if (this.tabManager.getCurrentTab() == this.detailsTab) {
             this.setInitialFocus(this.nameBox);
             return;
@@ -244,6 +245,9 @@ public final class CreateSharedWorldScreen extends VersionedScreen {
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+        if (this.saveList != null) {
+            this.saveList.sharedworldSetVisibleForTab(this.tabManager.getCurrentTab() == this.worldTab);
+        }
         this.iconHovered = this.isIconHovered(mouseX, mouseY);
         this.updateButtons();
         this.sharedworldRenderMenuBackground(guiGraphics);
@@ -943,7 +947,7 @@ public final class CreateSharedWorldScreen extends VersionedScreen {
 
         @Override
         public void visitChildren(Consumer<AbstractWidget> consumer) {
-            consumer.accept(CreateSharedWorldScreen.this.saveList);
+            this.sharedworldVisitListChild(consumer, CreateSharedWorldScreen.this.saveList);
         }
 
         @Override

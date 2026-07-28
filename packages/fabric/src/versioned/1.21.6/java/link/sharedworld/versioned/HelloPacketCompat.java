@@ -17,4 +17,9 @@ public final class HelloPacketCompat {
     public static String name(ServerboundHelloPacket packet) {
         return packet.name();
     }
+
+    /** Builds a hello packet (test/support factory). */
+    public static ServerboundHelloPacket create(String name, UUID profileId) {
+        return new ServerboundHelloPacket(name, profileId);
+    }
 }

@@ -168,6 +168,11 @@ processResources {
     filesMatching("fabric.mod.json") {
         expand "version": inputs.properties.version, "minecraftRange": inputs.properties.minecraftRange, "javaVersion": inputs.properties.javaVersion
     }
+    // Keep the level the 26.1 jar has always shipped with (mixin treats it as
+    // a minimum; newer class versions are tolerated).
+    filesMatching("sharedworld.mixins.json") {
+        expand "mixinCompatibilityLevel": "JAVA_21"
+    }
 }
 
 tasks.withType(JavaCompile).configureEach {

@@ -11,7 +11,7 @@ class HelloPacketCompatTest {
     @Test
     void exposesNameAndProfileId() {
         UUID uuid = UUID.fromString("22222222-2222-2222-2222-222222222222");
-        ServerboundHelloPacket packet = new ServerboundHelloPacket("GuestB", uuid);
+        ServerboundHelloPacket packet = HelloPacketCompat.create("GuestB", uuid);
         assertEquals("GuestB", HelloPacketCompat.name(packet));
         assertEquals(uuid, HelloPacketCompat.profileId(packet));
     }

@@ -46,6 +46,7 @@ public final class SharedWorldClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         SharedWorldE4mcCompatibility.logClientInitStarted();
+        link.sharedworld.versioned.ScreenBackdropCompat.install();
         RuntimePlayerIdentity.resolveBackendPlayerUuidWithHyphens(Minecraft.getInstance().getUser());
         apiClient = new SharedWorldApiClient(SharedWorldClientConfigStore.shared().resolvedBackendBaseUrl());
         apiClient.setSessionPersistence(SharedWorldSessionStore.shared());

@@ -20,7 +20,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
-public final class SharedWorldScreen extends Screen {
+public final class SharedWorldScreen extends link.sharedworld.versioned.VersionedScreen {
     private static final long AUTO_REFRESH_IDLE_MS = 15_000L;
     private static final long AUTO_REFRESH_ACTIVE_MS = 2_500L;
 

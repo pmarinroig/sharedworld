@@ -41,7 +41,7 @@ final class RuntimePlayerIdentityTest {
     @Test
     void insecureDialtoneLoginUsesPacketProfileUuidInsteadOfOfflineNameUuid() {
         UUID expectedUuid = UUID.fromString("22222222-2222-2222-2222-222222222222");
-        ServerboundHelloPacket packet = new ServerboundHelloPacket("GuestB", expectedUuid);
+        ServerboundHelloPacket packet = link.sharedworld.versioned.HelloPacketCompat.create("GuestB", expectedUuid);
 
         GameProfile profile = RuntimePlayerIdentity.insecureDialtoneProfile(packet);
 

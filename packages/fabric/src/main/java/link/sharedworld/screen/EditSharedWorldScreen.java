@@ -124,8 +124,10 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         this.motdBox.setMaxLength(256);
         this.motdBox.setHint(SharedWorldText.component("screen.sharedworld.motd_hint", SharedWorldApiClient.currentPlayerName()));
 
-        this.snapshotList = new SnapshotBrowserList(this.minecraft, 120, 100, 0, 36, this);
-        this.memberList = new MemberBrowserList(this.minecraft, 120, 100, 0, 36, this);
+        this.snapshotList = link.sharedworld.versioned.LayoutCompat.registerTabList(
+                new SnapshotBrowserList(this.minecraft, 120, 100, 0, 36, this), this::addRenderableWidget);
+        this.memberList = link.sharedworld.versioned.LayoutCompat.registerTabList(
+                new MemberBrowserList(this.minecraft, 120, 100, 0, 36, this), this::addRenderableWidget);
         this.tabNavigationBar = TabNavigationBar.builder(this.tabManager, this.width)
                 .addTabs(this.detailsTab, this.backupsTab, this.membersTab, this.storageTab)
                 .build();
@@ -167,7 +169,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
     }
 
     @Override
-    protected void setInitialFocus() {
+    protected void sharedworldSetInitialFocus() {
         Tab currentTab = this.tabManager.getCurrentTab();
         if (currentTab == this.detailsTab) {
             this.setInitialFocus(this.nameBox);
@@ -215,6 +217,12 @@ public final class EditSharedWorldScreen extends VersionedScreen {
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+        if (this.snapshotList != null) {
+            this.snapshotList.sharedworldSetVisibleForTab(this.tabManager.getCurrentTab() == this.backupsTab);
+        }
+        if (this.memberList != null) {
+            this.memberList.sharedworldSetVisibleForTab(this.tabManager.getCurrentTab() == this.membersTab);
+        }
         this.syncTabState();
         this.iconHovered = this.isIconHovered(mouseX, mouseY);
         this.updateButtons();
@@ -988,7 +996,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
 
         @Override
         public void visitChildren(Consumer<AbstractWidget> consumer) {
-            consumer.accept(EditSharedWorldScreen.this.snapshotList);
+            this.sharedworldVisitListChild(consumer, EditSharedWorldScreen.this.snapshotList);
         }
 
         @Override
@@ -1010,7 +1018,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
 
         @Override
         public void visitChildren(Consumer<AbstractWidget> consumer) {
-            consumer.accept(EditSharedWorldScreen.this.memberList);
+            this.sharedworldVisitListChild(consumer, EditSharedWorldScreen.this.memberList);
         }
 
         @Override

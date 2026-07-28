@@ -10,7 +10,7 @@ import net.minecraft.util.FormattedCharSequence;
 
 import java.util.List;
 
-public final class DiscardPendingFinalizationScreen extends Screen {
+public final class DiscardPendingFinalizationScreen extends link.sharedworld.versioned.VersionedScreen {
     private final HandoffWaitingScreen parent;
     private final String worldId;
     private final String worldName;

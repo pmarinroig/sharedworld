@@ -16,4 +16,9 @@ public abstract class VersionedSelectionList<E extends ObjectSelectionList.Entry
     public void sharedworldUpdateSize(int width, HeaderAndFooterLayout layout) {
         this.updateSize(width, layout);
     }
+
+    /** Tab-visibility sync; on this version the widget visible flag is authoritative. */
+    public void sharedworldSetVisibleForTab(boolean visibleForTab) {
+        this.visible = visibleForTab;
+    }
 }
