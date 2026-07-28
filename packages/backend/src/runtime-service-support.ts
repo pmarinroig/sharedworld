@@ -1,8 +1,4 @@
-import type {
-  HostAssignment,
-  WorldDetails,
-  WorldRuntimeStatus
-} from "../../shared/src/index.ts";
+import type { HostAssignment } from "../../shared/src/index.ts";
 
 import type { UncleanShutdownWarning } from "./repository.ts";
 import type { RuntimeCandidate, WorldRuntimeRecord } from "./runtime-protocol.ts";

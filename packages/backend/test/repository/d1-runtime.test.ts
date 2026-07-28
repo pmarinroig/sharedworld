@@ -3,8 +3,6 @@ import { describe, expect, test } from "bun:test";
 import type { WorldRuntimeRecord } from "../../src/runtime-protocol.ts";
 import { createSqliteRepository } from "../support/sqlite-d1.ts";
 
-type Row = Record<string, unknown>;
-
 describe("D1SharedWorldRepository", () => {
   test("runtime protocol fields round-trip through getRuntimeRecord", async () => {
     const repository = createSqliteRepository();

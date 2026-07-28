@@ -1,12 +1,7 @@
 import type {
-  AbandonFinalizationRequest,
-  BeginFinalizationRequest,
   CancelWaitingRequest,
-  CompleteFinalizationRequest,
   FileTransferMode,
-  FinalizationActionResult,
   FinalizeSnapshotRequest,
-  HostStartupProgressRequest,
   InviteCode,
   KickMemberResponse,
   PresenceHeartbeatRequest,
@@ -53,7 +48,6 @@ import {
 } from "./repository/d1-row-mappers.ts";
 import {
   asNullableString,
-  clampFraction,
   joinMotdLines,
   normalizeBoundValues,
   sqlPlaceholders,

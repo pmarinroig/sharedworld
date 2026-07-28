@@ -2,8 +2,7 @@ import type {
   InviteCode,
   StartupProgressMode,
   StorageProviderType,
-  UncleanShutdownWarning,
-  WorldRuntimePhase
+  UncleanShutdownWarning
 } from "../../../shared/src/index.ts";
 
 import type {

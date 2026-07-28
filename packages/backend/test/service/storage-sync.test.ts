@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 
 import type { LocalFileDescriptor } from "../../../shared/src/index.ts";
 
+import type { SharedWorldRepository } from "../../src/repository.ts";
+
 import { createSqliteRepository } from "../support/sqlite-d1.ts";
 import {
   authVerifier,
