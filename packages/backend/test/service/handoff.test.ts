@@ -263,7 +263,7 @@ describe("SharedWorldService handoff", () => {
     expect(afterFinalization.lease?.hostUuid).toBe("player-guest");
   });
 
-  test("old host cannot begin finalization after ownership moved to a newer epoch", async () => {
+  test("[P2] old host cannot begin finalization after ownership moved to a newer epoch", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
@@ -405,7 +405,7 @@ describe("SharedWorldService handoff", () => {
     expect(alphaClaim.lease?.hostUuid).toBe("player-alpha");
   });
 
-  test("handoff election moves to the next waiter when the chosen host cancels", async () => {
+  test("[P3] handoff election moves to the next waiter when the chosen host cancels", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
@@ -456,7 +456,7 @@ describe("SharedWorldService handoff", () => {
     expect(bravoClaim.lease?.hostUuid).toBe("player-bravo");
   });
 
-  test("kicked hosts can still finalize gracefully and then hand off", async () => {
+  test("[P6] kicked hosts can still finalize gracefully and then hand off", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});

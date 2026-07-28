@@ -1,6 +1,7 @@
 package link.sharedworld;
 
 import link.sharedworld.api.SharedWorldModels.WorldRuntimeStatusDto;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -63,6 +64,7 @@ final class SharedWorldGuestRuntimeWatchLogicTest {
     }
 
     @Test
+    @DisplayName("[P7] an idle runtime means the host is gone and the guest must not keep playing")
     void idleRuntimeIsHostGone() {
         assertEquals(
                 SharedWorldGuestRuntimeWatchLogic.Outcome.HOST_GONE,

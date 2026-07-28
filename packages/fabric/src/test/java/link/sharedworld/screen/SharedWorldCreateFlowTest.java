@@ -5,6 +5,7 @@ import link.sharedworld.api.SharedWorldModels.CreateWorldResultDto;
 import link.sharedworld.api.SharedWorldModels.StorageLinkSessionDto;
 import link.sharedworld.api.SharedWorldModels.WorldDetailsDto;
 import net.minecraft.network.chat.Component;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
@@ -144,6 +145,7 @@ final class SharedWorldCreateFlowTest {
     }
 
     @Test
+    @DisplayName("[P8] the ghost world is deleted when the seed upload fails, so creation is all-or-nothing")
     void createFlowDeletesTheGhostWorldWhenTheSeedUploadFails() throws Exception {
         Path root = Files.createTempDirectory("sharedworld-create-flow-failure");
         try {

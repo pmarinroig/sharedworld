@@ -463,7 +463,7 @@ describe("SharedWorldService world management", () => {
     expect(await repository.hasActiveWorld(world.id)).toBe(true);
   });
 
-  test("deleting an active world makes session endpoints report it as deleted", async () => {
+  test("[P5] deleting an active world makes session endpoints report it as deleted", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});

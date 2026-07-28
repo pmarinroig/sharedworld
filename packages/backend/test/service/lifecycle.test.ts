@@ -65,7 +65,7 @@ describe("SharedWorldService lifecycle", () => {
     expect(entered.assignment?.playerUuid).toBe("player-member");
   });
 
-  test("observe waiting restarts when the waiter session no longer exists", async () => {
+  test("[P4] observe waiting restarts when the waiter session no longer exists", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
@@ -258,7 +258,7 @@ describe("SharedWorldService lifecycle", () => {
     expect(runtime?.updatedAt).toBe("2099-01-03T00:00:20.000Z");
   });
 
-  test("heartbeat still rejects mismatched authority after the runtime is finalizing", async () => {
+  test("[P1] heartbeat still rejects mismatched authority after the runtime is finalizing", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
