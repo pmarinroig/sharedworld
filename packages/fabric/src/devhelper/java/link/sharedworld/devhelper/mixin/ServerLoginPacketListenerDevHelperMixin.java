@@ -2,6 +2,7 @@ package link.sharedworld.devhelper.mixin;
 
 import link.sharedworld.RuntimePlayerIdentity;
 import link.sharedworld.SharedWorldDevHelperPolicy;
+import link.sharedworld.devhelper.DevHelperE2ePolicy;
 import net.minecraft.network.Connection;
 import net.minecraft.network.protocol.login.ServerboundHelloPacket;
 import net.minecraft.server.network.ServerLoginPacketListenerImpl;
@@ -31,7 +32,9 @@ public abstract class ServerLoginPacketListenerDevHelperMixin {
     )
     private void sharedworld$allowLocalFakeDialtoneLogin(ServerboundHelloPacket packet, CallbackInfo callbackInfo) {
         String remoteAddressClassName = this.connection.getRemoteAddress().getClass().getName();
-        if (!SharedWorldDevHelperPolicy.shouldAllowInsecureDialtoneBypass(remoteAddressClassName)) {
+        boolean dialtoneBypass = SharedWorldDevHelperPolicy.shouldAllowInsecureDialtoneBypass(remoteAddressClassName);
+        boolean e2eLoopbackBypass = DevHelperE2ePolicy.shouldAllowInsecureLoopbackBypass(this.connection.getRemoteAddress());
+        if (!dialtoneBypass && !e2eLoopbackBypass) {
             return;
         }
 

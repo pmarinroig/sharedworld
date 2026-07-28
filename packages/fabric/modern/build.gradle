@@ -25,6 +25,23 @@ if (mcBucket == null) {
     throw new GradleException("Unknown sharedworldMcBucket '${mcBucketName}'. Known buckets: ${mcBuckets.keySet()}")
 }
 
+// Compatibility probing, mirroring the classic project: override the bucket's
+// Minecraft/fabric-api pair (e.g. to materialize another 26.1.x jar for the
+// mixin-target audit) without touching the bucket map:
+//   ./gradlew help -PsharedworldProbeMinecraft=26.1.1
+def probeMinecraft = providers.gradleProperty("sharedworldProbeMinecraft")
+def probeFabricApi = providers.gradleProperty("sharedworldProbeFabricApi")
+if (probeMinecraft.isPresent()) {
+    mcBucket = new LinkedHashMap(mcBucket)
+    mcBucket.minecraftVersion = probeMinecraft.get()
+    mcBucket.fabricApiVersion = probeFabricApi.getOrElse(mcBucket.fabricApiVersion)
+}
+def fakeRunLocalBackendUrl = "http://127.0.0.1:8787"
+def fakeRunDevAuthSecretProvider = providers.gradleProperty("sharedworldDevAuthSecret")
+        .orElse(providers.environmentVariable("SHAREDWORLD_DEV_AUTH_SECRET"))
+def fakeRunDevAuthSecret = fakeRunDevAuthSecretProvider.orNull
+def localModsDir = file("local/mods")
+
 // The 26.1 generation renamed the GUI render layer wholesale ("render" became a
 // state-extraction pass) but kept every shape SharedWorld uses. Rather than fork the GUI
 // sources, the shared tree is copied at build time with these systematic renames applied.

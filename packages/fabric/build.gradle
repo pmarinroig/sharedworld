@@ -69,6 +69,13 @@ def fakeRunLocalBackendUrl = "http://127.0.0.1:8787"
 def fakeRunDevAuthSecretProvider = providers.gradleProperty("sharedworldDevAuthSecret")
         .orElse(providers.environmentVariable("SHAREDWORLD_DEV_AUTH_SECRET"))
 def fakeRunDevAuthSecret = fakeRunDevAuthSecretProvider.orNull
+// Automated two-client e2e (scripts/e2e/two-client-e2e.ts in the workspace
+// repo) parameterizes its run configs with these; the manual fake runs keep
+// their fixed defaults.
+def e2eBackendUrl = providers.gradleProperty("sharedworldE2eBackendUrl").getOrElse(fakeRunLocalBackendUrl)
+def e2eMarkerFile = providers.gradleProperty("sharedworldE2eMarkerFile").orNull
+def e2eCommandFile = providers.gradleProperty("sharedworldE2eCommandFile").orNull
+def e2eWorldName = providers.gradleProperty("sharedworldE2eWorldName").orNull
 def skipDevHelperRuntime = providers.gradleProperty("sharedworldSkipDevHelperRuntime")
         .map { it.toBoolean() }
         .orElse(false)
@@ -241,6 +248,57 @@ loom {
             programArg "--username=${hostName}"
             programArg "--uuid=${hostUuid}"
         }
+        e2eHost {
+            inherit client
+            configName = "SharedWorld E2E Host"
+            runDir = "run-e2e-host"
+            def hostName = "HostA"
+            def hostUuid = "11111111-1111-1111-1111-111111111111"
+            vmArgs "-Dsharedworld.backendUrl=${e2eBackendUrl}"
+            vmArgs "-Dsharedworld.devPlayerName=${hostName}"
+            vmArgs "-Dsharedworld.devPlayerUuid=${hostUuid}"
+            if (fakeRunDevAuthSecret != null) {
+                vmArgs "-Dsharedworld.devAuthSecret=${fakeRunDevAuthSecret}"
+            }
+            vmArgs "-Dsharedworld.e2e.role=host"
+            vmArgs "-Dsharedworld.e2e.insecureLoopback=true"
+            if (e2eMarkerFile != null) {
+                vmArgs "-Dsharedworld.e2e.markerFile=${e2eMarkerFile}"
+            }
+            if (e2eCommandFile != null) {
+                vmArgs "-Dsharedworld.e2e.commandFile=${e2eCommandFile}"
+            }
+            if (e2eWorldName != null) {
+                vmArgs "-Dsharedworld.e2e.worldName=${e2eWorldName}"
+            }
+            programArg "--username=${hostName}"
+            programArg "--uuid=${hostUuid}"
+        }
+        e2eGuest {
+            inherit client
+            configName = "SharedWorld E2E Guest"
+            runDir = "run-e2e-guest"
+            def guestName = "GuestB"
+            def guestUuid = "22222222-2222-2222-2222-222222222222"
+            vmArgs "-Dsharedworld.backendUrl=${e2eBackendUrl}"
+            vmArgs "-Dsharedworld.devPlayerName=${guestName}"
+            vmArgs "-Dsharedworld.devPlayerUuid=${guestUuid}"
+            if (fakeRunDevAuthSecret != null) {
+                vmArgs "-Dsharedworld.devAuthSecret=${fakeRunDevAuthSecret}"
+            }
+            vmArgs "-Dsharedworld.e2e.role=guest"
+            if (e2eMarkerFile != null) {
+                vmArgs "-Dsharedworld.e2e.markerFile=${e2eMarkerFile}"
+            }
+            if (e2eCommandFile != null) {
+                vmArgs "-Dsharedworld.e2e.commandFile=${e2eCommandFile}"
+            }
+            if (e2eWorldName != null) {
+                vmArgs "-Dsharedworld.e2e.worldName=${e2eWorldName}"
+            }
+            programArg "--username=${guestName}"
+            programArg "--uuid=${guestUuid}"
+        }
         fakeGuest {
             inherit client
             configName = "SharedWorld Fake Guest"
@@ -260,7 +318,7 @@ loom {
 }
 
 gradle.taskGraph.whenReady { graph ->
-    if (graph.allTasks.any { it.name in ["runFakeHost", "runFakeGuest"] } && !fakeRunDevAuthSecretProvider.isPresent()) {
+    if (graph.allTasks.any { it.name in ["runFakeHost", "runFakeGuest", "runE2eHost", "runE2eGuest"] } && !fakeRunDevAuthSecretProvider.isPresent()) {
         throw new GradleException(
                 "Fake SharedWorld runs require a dev auth secret. Set DEV_AUTH_SECRET in " +
                         "packages/backend/.dev.vars and pass it with -PsharedworldDevAuthSecret=..., " +
