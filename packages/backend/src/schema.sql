@@ -93,7 +93,9 @@ CREATE TABLE IF NOT EXISTS handoff_waiters (
   world_id TEXT NOT NULL,
   player_uuid TEXT NOT NULL,
   player_name TEXT NOT NULL,
-  waiter_session_id TEXT NOT NULL,
+  -- Added by ALTER TABLE in migration 0010, which cannot declare NOT NULL;
+  -- schema.sql mirrors what migrated production databases actually enforce.
+  waiter_session_id TEXT,
   waiting INTEGER NOT NULL,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (world_id, player_uuid),
@@ -105,9 +107,11 @@ CREATE TABLE IF NOT EXISTS world_presence (
   world_id TEXT NOT NULL,
   player_uuid TEXT NOT NULL,
   player_name TEXT NOT NULL,
-  present INTEGER NOT NULL,
-  guest_session_epoch INTEGER NOT NULL,
-  presence_sequence INTEGER NOT NULL,
+  -- Defaults mirror the ALTER TABLE migrations (0002/0013) that added these
+  -- columns on production databases; inserts always set them explicitly.
+  present INTEGER NOT NULL DEFAULT 1,
+  guest_session_epoch INTEGER NOT NULL DEFAULT 0,
+  presence_sequence INTEGER NOT NULL DEFAULT 0,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (world_id, player_uuid),
   FOREIGN KEY (world_id) REFERENCES worlds(id),
@@ -151,8 +155,9 @@ CREATE TABLE IF NOT EXISTS snapshot_packs (
   base_snapshot_id TEXT,
   base_hash TEXT,
   chain_depth INTEGER,
-  PRIMARY KEY (snapshot_id, pack_id),
-  FOREIGN KEY (snapshot_id) REFERENCES snapshots(id)
+  -- No snapshots(id) foreign key: the migration that created this table never
+  -- declared one, so production does not enforce it; schema.sql matches.
+  PRIMARY KEY (snapshot_id, pack_id)
 );
 
 CREATE TABLE IF NOT EXISTS storage_accounts (

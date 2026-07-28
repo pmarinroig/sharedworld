@@ -3,6 +3,8 @@ import type { ApiErrorShape } from "../../shared/src/index.ts";
 export class HttpError extends Error {
   status: number;
   code: string;
+  /** When set, errorResponse emits a Retry-After header with this value. */
+  retryAfterSeconds?: number;
 
   constructor(status: number, code: string, message: string) {
     super(message);
@@ -27,17 +29,24 @@ export async function readJson<T>(request: Request): Promise<T> {
 
 export function errorResponse(error: unknown): Response {
   if (error instanceof HttpError) {
+    if (error.status >= 500) {
+      console.warn("SharedWorld request failed", { code: error.code, status: error.status, message: error.message });
+    }
     const payload: ApiErrorShape = {
       error: error.code,
       message: error.message,
       status: error.status
     };
-    return json(payload, { status: error.status });
+    const headers = error.retryAfterSeconds === undefined ? undefined : { "retry-after": String(error.retryAfterSeconds) };
+    return json(payload, { status: error.status, headers });
   }
 
+  // Anything else is an unexpected internal failure: log the real error, but
+  // never leak its message to the client.
+  console.error("SharedWorld unhandled error", error);
   const payload: ApiErrorShape = {
     error: "internal_error",
-    message: error instanceof Error ? error.message : "Unexpected error.",
+    message: "Internal server error.",
     status: 500
   };
   return json(payload, { status: 500 });

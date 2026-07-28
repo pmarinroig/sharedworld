@@ -100,4 +100,20 @@ describe("router error handling", () => {
       status: 409
     });
   });
+
+  test("unexpected internal errors never leak their message to the client", async () => {
+    const router = createRouter(createRouterService({
+      async createChallenge() {
+        throw new Error("secret database connection string");
+      }
+    }));
+
+    const response = await router(new Request("https://backend.example/auth/challenge", { method: "POST" }));
+
+    expect(response.status).toBe(500);
+    const payload = await response.json() as { error: string; message: string };
+    expect(payload.error).toBe("internal_error");
+    expect(payload.message).toBe("Internal server error.");
+    expect(JSON.stringify(payload)).not.toContain("secret database");
+  });
 });

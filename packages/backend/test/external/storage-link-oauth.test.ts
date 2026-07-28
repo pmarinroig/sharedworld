@@ -113,7 +113,7 @@ describe("StorageLinkDomainService Google OAuth exchange", () => {
     expect((caught as HttpError).code).toBe("oauth_profile_failed");
   });
 
-  test("a malformed token-endpoint body currently escapes as a non-HttpError", async () => {
+  test("a malformed token-endpoint body maps to oauth_exchange_failed", async () => {
     const { service } = freshService();
     const sessionId = await createPendingSession(service);
     stubGoogleFetch({ token: () => new Response("<html>not json</html>", { status: 200 }) });
@@ -124,11 +124,26 @@ describe("StorageLinkDomainService Google OAuth exchange", () => {
     } catch (error) {
       caught = error;
     }
-    // KNOWN-DEFECT(oauth-malformed-json): a 200 with a non-JSON body throws a
-    // raw parse error, which the router surfaces as a generic 500
-    // internal_error instead of an oauth_exchange_failed 401.
-    expect(caught).not.toBeNull();
-    expect(caught).not.toBeInstanceOf(HttpError);
+    expect(caught).toBeInstanceOf(HttpError);
+    expect((caught as HttpError).status).toBe(401);
+    expect((caught as HttpError).code).toBe("oauth_exchange_failed");
+  });
+
+  test("a malformed userinfo body maps to oauth_profile_failed", async () => {
+    const { service } = freshService();
+    const sessionId = await createPendingSession(service);
+    stubGoogleFetch({
+      token: () => new Response(JSON.stringify({ access_token: "at-1", expires_in: 3600 }), { status: 200 }),
+      userinfo: () => new Response("<html>not json</html>", { status: 200 })
+    });
+
+    let caught: unknown = null;
+    try {
+      await service.completeStorageLink(sessionId, { sessionId, code: "auth-code-1" }, new Date());
+    } catch (error) {
+      caught = error;
+    }
+    expect((caught as HttpError).code).toBe("oauth_profile_failed");
   });
 
   test("a missing callback code is rejected up front", async () => {

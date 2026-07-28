@@ -183,7 +183,12 @@ export class StorageLinkDomainService {
     if (!tokenResponse.ok) {
       throw new HttpError(401, "oauth_exchange_failed", "Failed to exchange Google OAuth code.");
     }
-    const tokenPayload = await tokenResponse.json() as { access_token: string; refresh_token?: string; expires_in: number };
+    let tokenPayload: { access_token: string; refresh_token?: string; expires_in: number };
+    try {
+      tokenPayload = await tokenResponse.json() as { access_token: string; refresh_token?: string; expires_in: number };
+    } catch {
+      throw new HttpError(401, "oauth_exchange_failed", "Failed to exchange Google OAuth code.");
+    }
     const userResponse = await fetch("https://openidconnect.googleapis.com/v1/userinfo", {
       headers: {
         authorization: `Bearer ${tokenPayload.access_token}`
@@ -192,7 +197,12 @@ export class StorageLinkDomainService {
     if (!userResponse.ok) {
       throw new HttpError(401, "oauth_profile_failed", "Failed to read Google account profile.");
     }
-    const user = await userResponse.json() as { sub: string; email?: string; name?: string };
+    let user: { sub: string; email?: string; name?: string };
+    try {
+      user = await userResponse.json() as { sub: string; email?: string; name?: string };
+    } catch {
+      throw new HttpError(401, "oauth_profile_failed", "Failed to read Google account profile.");
+    }
     return this.upsertStorageAccountFromOAuth(
       session,
       {

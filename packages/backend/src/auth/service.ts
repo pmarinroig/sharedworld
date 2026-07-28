@@ -98,14 +98,34 @@ export class AuthDomainService {
   }
 
   private async verifyJoinedIdentity(playerName: string, serverId: string) {
+    // The delay ladder serves two failure modes at once: Mojang propagation
+    // lag (verifyJoin resolves null) and transient session-server trouble
+    // (verifyJoin throws identity_verification_unavailable). Both consume
+    // attempts; a single transient blip must not abort verification.
+    let transientFailure: HttpError | null = null;
     for (const delayMs of JOIN_VERIFICATION_DELAYS_MS) {
       if (delayMs > 0) {
         await delay(delayMs);
       }
-      const verified = await this.authVerifier.verifyJoin(playerName, serverId);
-      if (verified) {
-        return verified;
+      try {
+        const verified = await this.authVerifier.verifyJoin(playerName, serverId);
+        if (verified) {
+          return verified;
+        }
+      } catch (error) {
+        if (error instanceof HttpError && error.code === "identity_verification_unavailable") {
+          transientFailure = error;
+          continue;
+        }
+        throw error;
       }
+    }
+    if (transientFailure) {
+      // Mojang was unreachable for at least part of the window, so "not
+      // joined" cannot be trusted as terminal: tell the client to try again
+      // soon rather than implying the identity proof failed.
+      transientFailure.retryAfterSeconds = 10;
+      throw transientFailure;
     }
     throw new HttpError(403, "identity_verification_failed", "Failed to verify Minecraft identity.");
   }

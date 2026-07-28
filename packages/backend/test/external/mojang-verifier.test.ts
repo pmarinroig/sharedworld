@@ -94,9 +94,9 @@ describe("MinecraftSessionServerAuthVerifier", () => {
         verifier.verifyJoin("HostA", "server-id-1"),
         "Minecraft identity verification is unavailable."
       );
-      // KNOWN-DEFECT(mojang-no-retry): a single transient Mojang failure —
-      // including 429 rate limiting — aborts verification immediately. When
-      // retry/backoff lands this assertion should expect multiple attempts.
+      // The verifier itself is single-attempt by design; the retry ladder
+      // lives in AuthDomainService.verifyJoinedIdentity, which treats this
+      // 503 as a retriable attempt (see test/service/auth.test.ts).
       expect(hits).toBe(1);
     });
   }
@@ -128,8 +128,24 @@ describe("MinecraftSessionServerAuthVerifier", () => {
     );
   });
 
-  // KNOWN-DEFECT(mojang-no-timeout): the verifier's fetch has no AbortSignal,
-  // so a hanging Mojang response blocks the worker for the runtime default.
-  // A test would hang forever today; write it when the timeout lands.
-  test.todo("aborts a hasJoined request that exceeds a deadline", () => {});
+  test("aborts a hasJoined request that exceeds the per-attempt deadline", async () => {
+    const hangingServer = Bun.serve({
+      port: 0,
+      async fetch() {
+        await Bun.sleep(60_000);
+        return new Response(null, { status: 204 });
+      }
+    });
+    try {
+      const impatient = new MinecraftSessionServerAuthVerifier(`http://127.0.0.1:${hangingServer.port}/hasJoined`, 250);
+      const startedAt = Date.now();
+      await expectUnavailable(
+        impatient.verifyJoin("HostA", "server-id-1"),
+        "Minecraft identity verification is unavailable."
+      );
+      expect(Date.now() - startedAt).toBeLessThan(5_000);
+    } finally {
+      hangingServer.stop(true);
+    }
+  }, 10_000);
 });

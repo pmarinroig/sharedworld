@@ -41,14 +41,9 @@ type ModRoute = {
 /**
  * Routes the mod calls that the backend is known not to register. Each entry
  * is a defect or intentional gap; an entry that stops failing must be removed.
+ * Empty since 0.1.3 removed the dead getStorageUsage client method.
  */
-const KNOWN_MISSING_ROUTES: ModRoute[] = [
-  // KNOWN-DEFECT(storage-usage-404): SharedWorldApiClient.getStorageUsage
-  // calls this, but no route serves it — the service method exists and is not
-  // wired into any router module, so the call would 404. No production caller
-  // exists today; either wire the route or delete the client method.
-  { method: "GET", template: "/worlds/:worldId/storage/usage" }
-];
+const KNOWN_MISSING_ROUTES: ModRoute[] = [];
 
 function extractModRoutes(source: string): ModRoute[] {
   const routes: ModRoute[] = [];

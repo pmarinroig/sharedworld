@@ -259,7 +259,10 @@ export class SharedWorldService {
 }
 
 export class MinecraftSessionServerAuthVerifier implements AuthVerifier {
-  constructor(private readonly endpoint: string) {}
+  constructor(
+    private readonly endpoint: string,
+    private readonly attemptTimeoutMs = 5_000
+  ) {}
 
   async verifyJoin(playerName: string, serverId: string): Promise<{ playerUuid: string; playerName: string } | null> {
     const url = new URL(this.endpoint);
@@ -271,9 +274,11 @@ export class MinecraftSessionServerAuthVerifier implements AuthVerifier {
       response = await fetch(url, {
         headers: {
           accept: "application/json"
-        }
+        },
+        signal: AbortSignal.timeout(this.attemptTimeoutMs)
       });
-    } catch {
+    } catch (error) {
+      console.warn("SharedWorld Mojang hasJoined request failed", { playerName, cause: String(error) });
       throw new HttpError(503, "identity_verification_unavailable", "Minecraft identity verification is unavailable.");
     }
 
@@ -281,6 +286,7 @@ export class MinecraftSessionServerAuthVerifier implements AuthVerifier {
       return null;
     }
     if (!response.ok) {
+      console.warn("SharedWorld Mojang hasJoined returned an error status", { playerName, status: response.status });
       throw new HttpError(503, "identity_verification_unavailable", "Minecraft identity verification is unavailable.");
     }
 

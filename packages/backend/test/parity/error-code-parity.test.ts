@@ -77,9 +77,13 @@ describe("error code parity", () => {
     expect([...classified.keys()]).toContain("invite_expired");
   });
 
+  // Codes the mod synthesizes itself (never sent by the backend); tryParseError
+  // produces http_error when a response has no structured error body.
+  const CLIENT_SYNTHESIZED_CODES = new Set(["http_error"]);
+
   test("every error code the mod classifies is emitted by the backend", () => {
     const unknown = [...classified.entries()]
-      .filter(([code]) => !emitted.has(code))
+      .filter(([code]) => !emitted.has(code) && !CLIENT_SYNTHESIZED_CODES.has(code))
       .map(([code, usages]) => `${code} (classified at ${usages.join(", ")})`);
     expect(unknown).toEqual([]);
   });

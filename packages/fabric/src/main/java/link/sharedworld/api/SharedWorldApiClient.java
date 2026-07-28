@@ -26,7 +26,6 @@ import link.sharedworld.api.SharedWorldModels.SignedBlobUrlDto;
 import link.sharedworld.api.SharedWorldModels.SnapshotActionResultDto;
 import link.sharedworld.api.SharedWorldModels.SnapshotManifestDto;
 import link.sharedworld.api.SharedWorldModels.StorageLinkSessionDto;
-import link.sharedworld.api.SharedWorldModels.StorageUsageSummaryDto;
 import link.sharedworld.api.SharedWorldModels.UploadPlanDto;
 import link.sharedworld.api.SharedWorldModels.WorldDetailsDto;
 import link.sharedworld.api.SharedWorldModels.WorldRuntimeStatusDto;
@@ -314,11 +313,6 @@ public final class SharedWorldApiClient {
     public SnapshotActionResultDto deleteSnapshot(String worldId, String snapshotId) throws IOException, InterruptedException {
         ensureSession();
         return request("DELETE", "/worlds/" + worldId + "/snapshots/" + snapshotId, null, SnapshotActionResultDto.class, true);
-    }
-
-    public StorageUsageSummaryDto getStorageUsage(String worldId) throws IOException, InterruptedException {
-        ensureSession();
-        return request("GET", "/worlds/" + worldId + "/storage/usage", null, StorageUsageSummaryDto.class, true);
     }
 
     public UploadPlanDto prepareUploads(String worldId, long runtimeEpoch, String hostToken, LocalFileDescriptorDto[] files, LocalPackDescriptorDto nonRegionPack, LocalPackDescriptorDto[] regionBundles) throws IOException, InterruptedException {

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { AuthCompleteRequest } from "../../../shared/src/index.ts";
 
+import { HttpError } from "../../src/http.ts";
 import { createSqliteRepository } from "../support/sqlite-d1.ts";
 import { createBlobSigner, createTestService, service } from "../support/service-fixtures.ts";
 
@@ -101,5 +102,79 @@ describe("SharedWorldService auth", () => {
     });
 
     expect(session.allowInsecureE4mc).toBe(false);
+  });
+
+  test("transient Mojang unavailability is retried and can still succeed", async () => {
+    let attempts = 0;
+    const instance = createTestService(
+      createSqliteRepository(),
+      {
+        async verifyJoin() {
+          attempts += 1;
+          if (attempts < 3) {
+            throw new HttpError(503, "identity_verification_unavailable", "Minecraft identity verification is unavailable.");
+          }
+          return { playerUuid: "player-owner", playerName: "Owner" };
+        }
+      }
+    );
+
+    const challenge = await instance.createChallenge();
+    const session = await instance.completeAuth({ serverId: challenge.serverId, playerName: "Owner" });
+
+    expect(session.playerUuid).toBe("player-owner");
+    expect(attempts).toBe(3);
+  });
+
+  test("persistent Mojang unavailability surfaces the retryable 503, not a 403", async () => {
+    let attempts = 0;
+    const instance = createTestService(
+      createSqliteRepository(),
+      {
+        async verifyJoin() {
+          attempts += 1;
+          throw new HttpError(503, "identity_verification_unavailable", "Minecraft identity verification is unavailable.");
+        }
+      }
+    );
+
+    const challenge = await instance.createChallenge();
+    let caught: unknown = null;
+    try {
+      await instance.completeAuth({ serverId: challenge.serverId, playerName: "Owner" });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(HttpError);
+    expect((caught as HttpError).status).toBe(503);
+    expect((caught as HttpError).code).toBe("identity_verification_unavailable");
+    expect((caught as HttpError).retryAfterSeconds).toBe(10);
+    expect(attempts).toBe(5);
+  });
+
+  test("mixed propagation lag and transient unavailability prefers the retryable 503 over the terminal 403", async () => {
+    let attempts = 0;
+    const instance = createTestService(
+      createSqliteRepository(),
+      {
+        async verifyJoin() {
+          attempts += 1;
+          if (attempts % 2 === 0) {
+            throw new HttpError(503, "identity_verification_unavailable", "Minecraft identity verification is unavailable.");
+          }
+          return null;
+        }
+      }
+    );
+
+    const challenge = await instance.createChallenge();
+    let caught: unknown = null;
+    try {
+      await instance.completeAuth({ serverId: challenge.serverId, playerName: "Owner" });
+    } catch (error) {
+      caught = error;
+    }
+    expect((caught as HttpError).status).toBe(503);
+    expect(attempts).toBe(5);
   });
 });
