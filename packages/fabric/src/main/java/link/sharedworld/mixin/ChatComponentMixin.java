@@ -10,7 +10,15 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(ChatComponent.class)
 public abstract class ChatComponentMixin {
-    @Inject(method = "addMessage(Lnet/minecraft/network/chat/Component;)V", at = @At("HEAD"), cancellable = true)
+    @Inject(
+            method = {
+                    "addMessage(Lnet/minecraft/network/chat/Component;)V",
+                    "addClientSystemMessage(Lnet/minecraft/network/chat/Component;)V",
+                    "addServerSystemMessage(Lnet/minecraft/network/chat/Component;)V"
+            },
+            at = @At("HEAD"),
+            cancellable = true
+    )
     private void sharedworld$trackClipboardTargets(Component message, CallbackInfo callbackInfo) {
         if (E4mcDomainTracker.shouldSuppressMessage(message)) {
             callbackInfo.cancel();
