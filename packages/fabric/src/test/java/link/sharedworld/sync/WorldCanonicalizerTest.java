@@ -1,5 +1,6 @@
 package link.sharedworld.sync;
 
+import link.sharedworld.versioned.NbtCompat;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtAccounter;
 import net.minecraft.nbt.NbtIo;
@@ -48,17 +49,17 @@ final class WorldCanonicalizerTest {
         writePreparedFiles(canonicalFiles, canonical);
 
         CompoundTag canonicalLevel = NbtIo.readCompressed(canonical.resolve("level.dat"), NbtAccounter.unlimitedHeap());
-        assertFalse(canonicalLevel.getCompoundOrEmpty("Data").contains("Player"));
+        assertFalse(NbtCompat.getCompoundOrEmpty(canonicalLevel, "Data").contains("Player"));
 
         WorldCanonicalizer.materializeHostPlayer(canonical, GUEST_UUID);
 
         CompoundTag materialized = NbtIo.readCompressed(canonical.resolve("level.dat"), NbtAccounter.unlimitedHeap());
-        CompoundTag materializedData = materialized.getCompoundOrEmpty("Data");
+        CompoundTag materializedData = NbtCompat.getCompoundOrEmpty(materialized, "Data");
 
-        assertEquals("Handoff Regression", materializedData.getString("LevelName").orElse(""));
-        assertEquals(424242L, materializedData.getLong("RandomSeed").orElse(0L));
-        assertEquals("stone-arch", materializedData.getString("SharedWorldStableMarker").orElse(""));
-        assertEquals("guest-b", materializedData.getCompoundOrEmpty("Player").getString("SharedWorldPlayerMarker").orElse(""));
+        assertEquals("Handoff Regression", NbtCompat.getStringOr(materializedData, "LevelName", ""));
+        assertEquals(424242L, NbtCompat.getLongOr(materializedData, "RandomSeed", 0L));
+        assertEquals("stone-arch", NbtCompat.getStringOr(materializedData, "SharedWorldStableMarker", ""));
+        assertEquals("guest-b", NbtCompat.getStringOr(NbtCompat.getCompoundOrEmpty(materializedData, "Player"), "SharedWorldPlayerMarker", ""));
         assertFalse(Files.exists(canonical.resolve("playerdata").resolve(GUEST_UUID + ".dat")));
         assertTrue(Files.exists(canonical.resolve("playerdata").resolve(HOST_UUID + ".dat")));
     }

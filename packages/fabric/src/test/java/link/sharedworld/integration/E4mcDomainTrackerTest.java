@@ -18,7 +18,7 @@ final class E4mcDomainTrackerTest {
 
     private static Component clipboardMessage(String value) {
         MutableComponent component = Component.literal("join at " + value);
-        return component.withStyle(style -> style.withClickEvent(new ClickEvent.CopyToClipboard(value)));
+        return component.withStyle(style -> style.withClickEvent(link.sharedworld.versioned.ClickEventCompat.copyToClipboard(value)));
     }
 
     @Test

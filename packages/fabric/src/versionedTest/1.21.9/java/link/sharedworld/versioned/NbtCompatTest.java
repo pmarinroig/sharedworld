@@ -25,7 +25,7 @@ class NbtCompatTest {
         NbtCompat.writeCompressed(root, file);
         CompoundTag read = NbtCompat.readCompressed(file);
 
-        assertEquals("SharedWorld Test", NbtCompat.getCompoundOrEmpty(read, "Data").getStringOr("LevelName", ""));
+        assertEquals("SharedWorld Test", NbtCompat.getStringOr(NbtCompat.getCompoundOrEmpty(read, "Data"), "LevelName", ""));
     }
 
     @Test

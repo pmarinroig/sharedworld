@@ -23,4 +23,12 @@ public final class NbtCompat {
     public static CompoundTag getCompoundOrEmpty(CompoundTag tag, String key) {
         return tag.getCompoundOrEmpty(key);
     }
+
+    public static String getStringOr(CompoundTag tag, String key, String defaultValue) {
+        return tag.getStringOr(key, defaultValue);
+    }
+
+    public static long getLongOr(CompoundTag tag, String key, long defaultValue) {
+        return tag.getLongOr(key, defaultValue);
+    }
 }

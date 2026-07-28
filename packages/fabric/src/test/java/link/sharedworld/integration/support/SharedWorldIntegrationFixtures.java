@@ -17,6 +17,7 @@ import link.sharedworld.sync.ManagedWorldStore;
 import link.sharedworld.sync.WorldSyncCoordinator;
 import link.sharedworld.sync.WorldSyncProgressListener;
 import net.minecraft.client.gui.screens.Screen;
+import link.sharedworld.versioned.NbtCompat;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtAccounter;
 import net.minecraft.nbt.NbtIo;
@@ -322,7 +323,7 @@ public final class SharedWorldIntegrationFixtures {
 
         public String stableMarker() throws IOException {
             CompoundTag level = NbtIo.readCompressed(this.resources.levelPath(), NbtAccounter.unlimitedHeap());
-            return level.getCompoundOrEmpty("Data").getString("SharedWorldStableMarker").orElse("");
+            return NbtCompat.getStringOr(NbtCompat.getCompoundOrEmpty(level, "Data"), "SharedWorldStableMarker", "");
         }
 
         @Override

@@ -5,6 +5,7 @@ import link.sharedworld.api.SharedWorldModels;
 import link.sharedworld.integration.support.SharedWorldIntegrationBackend;
 import link.sharedworld.sync.ManagedWorldStore;
 import link.sharedworld.sync.WorldSyncCoordinator;
+import link.sharedworld.versioned.NbtCompat;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtAccounter;
 import net.minecraft.nbt.NbtIo;
@@ -78,12 +79,12 @@ final class BackendModHandoffIntegrationTest {
             );
 
             CompoundTag level = NbtIo.readCompressed(workingCopy.resolve("level.dat"), NbtAccounter.unlimitedHeap());
-            CompoundTag data = level.getCompoundOrEmpty("Data");
+            CompoundTag data = NbtCompat.getCompoundOrEmpty(level, "Data");
 
-            assertEquals("Integration Handoff World", data.getString("LevelName").orElse(""));
-            assertEquals(424242L, data.getLong("RandomSeed").orElse(0L));
-            assertEquals("stone-arch", data.getString("SharedWorldStableMarker").orElse(""));
-            assertEquals("guest-b", data.getCompoundOrEmpty("Player").getString("SharedWorldPlayerMarker").orElse(""));
+            assertEquals("Integration Handoff World", NbtCompat.getStringOr(data, "LevelName", ""));
+            assertEquals(424242L, NbtCompat.getLongOr(data, "RandomSeed", 0L));
+            assertEquals("stone-arch", NbtCompat.getStringOr(data, "SharedWorldStableMarker", ""));
+            assertEquals("guest-b", NbtCompat.getStringOr(NbtCompat.getCompoundOrEmpty(data, "Player"), "SharedWorldPlayerMarker", ""));
             assertFalse(Files.exists(workingCopy.resolve("playerdata").resolve(SharedWorldIntegrationBackend.GUEST.playerUuidHyphenated() + ".dat")));
             assertTrue(Files.exists(workingCopy.resolve("playerdata").resolve(SharedWorldIntegrationBackend.HOST.playerUuidHyphenated() + ".dat")));
             assertFalse(Files.exists(workingCopy.resolve("playerdata").resolve(offlinePlayerUuid(SharedWorldIntegrationBackend.HOST.playerName()) + ".dat")));
@@ -110,12 +111,12 @@ final class BackendModHandoffIntegrationTest {
                     SharedWorldIntegrationBackend.GUEST.playerUuidHyphenated()
             );
             CompoundTag canonicalLevel = NbtIo.readCompressed(canonicalCopy.resolve("level.dat"), NbtAccounter.unlimitedHeap());
-            assertFalse(canonicalLevel.getCompoundOrEmpty("Data").contains("Player"));
+            assertFalse(NbtCompat.getCompoundOrEmpty(canonicalLevel, "Data").contains("Player"));
             CompoundTag canonicalGuestPlayer = NbtIo.readCompressed(
                     canonicalCopy.resolve("playerdata").resolve(SharedWorldIntegrationBackend.GUEST.playerUuidHyphenated() + ".dat"),
                     NbtAccounter.unlimitedHeap()
             );
-            assertEquals("guest-b-updated", canonicalGuestPlayer.getString("SharedWorldPlayerMarker").orElse(""));
+            assertEquals("guest-b-updated", NbtCompat.getStringOr(canonicalGuestPlayer, "SharedWorldPlayerMarker", ""));
             assertFalse(Files.exists(canonicalCopy.resolve("playerdata").resolve(offlinePlayerUuid(SharedWorldIntegrationBackend.HOST.playerName()) + ".dat")));
             assertFalse(Files.exists(canonicalCopy.resolve("playerdata").resolve(offlinePlayerUuid(SharedWorldIntegrationBackend.GUEST.playerName()) + ".dat")));
         } finally {

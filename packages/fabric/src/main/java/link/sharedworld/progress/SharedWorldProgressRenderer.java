@@ -3,10 +3,8 @@ package link.sharedworld.progress;
 import link.sharedworld.util.MonotonicClock;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.components.LoadingDotsWidget;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
-import net.minecraft.util.ARGB;
 
 public final class SharedWorldProgressRenderer {
     private static final int TITLE_Y_OFFSET = -36;
@@ -41,11 +39,9 @@ public final class SharedWorldProgressRenderer {
             return;
         }
 
-        LoadingDotsWidget dotsWidget = new LoadingDotsWidget(font, Component.empty());
-        dotsWidget.setX(centerX - (dotsWidget.getWidth() / 2));
         int indicatorCenterY = indicatorTop + (PROGRESS_BAR_HEIGHT / 2);
-        dotsWidget.setY(indicatorCenterY - (dotsWidget.getHeight() / 2) + DOTS_Y_NUDGE);
-        dotsWidget.render(guiGraphics, 0, 0, partialTick);
+        link.sharedworld.versioned.GuiCompat.renderLoadingDots(
+                guiGraphics, font, centerX, indicatorCenterY + DOTS_Y_NUDGE, partialTick);
     }
 
     public static void renderCenteredBar(

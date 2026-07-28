@@ -8,6 +8,7 @@ import link.sharedworld.integration.support.SharedWorldIntegrationBackend;
 import link.sharedworld.support.SharedWorldCoordinatorHarness;
 import link.sharedworld.sync.ManagedWorldStore;
 import net.minecraft.client.gui.screens.Screen;
+import link.sharedworld.versioned.NbtCompat;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtAccounter;
 import net.minecraft.nbt.NbtIo;
@@ -148,12 +149,12 @@ final class BackendModHandoffHostStartupIntegrationTest {
             assertNotNull(worldOpenController.openedWorldDirectory);
 
             CompoundTag level = NbtIo.readCompressed(worldOpenController.openedWorldDirectory.resolve("level.dat"), NbtAccounter.unlimitedHeap());
-            CompoundTag data = level.getCompoundOrEmpty("Data");
+            CompoundTag data = NbtCompat.getCompoundOrEmpty(level, "Data");
 
-            assertEquals("Integration Handoff World", data.getString("LevelName").orElse(""));
-            assertEquals(424242L, data.getLong("RandomSeed").orElse(0L));
-            assertEquals("stone-arch", data.getString("SharedWorldStableMarker").orElse(""));
-            assertEquals("guest-b", data.getCompoundOrEmpty("Player").getString("SharedWorldPlayerMarker").orElse(""));
+            assertEquals("Integration Handoff World", NbtCompat.getStringOr(data, "LevelName", ""));
+            assertEquals(424242L, NbtCompat.getLongOr(data, "RandomSeed", 0L));
+            assertEquals("stone-arch", NbtCompat.getStringOr(data, "SharedWorldStableMarker", ""));
+            assertEquals("guest-b", NbtCompat.getStringOr(NbtCompat.getCompoundOrEmpty(data, "Player"), "SharedWorldPlayerMarker", ""));
         } finally {
             deleteTree(root);
         }

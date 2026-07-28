@@ -14,4 +14,9 @@ public final class ClickEventCompat {
         }
         return null;
     }
+
+    /** Builds a copy-to-clipboard click event (test/support factory). */
+    public static ClickEvent copyToClipboard(String value) {
+        return new ClickEvent.CopyToClipboard(value);
+    }
 }
