@@ -17,6 +17,7 @@ import net.minecraft.network.chat.Component;
 
 public final class SharedWorldSessionCoordinator {
     private static final long POLL_INTERVAL_MS = 1_000L;
+    private static final int WAITING_FAILURES_BEFORE_NOTICE = 3;
 
     private final SessionBackend backend;
     private final RecoveryPersistence recoveryStore;
@@ -175,13 +176,12 @@ public final class SharedWorldSessionCoordinator {
                     }
                     this.pendingJoinAttempt = null;
                     if (error != null) {
-                        Throwable cause = rootCause(error);
-                        if (SharedWorldApiClient.isDeletedWorldError(cause)) {
+                        if (SharedWorldApiClient.isDeletedWorldError(error)) {
                             clearPersistedRecoveryIfMatches(attempt.recoveryFingerprint());
                             this.clientShell.setScreen(this.sessionUi.deleted(parent));
                             return;
                         }
-                        if (SharedWorldApiClient.isMembershipRevokedError(cause)) {
+                        if (SharedWorldApiClient.isMembershipRevokedError(error)) {
                             clearPersistedRecoveryIfMatches(attempt.recoveryFingerprint());
                             this.clientShell.openMembershipRevokedScreen(parent);
                             return;
@@ -189,7 +189,7 @@ public final class SharedWorldSessionCoordinator {
                         if (parent != null) {
                             parent.clearFocus();
                         }
-                        this.clientShell.setScreen(this.sessionUi.joinError(parent, cause));
+                        this.clientShell.setScreen(this.sessionUi.joinError(parent, error));
                         return;
                     }
                     this.handleEnterSession(parent, ownerUuid, worldName, previousJoinTarget, result, hostChangeFlow, returnToSharedWorldMenu, attempt.recoveryFingerprint(), attempt.startupMode());
@@ -282,7 +282,7 @@ public final class SharedWorldSessionCoordinator {
                 state.cancelInFlight = false;
                 state.statusMessage = Component.translatable("screen.sharedworld.waiting").getString();
                 state.progressState = progress(state.hostChangeFlow, Component.translatable("screen.sharedworld.progress.waiting_for_host"), state.progressState);
-                state.discardErrorMessage = SharedWorldApiClient.friendlyErrorMessage(rootCause(error));
+                state.discardErrorMessage = SharedWorldApiClient.friendlyErrorMessage(error);
                 return;
             }
             exitWaitingFlowToParent(state);
@@ -353,20 +353,19 @@ public final class SharedWorldSessionCoordinator {
             }
             state.discardInFlight = false;
             if (error != null) {
-                Throwable cause = rootCause(error);
-                if (SharedWorldApiClient.isDeletedWorldError(cause)) {
+                if (SharedWorldApiClient.isDeletedWorldError(error)) {
                     this.waitingState = null;
                     clearPersistedRecovery();
                     this.clientShell.setScreen(this.sessionUi.deleted(state.parent));
                     return;
                 }
-                if (SharedWorldApiClient.isMembershipRevokedError(cause)) {
+                if (SharedWorldApiClient.isMembershipRevokedError(error)) {
                     this.waitingState = null;
                     clearPersistedRecovery();
                     this.clientShell.openMembershipRevokedScreen(state.parent);
                     return;
                 }
-                state.discardErrorMessage = SharedWorldApiClient.friendlyErrorMessage(cause);
+                state.discardErrorMessage = SharedWorldApiClient.friendlyErrorMessage(error);
                 return;
             }
             state.discardErrorMessage = null;
@@ -417,12 +416,12 @@ public final class SharedWorldSessionCoordinator {
      * Authority source:
      * The backend runtime status observation that triggered the departure.
      */
-    public void beginHostDepartureRejoin(Screen parent, String worldId, String worldName, String previousJoinTarget) {
+    public boolean beginHostDepartureRejoin(Screen parent, String worldId, String worldName, String previousJoinTarget) {
         if (worldId == null || worldId.isBlank()) {
-            return;
+            return false;
         }
         if (this.waitingState != null || this.pendingJoinAttempt != null) {
-            return;
+            return false;
         }
         this.clientShell.disconnectFromWorld();
         this.clientShell.clearPlaySession();
@@ -439,6 +438,7 @@ public final class SharedWorldSessionCoordinator {
                 null,
                 SharedWorldHostingManager.StartupMode.NORMAL
         );
+        return true;
     }
 
     public boolean openRecoveryScreenIfPresent(Screen fallbackParent) {
@@ -605,20 +605,32 @@ public final class SharedWorldSessionCoordinator {
             }
             state.requestInFlight = false;
             if (error != null) {
-                Throwable cause = rootCause(error);
-                if (SharedWorldApiClient.isDeletedWorldError(cause)) {
+                if (SharedWorldApiClient.isDeletedWorldError(error)) {
                     this.waitingState = null;
                     clearPersistedRecovery();
                     this.clientShell.setScreen(this.sessionUi.deleted(state.parent));
                     return;
                 }
-                if (SharedWorldApiClient.isMembershipRevokedError(cause)) {
+                if (SharedWorldApiClient.isMembershipRevokedError(error)) {
                     this.waitingState = null;
                     clearPersistedRecovery();
                     this.clientShell.openMembershipRevokedScreen(state.parent);
+                    return;
+                }
+                // Transient failures never end the wait (the host may still
+                // return), but the player must see that reaching SharedWorld
+                // is the current problem instead of a frozen waiting label.
+                state.consecutivePollFailures += 1;
+                if (state.consecutivePollFailures >= WAITING_FAILURES_BEFORE_NOTICE) {
+                    state.progressState = progress(
+                            state.hostChangeFlow,
+                            Component.translatable("screen.sharedworld.waiting_backend_retrying"),
+                            state.progressState
+                    );
                 }
                 return;
             }
+            state.consecutivePollFailures = 0;
             SharedWorldWaitingFlowLogic.PollDecision decision = SharedWorldWaitingFlowLogic.evaluateObservation(
                     new SharedWorldWaitingFlowLogic.WaitingContext(
                             state.worldId,
@@ -782,14 +794,6 @@ public final class SharedWorldSessionCoordinator {
                 && this.pendingJoinAttempt.worldId.equals(attempt.worldId);
     }
 
-    private static Throwable rootCause(Throwable throwable) {
-        Throwable current = throwable;
-        while (current.getCause() != null && current.getCause() != current) {
-            current = current.getCause();
-        }
-        return current;
-    }
-
     public record WaitingView(
             String worldId,
             String worldName,
@@ -820,6 +824,7 @@ public final class SharedWorldSessionCoordinator {
         private final boolean returnToSharedWorldMenu;
         private long lastPollAt;
         private boolean requestInFlight;
+        private int consecutivePollFailures;
         private boolean transitionStarted;
         private boolean cancelInFlight;
         private boolean discardInFlight;

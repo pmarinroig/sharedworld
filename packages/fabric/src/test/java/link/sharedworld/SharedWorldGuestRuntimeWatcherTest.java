@@ -187,4 +187,31 @@ final class SharedWorldGuestRuntimeWatcherTest {
                 null
         );
     }
+
+    @Test
+    void aRejectedDepartureDispatchIsRetriedOnALaterPoll() {
+        List<String> departures = new ArrayList<>();
+        AtomicInteger dispatches = new AtomicInteger();
+        SharedWorldGuestRuntimeWatcher watcher = new SharedWorldGuestRuntimeWatcher(
+                worldId -> runtime("idle", 0L),
+                Runnable::run,
+                Runnable::run,
+                (session, outcome) -> {
+                    // First dispatch is rejected (e.g. another join flow was
+                    // active); the watcher must not consume its one-shot.
+                    if (dispatches.incrementAndGet() == 1) {
+                        return false;
+                    }
+                    departures.add(outcome + ":" + session.worldId());
+                    return true;
+                }
+        );
+
+        watcher.tickGuestSession(GUEST_SESSION, 1_000L);
+        watcher.tickGuestSession(GUEST_SESSION, 6_500L);
+        watcher.tickGuestSession(GUEST_SESSION, 12_000L);
+
+        assertEquals(2, dispatches.get());
+        assertEquals(List.of("HOST_GONE:world-1"), departures);
+    }
 }

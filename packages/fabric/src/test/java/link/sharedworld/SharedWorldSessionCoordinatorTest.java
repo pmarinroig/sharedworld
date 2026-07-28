@@ -381,6 +381,71 @@ final class SharedWorldSessionCoordinatorTest {
     }
 
     @Test
+    void repeatedWaitingPollFailuresBecomeVisibleAndRecoverOnSuccess() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            var world = SharedWorldCoordinatorHarness.world("world-1", "World", "player-owner");
+            harness.sessionBackend.enqueueEnterResponse(SharedWorldCoordinatorHarness.waitResponse(world));
+            harness.sessionCoordinator.beginJoin(harness.parentScreen(), world);
+            harness.runUntilIdle();
+
+            for (int i = 0; i < 3; i++) {
+                harness.sessionBackend.failures().add("observeWaiting", new java.io.IOException("backend blip " + i));
+                harness.advanceTime(1_000L);
+                harness.tickSession();
+                harness.runUntilIdle();
+            }
+
+            var failingView = harness.sessionCoordinator.waitingView();
+            assertNotNull(failingView);
+            assertTrue(failingView.progressState().label().getString().contains("waiting_backend_retrying"),
+                    "after three consecutive failures the retrying notice is shown: " + failingView.progressState().label().getString());
+
+            // The next successful poll clears the notice.
+            harness.sessionBackend.enqueueObserveResponse(SharedWorldCoordinatorHarness.observeWait(
+                    "world-1",
+                    "wait-test",
+                    SharedWorldCoordinatorHarness.runtime("world-1", "handoff-waiting", 1L, null, null)
+            ));
+            harness.advanceTime(1_000L);
+            harness.tickSession();
+            harness.runUntilIdle();
+
+            var recoveredView = harness.sessionCoordinator.waitingView();
+            assertNotNull(recoveredView);
+            assertFalse(recoveredView.progressState().label().getString().contains("waiting_backend_retrying"),
+                    "a successful poll restores the normal waiting label");
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
+    void deletedWorldWrappedInTransportExceptionsIsStillClassifiedWhileWaiting() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            var world = SharedWorldCoordinatorHarness.world("world-1", "World", "player-owner");
+            harness.sessionBackend.enqueueEnterResponse(SharedWorldCoordinatorHarness.waitResponse(world));
+            harness.sessionCoordinator.beginJoin(harness.parentScreen(), world);
+            harness.runUntilIdle();
+
+            // Async plumbing routinely wraps the api error; the classifier
+            // must find it anywhere in the cause chain.
+            harness.sessionBackend.failures().add("observeWaiting", new java.io.IOException(
+                    "SharedWorld sync task failed.",
+                    new SharedWorldApiClient.SharedWorldApiException("world_not_found", "deleted", 404)));
+            harness.advanceTime(1_000L);
+            harness.tickSession();
+            harness.runUntilIdle();
+
+            assertTrue(harness.clientShell.actions().contains("setScreen:deleted"));
+            assertNull(harness.sessionCoordinator.waitingView());
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
     void membershipRevokedWhileWaitingShowsRevokedFlow() throws Exception {
         SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
         try {
@@ -625,8 +690,9 @@ final class SharedWorldSessionCoordinatorTest {
             harness.runUntilIdle();
             assertNotNull(harness.sessionCoordinator.waitingView());
 
-            harness.sessionCoordinator.beginHostDepartureRejoin(harness.parentScreen(), "world-1", "World", "join.old");
+            boolean accepted = harness.sessionCoordinator.beginHostDepartureRejoin(harness.parentScreen(), "world-1", "World", "join.old");
 
+            assertFalse(accepted, "a rejected rejoin must tell the caller so the watcher can retry later");
             assertEquals(0, harness.clientShell.disconnectCalls());
             assertEquals(1, harness.sessionBackend.enterCalls());
         } finally {

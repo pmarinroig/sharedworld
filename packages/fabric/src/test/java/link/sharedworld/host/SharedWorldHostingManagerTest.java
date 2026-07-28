@@ -415,6 +415,45 @@ final class SharedWorldHostingManagerTest {
     }
 
     @Test
+    void repeatedHeartbeatFailuresSurfaceAReconnectingStatus() throws Exception {
+        ManualExecutor background = new ManualExecutor();
+        ManualExecutor mainThread = new ManualExecutor();
+        SharedWorldHostingManager manager = manager(
+                apiClient("http://127.0.0.1:1"),
+                new ManagedWorldStore(this.tempDir.resolve("managed-heartbeat-failures")),
+                new RecordingSyncAccess(this.tempDir.resolve("prepared-world")),
+                new RecordingWorldOpenController(),
+                new InMemoryHostRecoveryStore(),
+                worldId -> false,
+                background,
+                mainThread
+        );
+
+        primeStartup(manager, world("world-1", "Handoff World"), 7L, SharedWorldHostingManager.StartupMode.NORMAL);
+        setField(manager, "hostSessionGeneration", 1L);
+        setField(manager, "publishedJoinTarget", "join.example");
+        setField(manager, "phase", SharedWorldHostingManager.Phase.RUNNING);
+        setField(manager, "statusMessage", "Hosting live at join.example");
+
+        for (int failure = 1; failure <= 4; failure++) {
+            setField(manager, "lastHeartbeatAt", System.currentTimeMillis() - 31_000L);
+            setField(manager, "lastHeartbeatAttemptAt", 0L);
+            // Keep the autosave window closed; this test drives heartbeats only.
+            setField(manager, "lastAutosaveAt", System.currentTimeMillis());
+            manager.tick(null);
+            background.runAll();
+            mainThread.runAll();
+            if (failure <= 3) {
+                assertEquals("Hosting live at join.example", manager.statusMessage(),
+                        "short failure streaks stay quiet (failure " + failure + ")");
+            }
+        }
+
+        assertTrue(manager.statusMessage().contains("hosting_backend_reconnecting"),
+                "the fourth consecutive failure surfaces the reconnecting warning: " + manager.statusMessage());
+    }
+
+    @Test
     void staleSavePhaseHeartbeatDoesNotAbortGracefulReleaseAfterBackendFinalizationStarts() throws Exception {
         LeaseRuntimeState leaseState = new LeaseRuntimeState("world-1", 7L, "token-7", 90_000L);
         try (HeartbeatTestServer server = new HeartbeatTestServer(leaseState)) {

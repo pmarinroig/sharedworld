@@ -25,6 +25,10 @@ import java.time.Instant;
 
 public final class SharedWorldReleaseCoordinator {
     private static final Logger LOGGER = LoggerFactory.getLogger("sharedworld-release");
+    private static final long VANILLA_DISCONNECT_TIMEOUT_MS = 30_000L;
+    private static final int AUTO_RETRY_MAX_ATTEMPTS = 5;
+    private static final link.sharedworld.util.RetryPolicy AUTO_RETRY_BACKOFF =
+            new link.sharedworld.util.RetryPolicy(AUTO_RETRY_MAX_ATTEMPTS + 1, 5_000L, 60_000L);
 
     private final ReleaseBackend backend;
     private final HostControl hostControl;
@@ -36,6 +40,7 @@ public final class SharedWorldReleaseCoordinator {
     private final ReleaseUi releaseUi;
     private final ReleaseStartupRecoveryResolver startupRecoveryResolver;
     private ReleaseState state;
+    private long nextAutoRetryAtMillis;
     private TerminalState terminalState;
     private boolean disconnectPassThroughArmed;
     private boolean startupCleanupChecked;
@@ -188,7 +193,11 @@ public final class SharedWorldReleaseCoordinator {
             return;
         }
 
-        if (current.taskInFlight || SharedWorldReleasePolicy.isClosedTerminal(current.record.phase) || current.record.phase == SharedWorldReleasePhase.ERROR_RECOVERABLE) {
+        if (current.taskInFlight || SharedWorldReleasePolicy.isClosedTerminal(current.record.phase)) {
+            return;
+        }
+        if (current.record.phase == SharedWorldReleasePhase.ERROR_RECOVERABLE) {
+            maybeAutoRetryRecoverableError(current);
             return;
         }
 
@@ -198,6 +207,13 @@ public final class SharedWorldReleaseCoordinator {
                     ? SharedWorldReleasePhase.UPLOADING_FINAL_SNAPSHOT
                     : SharedWorldReleasePolicy.disconnectPhaseFor(current.record));
             case WAITING_FOR_VANILLA_DISCONNECT -> {
+                // Vanilla owns this phase's exit; if its disconnect never
+                // lands, force our own teardown instead of blocking the
+                // saving screen forever.
+                if (millisSince(current.record.updatedAt) > VANILLA_DISCONNECT_TIMEOUT_MS) {
+                    LOGGER.warn("SharedWorld release waited {}ms for the vanilla disconnect; forcing a local disconnect.", VANILLA_DISCONNECT_TIMEOUT_MS);
+                    transitionPhase(SharedWorldReleasePhase.DISCONNECTING_LOCAL_WORLD);
+                }
             }
             case DISCONNECTING_LOCAL_WORLD -> requestLocalDisconnect(current.record.releaseAttemptId);
             case UPLOADING_FINAL_SNAPSHOT -> {
@@ -434,6 +450,11 @@ public final class SharedWorldReleaseCoordinator {
     }
 
     public boolean retry() {
+        // A human pressing Retry starts a fresh automatic budget.
+        return retryFromRecoverableError(0);
+    }
+
+    private boolean retryFromRecoverableError(int autoRetryCount) {
         if (this.terminalState != null) {
             return false;
         }
@@ -448,9 +469,36 @@ public final class SharedWorldReleaseCoordinator {
         current.progressState = SharedWorldReleasePolicy.blockingProgress(Component.translatable("screen.sharedworld.progress.uploading_world"));
         SharedWorldReleaseStore.ReleaseRecord updated = current.record.copy();
         updated.phase = SharedWorldReleasePolicy.resumePhaseForRetry(updated);
+        updated.autoRetryCount = autoRetryCount;
         persistAndApply(updated);
         scheduleRuntimeReconciliation(current.record.releaseAttemptId);
         return true;
+    }
+
+    /**
+     * Transient remote failures during release retry themselves with backoff
+     * (5s doubling to 60s, five attempts) before parking on the manual Retry
+     * button. The attempt count is persisted so a client restart cannot turn
+     * a stuck backend into an infinite retry loop; the next-retry deadline is
+     * in-memory only, which at worst retries early after a restart.
+     */
+    private void maybeAutoRetryRecoverableError(ReleaseState current) {
+        if (current.errorKind != SharedWorldTerminalReasonKind.RECOVERABLE_REMOTE_FAILURE
+                || current.record.autoRetryCount >= AUTO_RETRY_MAX_ATTEMPTS) {
+            return;
+        }
+        long now = this.clock.nowMillis();
+        if (this.nextAutoRetryAtMillis == 0L) {
+            this.nextAutoRetryAtMillis = now + AUTO_RETRY_BACKOFF.delayBeforeAttemptMs(current.record.autoRetryCount + 2);
+            return;
+        }
+        if (now < this.nextAutoRetryAtMillis) {
+            return;
+        }
+        this.nextAutoRetryAtMillis = 0L;
+        int nextCount = current.record.autoRetryCount + 1;
+        LOGGER.info("SharedWorld release auto-retry {}/{} after a transient remote failure.", nextCount, AUTO_RETRY_MAX_ATTEMPTS);
+        retryFromRecoverableError(nextCount);
     }
 
     public boolean canDiscardLocalReleaseState() {
@@ -523,8 +571,7 @@ public final class SharedWorldReleaseCoordinator {
                 this.backend.releaseHost(record.worldId, record.runtimeEpoch, record.hostToken, false);
             }
         } catch (Exception exception) {
-            Throwable cause = rootCause(exception);
-            if (!isSafePendingReleaseDiscardError(cause)) {
+            if (!isSafePendingReleaseDiscardError(exception)) {
                 throw exception;
             }
         }
@@ -797,15 +844,14 @@ public final class SharedWorldReleaseCoordinator {
                     }
                     latest.taskInFlight = false;
                     if (error != null) {
-                        Throwable cause = rootCause(error);
-                        if (SharedWorldApiClient.isDeletedWorldError(cause)) {
+                        if (SharedWorldApiClient.isDeletedWorldError(error)) {
                             applyForcedExitResolution(attemptId, new ReleaseTerminalStateSupport.Resolution(
                                     SharedWorldTerminalReasonKind.TERMINATED_DELETED,
                                     SharedWorldText.string("screen.sharedworld.deleted_detail")
                             ));
                             return;
                         }
-                        if (SharedWorldApiClient.isMembershipRevokedError(cause)) {
+                        if (SharedWorldApiClient.isMembershipRevokedError(error)) {
                             applyForcedExitResolution(attemptId, new ReleaseTerminalStateSupport.Resolution(
                                     SharedWorldTerminalReasonKind.TERMINATED_REVOKED,
                                     SharedWorldText.string("screen.sharedworld.revoked_detail")
@@ -954,12 +1000,11 @@ public final class SharedWorldReleaseCoordinator {
                     }
                     latest.taskInFlight = false;
                     if (error != null) {
-                        Throwable cause = rootCause(error);
-                        if (SharedWorldApiClient.isDeletedWorldError(cause)) {
+                        if (SharedWorldApiClient.isDeletedWorldError(error)) {
                             transitionTerminal(SharedWorldReleasePhase.TERMINATED_DELETED, null);
                             return;
                         }
-                        failRecoverable(SharedWorldText.string("screen.sharedworld.release_resume_failed", SharedWorldApiClient.friendlyErrorMessage(cause)), SharedWorldTerminalReasonKind.RECOVERABLE_REMOTE_FAILURE);
+                        failRecoverable(SharedWorldText.string("screen.sharedworld.release_resume_failed", SharedWorldApiClient.friendlyErrorMessage(error)), SharedWorldTerminalReasonKind.RECOVERABLE_REMOTE_FAILURE);
                         return;
                     }
                     applyRuntimeReconciliation(latest.record, runtime);
@@ -1047,16 +1092,15 @@ public final class SharedWorldReleaseCoordinator {
             }
             latest.taskInFlight = false;
             if (error != null) {
-                Throwable cause = rootCause(error);
-                if (SharedWorldApiClient.isDeletedWorldError(cause)) {
+                if (SharedWorldApiClient.isDeletedWorldError(error)) {
                     transitionTerminal(SharedWorldReleasePhase.TERMINATED_DELETED, null);
                     return;
                 }
-                if (SharedWorldApiClient.isHostNotActiveError(cause)) {
+                if (SharedWorldApiClient.isHostNotActiveError(error)) {
                     failRecoverable(SharedWorldText.string("screen.sharedworld.release_lost_authority_begin"), SharedWorldTerminalReasonKind.AUTHORITATIVE_LOSS);
                     return;
                 }
-                failRecoverable(SharedWorldText.string("screen.sharedworld.release_begin_finalization_failed", SharedWorldApiClient.friendlyErrorMessage(cause)), SharedWorldTerminalReasonKind.RECOVERABLE_REMOTE_FAILURE);
+                failRecoverable(SharedWorldText.string("screen.sharedworld.release_begin_finalization_failed", SharedWorldApiClient.friendlyErrorMessage(error)), SharedWorldTerminalReasonKind.RECOVERABLE_REMOTE_FAILURE);
                 return;
             }
             this.hostControl.markCoordinatedBackendFinalizationStarted();
@@ -1135,16 +1179,15 @@ public final class SharedWorldReleaseCoordinator {
                     }
                     latest.taskInFlight = false;
                     if (error != null) {
-                        Throwable cause = rootCause(error);
-                        if (SharedWorldApiClient.isDeletedWorldError(cause)) {
+                        if (SharedWorldApiClient.isDeletedWorldError(error)) {
                             transitionTerminal(SharedWorldReleasePhase.TERMINATED_DELETED, null);
                             return;
                         }
-                        if (SharedWorldApiClient.isMembershipRevokedError(cause)) {
+                        if (SharedWorldApiClient.isMembershipRevokedError(error)) {
                             transitionTerminal(SharedWorldReleasePhase.TERMINATED_REVOKED, null);
                             return;
                         }
-                        failRecoverable(SharedWorldText.string("screen.sharedworld.release_upload_snapshot_failed", SharedWorldApiClient.friendlyErrorMessage(cause)), SharedWorldTerminalReasonKind.RECOVERABLE_REMOTE_FAILURE);
+                        failRecoverable(SharedWorldText.string("screen.sharedworld.release_upload_snapshot_failed", SharedWorldApiClient.friendlyErrorMessage(error)), SharedWorldTerminalReasonKind.RECOVERABLE_REMOTE_FAILURE);
                         return;
                     }
                     SharedWorldReleaseStore.ReleaseRecord updated = latest.record.copy();
@@ -1175,16 +1218,15 @@ public final class SharedWorldReleaseCoordinator {
             }
             latest.taskInFlight = false;
             if (error != null) {
-                Throwable cause = rootCause(error);
-                if (SharedWorldApiClient.isDeletedWorldError(cause)) {
+                if (SharedWorldApiClient.isDeletedWorldError(error)) {
                     transitionTerminal(SharedWorldReleasePhase.TERMINATED_DELETED, null);
                     return;
                 }
-                if (SharedWorldApiClient.isHostNotActiveError(cause)) {
+                if (SharedWorldApiClient.isHostNotActiveError(error)) {
                     failRecoverable(SharedWorldText.string("screen.sharedworld.release_lost_authority_complete"), SharedWorldTerminalReasonKind.AUTHORITATIVE_LOSS);
                     return;
                 }
-                failRecoverable(SharedWorldText.string("screen.sharedworld.release_complete_finalization_failed", SharedWorldApiClient.friendlyErrorMessage(cause)), SharedWorldTerminalReasonKind.RECOVERABLE_REMOTE_FAILURE);
+                failRecoverable(SharedWorldText.string("screen.sharedworld.release_complete_finalization_failed", SharedWorldApiClient.friendlyErrorMessage(error)), SharedWorldTerminalReasonKind.RECOVERABLE_REMOTE_FAILURE);
                 return;
             }
             SharedWorldReleaseStore.ReleaseRecord updated = latest.record.copy();
@@ -1228,6 +1270,7 @@ public final class SharedWorldReleaseCoordinator {
     }
 
     private void failRecoverable(String errorMessage, SharedWorldTerminalReasonKind errorKind) {
+        this.nextAutoRetryAtMillis = 0L;
         ReleaseState current = this.state;
         if (current == null) {
             return;
@@ -1356,6 +1399,15 @@ public final class SharedWorldReleaseCoordinator {
                 || SharedWorldApiClient.isMembershipRevokedError(error)
                 || SharedWorldApiClient.isHostNotActiveError(error)
                 || "not_finalizing".equals(SharedWorldApiClient.errorCode(error));
+    }
+
+    private long millisSince(String isoTimestamp) {
+        try {
+            return this.clock.nowMillis() - java.time.Instant.parse(isoTimestamp).toEpochMilli();
+        } catch (RuntimeException exception) {
+            // An unreadable timestamp must not park the release forever.
+            return Long.MAX_VALUE;
+        }
     }
 
     static Throwable rootCause(Throwable throwable) {

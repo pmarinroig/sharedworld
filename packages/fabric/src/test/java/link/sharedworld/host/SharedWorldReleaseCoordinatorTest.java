@@ -100,6 +100,117 @@ final class SharedWorldReleaseCoordinatorTest {
     }
 
     @Test
+    void stuckVanillaDisconnectTimesOutIntoAForcedLocalDisconnect() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            harness.hostControl.setActiveHostSession("world-1", "World", 7L, "token-7", "join.example");
+            harness.releaseBackend.setRuntime(SharedWorldCoordinatorHarness.runtime("world-1", "host-live", 7L, null, "join.example"));
+            harness.clientShell.setLocalServerState(true, true, true);
+
+            assertNotNull(harness.releaseCoordinator.beginGracefulDisconnect(null));
+            for (int i = 0; i < 4; i++) {
+                harness.tickRelease();
+                harness.runUntilIdle();
+            }
+            assertEquals(SharedWorldReleasePhase.WAITING_FOR_VANILLA_DISCONNECT, harness.releaseCoordinator.view().phase());
+
+            // The vanilla disconnect never lands; under the timeout nothing moves.
+            harness.advanceTime(10_000L);
+            harness.tickRelease();
+            harness.runUntilIdle();
+            assertEquals(SharedWorldReleasePhase.WAITING_FOR_VANILLA_DISCONNECT, harness.releaseCoordinator.view().phase());
+
+            // Past the timeout the coordinator forces its own teardown and the
+            // release still completes once the level actually goes away.
+            harness.advanceTime(25_000L);
+            harness.tickRelease();
+            harness.runUntilIdle();
+            harness.tickRelease();
+            harness.runUntilIdle();
+            assertTrue(harness.clientShell.actions().stream().anyMatch(action -> action.startsWith("disconnect")),
+                    "the coordinator requested a local disconnect: " + harness.clientShell.actions());
+
+            harness.clientShell.setLocalServerState(false, false, false);
+            driveRelease(harness);
+            assertEquals(SharedWorldReleasePhase.COMPLETE, harness.releaseCoordinator.view().phase());
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
+    void transientUploadFailureAutoRetriesAfterBackoffWithoutHumanIntervention() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            harness.hostControl.setActiveHostSession("world-1", "World", 7L, "token-7", "join.example");
+            harness.releaseBackend.setRuntime(SharedWorldCoordinatorHarness.runtime("world-1", "host-live", 7L, null, "join.example"));
+            harness.hostControl.failures().add("upload", new IOException("network down"));
+
+            beginGracefulVanillaDisconnect(harness);
+            driveRelease(harness);
+            assertEquals(SharedWorldReleasePhase.ERROR_RECOVERABLE, harness.releaseCoordinator.view().phase());
+
+            // First tick arms the backoff deadline; nothing retries yet.
+            harness.tickRelease();
+            harness.runUntilIdle();
+            assertEquals(SharedWorldReleasePhase.ERROR_RECOVERABLE, harness.releaseCoordinator.view().phase());
+
+            // After the 5s backoff the coordinator retries by itself.
+            harness.advanceTime(5_100L);
+            driveRelease(harness);
+
+            assertEquals(SharedWorldReleasePhase.COMPLETE, harness.releaseCoordinator.view().phase());
+            assertEquals(1, harness.snapshotDriver.uploads().size());
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
+    void autoRetryStopsAfterFiveAttemptsAndLeavesManualRetryAvailable() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            harness.hostControl.setActiveHostSession("world-1", "World", 7L, "token-7", "join.example");
+            harness.releaseBackend.setRuntime(SharedWorldCoordinatorHarness.runtime("world-1", "host-live", 7L, null, "join.example"));
+            for (int i = 0; i < 6; i++) {
+                harness.hostControl.failures().add("upload", new IOException("network still down " + i));
+            }
+
+            beginGracefulVanillaDisconnect(harness);
+            driveRelease(harness);
+            assertEquals(SharedWorldReleasePhase.ERROR_RECOVERABLE, harness.releaseCoordinator.view().phase());
+
+            // Burn through the full automatic budget.
+            for (int i = 0; i < 5; i++) {
+                harness.tickRelease();
+                harness.runUntilIdle();
+                harness.advanceTime(61_000L);
+                driveRelease(harness);
+            }
+            assertEquals(SharedWorldReleasePhase.ERROR_RECOVERABLE, harness.releaseCoordinator.view().phase());
+
+            // No further automatic attempts, ever.
+            int uploadsAfterBudget = harness.snapshotDriver.uploads().size();
+            harness.tickRelease();
+            harness.runUntilIdle();
+            harness.advanceTime(120_000L);
+            harness.tickRelease();
+            harness.runUntilIdle();
+            assertEquals(uploadsAfterBudget, harness.snapshotDriver.uploads().size());
+            assertEquals(SharedWorldReleasePhase.ERROR_RECOVERABLE, harness.releaseCoordinator.view().phase());
+
+            // The human path still works and succeeds (the 6 scripted
+            // failures are exhausted by the initial attempt + 5 auto-retries).
+            assertTrue(harness.releaseCoordinator.view().canRetry());
+            assertTrue(harness.releaseCoordinator.retry());
+            driveRelease(harness);
+            assertEquals(SharedWorldReleasePhase.COMPLETE, harness.releaseCoordinator.view().phase());
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
     void staleCompleteStateIsClearedBeforeStartingNextGracefulDisconnect() throws Exception {
         SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
         try {

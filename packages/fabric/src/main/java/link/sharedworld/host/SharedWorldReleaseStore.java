@@ -73,6 +73,7 @@ public final class SharedWorldReleaseStore implements SharedWorldReleaseCoordina
         public boolean finalUploadCompleted;
         public boolean backendFinalizationCompleted;
         public SharedWorldReleasePhase pendingTerminalPhase;
+        public int autoRetryCount;
         public String createdAt;
         public String updatedAt;
 
@@ -91,6 +92,7 @@ public final class SharedWorldReleaseStore implements SharedWorldReleaseCoordina
             copy.finalUploadCompleted = this.finalUploadCompleted;
             copy.backendFinalizationCompleted = this.backendFinalizationCompleted;
             copy.pendingTerminalPhase = this.pendingTerminalPhase;
+            copy.autoRetryCount = this.autoRetryCount;
             copy.createdAt = this.createdAt;
             copy.updatedAt = this.updatedAt;
             return copy;

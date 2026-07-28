@@ -36,6 +36,7 @@ public final class SharedWorldHostingManager {
     private static final Logger LOGGER = LoggerFactory.getLogger("sharedworld-hosting");
     private static final long HEARTBEAT_INTERVAL_MS = 30_000L;
     private static final long HEARTBEAT_RETRY_INTERVAL_MS = 1_000L;
+    private static final int HEARTBEAT_FAILURES_BEFORE_WARNING = 3;
     private static final long HOST_CONFIRM_TIMEOUT_MS = 90_000L;
     private static final long AUTOSAVE_INTERVAL_MS = 5 * 60_000L;
     private static final long JOIN_TARGET_TIMEOUT_MS = 60_000L;
@@ -67,6 +68,7 @@ public final class SharedWorldHostingManager {
     private volatile long phaseStartedAt;
     private volatile long lastHeartbeatAt;
     private volatile long lastHeartbeatAttemptAt;
+    private volatile int consecutiveHeartbeatFailures;
     private volatile long lastAutosaveAt;
     private volatile long startupAttemptId;
     private volatile long hostSessionGeneration;
@@ -173,6 +175,7 @@ public final class SharedWorldHostingManager {
         this.errorMessage = null;
         this.lastHeartbeatAt = 0L;
         this.lastHeartbeatAttemptAt = 0L;
+        this.consecutiveHeartbeatFailures = 0;
         this.lastAutosaveAt = 0L;
         this.startupProgressRelayActive = false;
         this.startupStarted.set(true);
@@ -652,6 +655,10 @@ public final class SharedWorldHostingManager {
             return;
         }
         this.lastHeartbeatAt = System.currentTimeMillis();
+        if (this.consecutiveHeartbeatFailures > HEARTBEAT_FAILURES_BEFORE_WARNING && this.phase == Phase.RUNNING) {
+            this.statusMessage = HostLifecyclePolicy.runningStatusMessage(this.publishedJoinTarget);
+        }
+        this.consecutiveHeartbeatFailures = 0;
         String confirmedJoinTarget = runtime.joinTarget() == null || runtime.joinTarget().isBlank()
                 ? joinTarget
                 : runtime.joinTarget();
@@ -684,7 +691,14 @@ public final class SharedWorldHostingManager {
             handleHostAuthorityLost(heartbeatAuthorityLossMessage(duringSnapshotUpload));
             return;
         }
+        this.consecutiveHeartbeatFailures += 1;
         LOGGER.warn(duringSnapshotUpload ? "SharedWorld snapshot upload heartbeat failed" : "SharedWorld heartbeat failed", exception);
+        // The lease survives short gaps (90s vs 30s interval), but the host
+        // must see that the backend is unreachable instead of a stale
+        // "hosting live" message.
+        if (this.consecutiveHeartbeatFailures > HEARTBEAT_FAILURES_BEFORE_WARNING && this.phase == Phase.RUNNING) {
+            this.statusMessage = SharedWorldText.string("screen.sharedworld.hosting_backend_reconnecting");
+        }
     }
 
     private String heartbeatAuthorityLossMessage(boolean duringSnapshotUpload) {
@@ -979,6 +993,7 @@ public final class SharedWorldHostingManager {
         this.publishedJoinTarget = null;
         this.lastHeartbeatAt = 0L;
         this.lastHeartbeatAttemptAt = 0L;
+        this.consecutiveHeartbeatFailures = 0;
         this.lastAutosaveAt = 0L;
         this.startupStarted.set(false);
         this.saveInFlight.set(false);

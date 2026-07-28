@@ -123,7 +123,6 @@ public final class SharedWorldGuestRuntimeWatcher {
         if (!outcome.isDeparture()) {
             return;
         }
-        this.departed = true;
         LOGGER.info(
                 "SharedWorld guest runtime watch observed host departure for {} (outcome={}, runtimePhase={}, runtimeEpoch={}, joinedEpoch={})",
                 session.worldId(),
@@ -132,7 +131,13 @@ public final class SharedWorldGuestRuntimeWatcher {
                 status == null ? null : status.runtimeEpoch(),
                 session.runtimeEpoch()
         );
-        this.departureHandler.onHostDeparture(session, outcome);
+        // One-shot only when the rejoin actually started: a busy session
+        // coordinator rejects the dispatch, and this world must be able to
+        // fire again on a later poll instead of going silent forever.
+        this.departed = this.departureHandler.onHostDeparture(session, outcome);
+        if (!this.departed) {
+            LOGGER.info("SharedWorld host-departure rejoin was not accepted; the watcher will retry on a later poll.");
+        }
     }
 
     private void clearActiveWorld(String worldId) {
@@ -144,11 +149,11 @@ public final class SharedWorldGuestRuntimeWatcher {
     }
 
     /** Invoked on the main thread; the rejoin coordinator owns every later transition. */
-    private static void handleHostDeparture(
+    private static boolean handleHostDeparture(
             SharedWorldPlaySessionTracker.ActiveWorldSession session,
             SharedWorldGuestRuntimeWatchLogic.Outcome outcome
     ) {
-        SharedWorldClient.sessionCoordinator().beginHostDepartureRejoin(
+        return SharedWorldClient.sessionCoordinator().beginHostDepartureRejoin(
                 new JoinMultiplayerScreen(new TitleScreen()),
                 session.worldId(),
                 session.worldName(),
@@ -163,7 +168,7 @@ public final class SharedWorldGuestRuntimeWatcher {
 
     @FunctionalInterface
     interface DepartureHandler {
-        void onHostDeparture(
+        boolean onHostDeparture(
                 SharedWorldPlaySessionTracker.ActiveWorldSession session,
                 SharedWorldGuestRuntimeWatchLogic.Outcome outcome
         );
