@@ -41,6 +41,14 @@ public abstract class VersionedSelectionList<E extends ObjectSelectionList.Entry
         return this.y0;
     }
 
+    @Override
+    protected int getScrollbarPosition() {
+        // The era default (width / 2 + 124) assumes a full-screen centered list;
+        // anchor to the list's own right edge like newer versions do, so narrow
+        // tab-positioned lists keep their scrollbar attached.
+        return this.x1 - 6;
+    }
+
     /** Tab-visibility sync; hidden lists skip rendering and swallow no input. */
     public void sharedworldSetVisibleForTab(boolean visibleForTab) {
         this.sharedworldVisibleForTab = visibleForTab;
