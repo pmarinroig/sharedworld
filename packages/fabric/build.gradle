@@ -288,9 +288,10 @@ tasks.named("generateRemapClasspath").configure {
 processResources {
     inputs.property "version", project.version
     inputs.property "minecraftRange", mcBucket.minecraftRange
+    inputs.property "javaVersion", "21"
 
     filesMatching("fabric.mod.json") {
-        expand "version": inputs.properties.version, "minecraftRange": inputs.properties.minecraftRange
+        expand "version": inputs.properties.version, "minecraftRange": inputs.properties.minecraftRange, "javaVersion": inputs.properties.javaVersion
     }
 }
 
