@@ -121,6 +121,9 @@ sourceSets {
 
 def devHelperJarTask = tasks.register("devHelperJar", Jar) {
     archiveClassifier = "dev-helper"
+    // Per-bucket file name: every bucket build produces this jar, and a stale
+    // jar from another bucket must never be checksummed into a run's mod set.
+    archiveVersion = "${project.mod_version}+mc${mcBucketName}"
     from sourceSets.devHelper.output
 }
 
@@ -128,6 +131,7 @@ def devHelperRuntimeJar = files(devHelperJarTask)
 
 def devHelperE2eJarTask = tasks.register("devHelperE2eJar", Jar) {
     archiveClassifier = "dev-e2e"
+    archiveVersion = "${project.mod_version}+mc${mcBucketName}"
     from sourceSets.devHelperE2e.output
 }
 

@@ -6,7 +6,7 @@ backend for session ownership, sync, invites, and recovery.
 
 ## Current Support
 
-- SharedWorld currently builds against Minecraft `1.21.11`
+- SharedWorld builds one jar per Minecraft bucket: `1.20.1`, `1.21.1`, `1.21.6`, `1.21.9`, `1.21.11` (default), and `26.1` (modern project)
 - The validated stable pair is `Minecraft 1.21.11 + e4mc 6.1.0-fabric`
 - Older `e4mc` builds such as `6.0.6` are historical reference points, not the
   current support promise
