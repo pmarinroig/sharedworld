@@ -10,7 +10,7 @@ import net.minecraft.network.chat.Component;
 
 import java.util.List;
 
-final class MemberBrowserList extends ObjectSelectionList<MemberBrowserList.Entry> {
+final class MemberBrowserList extends link.sharedworld.versioned.VersionedSelectionList<MemberBrowserList.Entry> {
     private final EditSharedWorldScreen owner;
 
     MemberBrowserList(Minecraft minecraft, int width, int height, int y, int itemHeight, EditSharedWorldScreen owner) {

@@ -11,7 +11,7 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 
-public final class SharedWorldSavingScreen extends Screen {
+public final class SharedWorldSavingScreen extends link.sharedworld.versioned.VersionedScreen {
     private static final float PREPARING_BASE = 0.04F;
     private static final float PREPARING_END = 0.22F;
     private static final float UPLOADING_START = 0.24F;
@@ -72,11 +72,8 @@ public final class SharedWorldSavingScreen extends Screen {
     }
 
     @Override
-    public void renderBackground(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        this.renderPanorama(guiGraphics, partialTick);
-        this.renderBlurredBackground(guiGraphics);
-        renderMenuBackgroundTexture(guiGraphics, MENU_BACKGROUND, 0, 0, 0.0F, 0.0F, this.width, this.height);
-        link.sharedworld.versioned.ClientCompat.drawDeferredSubtitles(this.minecraft);
+    protected boolean sharedworldUsePanoramaBackdrop() {
+        return true;
     }
 
     @Override

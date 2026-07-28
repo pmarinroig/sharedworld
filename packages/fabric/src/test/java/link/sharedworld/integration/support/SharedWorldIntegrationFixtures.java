@@ -211,7 +211,7 @@ public final class SharedWorldIntegrationFixtures {
         }
 
         public SharedWorldModels.EnterSessionResponseDto latestHostStart() {
-            return this.hostStarts.isEmpty() ? null : this.hostStarts.getLast();
+            return this.hostStarts.isEmpty() ? null : this.hostStarts.get(this.hostStarts.size() - 1);
         }
 
         public void pollOnce() {

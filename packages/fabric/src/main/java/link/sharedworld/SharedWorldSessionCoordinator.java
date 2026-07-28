@@ -187,7 +187,7 @@ public final class SharedWorldSessionCoordinator {
                             return;
                         }
                         if (parent != null) {
-                            parent.clearFocus();
+                            link.sharedworld.versioned.GuiCompat.clearFocus(parent);
                         }
                         this.clientShell.setScreen(this.sessionUi.joinError(parent, error));
                         return;
@@ -776,7 +776,7 @@ public final class SharedWorldSessionCoordinator {
             this.pendingRecoveredConnectFingerprint = null;
         }
         if (parent != null) {
-            parent.clearFocus();
+            link.sharedworld.versioned.GuiCompat.clearFocus(parent);
         }
         this.clientShell.setScreen(this.sessionUi.joinError(
                 parent,

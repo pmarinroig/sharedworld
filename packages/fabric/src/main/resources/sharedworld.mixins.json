@@ -4,15 +4,11 @@
   "plugin": "link.sharedworld.mixin.SharedWorldMixinConfigPlugin",
   "compatibilityLevel": "JAVA_21",
   "client": [
-    "DimensionDataStorageAccessor",
     "DisconnectedScreenMixin",
     "E4mcQuiclimeSessionMixin",
     "E4mcSingleplayerOwnerCompatIntermediaryMixin",
     "E4mcSingleplayerOwnerCompatNamedMixin",
-    "EntityStorageAccessor",
     "IntegratedServerForcedGameTypeMixin",
-    "PersistentEntitySectionManagerAccessor",
-    "ServerLevelEntityManagerAccessor",
     "ServerboundKeyPacketCompatMixin"
   ],
   "injectors": {

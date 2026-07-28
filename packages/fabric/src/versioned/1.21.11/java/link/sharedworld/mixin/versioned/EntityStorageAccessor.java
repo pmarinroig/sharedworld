@@ -1,4 +1,4 @@
-package link.sharedworld.mixin;
+package link.sharedworld.mixin.versioned;
 
 import net.minecraft.util.thread.ConsecutiveExecutor;
 import net.minecraft.world.level.chunk.storage.EntityStorage;

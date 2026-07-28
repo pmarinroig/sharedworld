@@ -20,12 +20,8 @@ final class SharedWorldConnectorTest {
     @Test
     void connectPassesJoinTargetThroughTypedConnectStarter() {
         AtomicBoolean invoked = new AtomicBoolean(false);
-        AtomicReference<String> addressHost = new AtomicReference<>();
-        AtomicReference<Integer> addressPort = new AtomicReference<>();
-        AtomicReference<String> serverName = new AtomicReference<>();
-        AtomicReference<String> serverIp = new AtomicReference<>();
-        AtomicReference<Boolean> quickPlay = new AtomicReference<>();
-        AtomicReference<Object> transferState = new AtomicReference<>("unset");
+        AtomicReference<String> startedTarget = new AtomicReference<>();
+        AtomicReference<String> startedWorldName = new AtomicReference<>();
 
         SharedWorldConnector.connect(
                 null,
@@ -34,14 +30,10 @@ final class SharedWorldConnectorTest {
                 "World Name",
                 0L,
                 null,
-                (parent, minecraft, address, serverData, quickPlayFlag, currentTransferState) -> {
+                (parent, minecraft, target, worldName) -> {
                     invoked.set(true);
-                    addressHost.set(address.getHost());
-                    addressPort.set(address.getPort());
-                    serverName.set(serverData.name);
-                    serverIp.set(serverData.ip);
-                    quickPlay.set(quickPlayFlag);
-                    transferState.set(currentTransferState);
+                    startedTarget.set(target);
+                    startedWorldName.set(worldName);
                 },
                 (parent, error) -> {
                     throw new AssertionError("connect should not open an error screen");
@@ -49,12 +41,8 @@ final class SharedWorldConnectorTest {
         );
 
         assertTrue(invoked.get());
-        assertEquals(25565, addressPort.get());
-        assertEquals("utter-most.de.e4mc.link", addressHost.get());
-        assertEquals("World Name", serverName.get());
-        assertEquals("utter-most.de.e4mc.link", serverIp.get());
-        assertFalse(quickPlay.get());
-        assertNull(transferState.get());
+        assertEquals("utter-most.de.e4mc.link", startedTarget.get());
+        assertEquals("World Name", startedWorldName.get());
     }
 
     @Test
@@ -68,7 +56,7 @@ final class SharedWorldConnectorTest {
                 "World Name",
                 0L,
                 null,
-                (parent, minecraft, address, serverData, quickPlay, transferState) -> {
+                (parent, minecraft, target, worldName) -> {
                     throw new IllegalStateException("boom");
                 },
                 (parent, error) -> failureHandlerInvoked.set(true)

@@ -1,4 +1,4 @@
-package link.sharedworld.mixin;
+package link.sharedworld.mixin.versioned;
 
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;

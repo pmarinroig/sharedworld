@@ -1,5 +1,6 @@
 package link.sharedworld.versioned;
 
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.tabs.TabNavigationBar;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
@@ -65,5 +66,43 @@ public abstract class VersionedScreen extends Screen {
             return true;
         }
         return super.keyPressed(event);
+    }
+
+    /** Return true to consume the scroll before vanilla widget handling runs. */
+    protected boolean sharedworldMouseScrolled(double mouseX, double mouseY, double verticalAmount) {
+        return false;
+    }
+
+    /** Screens returning true replace the vanilla background with the panorama backdrop. */
+    protected boolean sharedworldUsePanoramaBackdrop() {
+        return false;
+    }
+
+    protected void sharedworldRenderMenuBackground(GuiGraphicsExtractor guiGraphics) {
+        this.extractMenuBackground(guiGraphics);
+    }
+
+    protected void sharedworldRenderPanoramaBackdrop(GuiGraphicsExtractor guiGraphics, float partialTick) {
+        this.extractPanorama(guiGraphics, partialTick);
+        this.extractBlurredBackground(guiGraphics);
+        extractMenuBackgroundTexture(guiGraphics, MENU_BACKGROUND, 0, 0, 0.0F, 0.0F, this.width, this.height);
+        ClientCompat.drawDeferredSubtitles(this.minecraft);
+    }
+
+    @Override
+    public void extractBackground(GuiGraphicsExtractor guiGraphics, int mouseX, int mouseY, float partialTick) {
+        if (this.sharedworldUsePanoramaBackdrop()) {
+            this.sharedworldRenderPanoramaBackdrop(guiGraphics, partialTick);
+            return;
+        }
+        super.extractBackground(guiGraphics, mouseX, mouseY, partialTick);
+    }
+
+    @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
+        if (this.sharedworldMouseScrolled(mouseX, mouseY, verticalAmount)) {
+            return true;
+        }
+        return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
     }
 }

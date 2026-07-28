@@ -36,7 +36,7 @@ public final class HostAcquiredScreen extends Screen {
                     SharedWorldHostingManager manager = SharedWorldClient.hostingManager();
                     SharedWorldHostingManager.StartupView view = manager.startupView();
                     if (view.hasError()) {
-                        this.parent.clearFocus();
+                        link.sharedworld.versioned.GuiCompat.clearFocus(this.parent);
                         this.minecraft.setScreen(this.parent);
                         return;
                     }
@@ -63,7 +63,7 @@ public final class HostAcquiredScreen extends Screen {
             if (this.parent instanceof HandoffWaitingScreen waitingScreen) {
                 waitingScreen.resumeAfterHostStartupCancel();
             }
-            this.parent.clearFocus();
+            link.sharedworld.versioned.GuiCompat.clearFocus(this.parent);
             this.minecraft.setScreen(this.parent);
             return;
         }

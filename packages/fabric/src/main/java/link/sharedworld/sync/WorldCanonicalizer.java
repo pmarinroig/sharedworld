@@ -1,7 +1,7 @@
 package link.sharedworld.sync;
 
+import link.sharedworld.versioned.NbtCompat;
 import net.minecraft.nbt.CompoundTag;
-import net.minecraft.nbt.NbtAccounter;
 import net.minecraft.nbt.NbtIo;
 
 import java.io.ByteArrayOutputStream;
@@ -73,12 +73,12 @@ public final class WorldCanonicalizer {
             return;
         }
 
-        CompoundTag levelTag = NbtIo.readCompressed(levelDat, NbtAccounter.unlimitedHeap());
-        CompoundTag dataTag = levelTag.getCompoundOrEmpty("Data").copy();
-        CompoundTag playerTag = NbtIo.readCompressed(playerDataPath, NbtAccounter.unlimitedHeap());
+        CompoundTag levelTag = NbtCompat.readCompressed(levelDat);
+        CompoundTag dataTag = NbtCompat.getCompoundOrEmpty(levelTag, "Data").copy();
+        CompoundTag playerTag = NbtCompat.readCompressed(playerDataPath);
         dataTag.put("Player", playerTag.copy());
         levelTag.put("Data", dataTag);
-        NbtIo.writeCompressed(levelTag, levelDat);
+        NbtCompat.writeCompressed(levelTag, levelDat);
         Files.deleteIfExists(playerDataPath);
     }
 
@@ -99,13 +99,13 @@ public final class WorldCanonicalizer {
     }
 
     private static CanonicalLevelResult canonicalizeLevelDat(Path levelDat) throws IOException {
-        CompoundTag levelTag = NbtIo.readCompressed(levelDat, NbtAccounter.unlimitedHeap());
+        CompoundTag levelTag = NbtCompat.readCompressed(levelDat);
         CompoundTag canonicalLevel = levelTag.copy();
-        CompoundTag dataTag = canonicalLevel.getCompoundOrEmpty("Data").copy();
+        CompoundTag dataTag = NbtCompat.getCompoundOrEmpty(canonicalLevel, "Data").copy();
         byte[] hostPlayerBytes = null;
 
         if (dataTag.contains("Player")) {
-            CompoundTag playerTag = dataTag.getCompoundOrEmpty("Player").copy();
+            CompoundTag playerTag = NbtCompat.getCompoundOrEmpty(dataTag, "Player").copy();
             dataTag.remove("Player");
             hostPlayerBytes = writeCompressed(playerTag);
         }

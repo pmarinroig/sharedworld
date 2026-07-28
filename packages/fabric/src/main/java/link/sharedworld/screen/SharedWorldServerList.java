@@ -24,7 +24,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
-public final class SharedWorldServerList extends ObjectSelectionList<SharedWorldServerList.Entry> {
+public final class SharedWorldServerList extends link.sharedworld.versioned.VersionedSelectionList<SharedWorldServerList.Entry> {
     static final int ROW_WIDTH = 305;
     static final int ROW_HEIGHT = 36;
     static final int CONTENT_PADDING = 2;
@@ -128,7 +128,7 @@ public final class SharedWorldServerList extends ObjectSelectionList<SharedWorld
             int playerCountX = iconRight - playerCountWidth - PLAYER_COUNT_GAP;
 
             if (this.statusIconTooltip != null && mouseX >= iconRight && mouseX <= iconRight + 10 && mouseY >= top && mouseY <= top + 8) {
-                guiGraphics.setTooltipForNextFrame(this.statusIconTooltip, mouseX, mouseY);
+                link.sharedworld.versioned.GuiCompat.deferTooltip(guiGraphics, SharedWorldServerList.this.minecraft, this.statusIconTooltip, mouseX, mouseY);
             } else if (this.onlinePlayersTooltip != null
                     && mouseX >= playerCountX
                     && mouseX <= playerCountX + playerCountWidth
@@ -138,7 +138,7 @@ public final class SharedWorldServerList extends ObjectSelectionList<SharedWorld
                 for (Component component : this.onlinePlayersTooltip) {
                     tooltipLines.add(component.getVisualOrderText());
                 }
-                guiGraphics.setTooltipForNextFrame(tooltipLines, mouseX, mouseY);
+                link.sharedworld.versioned.GuiCompat.deferTooltip(guiGraphics, SharedWorldServerList.this.minecraft, tooltipLines, mouseX, mouseY);
             }
         }
 

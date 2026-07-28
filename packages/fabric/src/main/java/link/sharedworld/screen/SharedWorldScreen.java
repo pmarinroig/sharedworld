@@ -48,21 +48,21 @@ public final class SharedWorldScreen extends Screen {
 
     @Override
     protected void init() {
-        this.layout.addTitleHeader(this.title, this.font);
-        this.serverList = this.layout.addToContents(new SharedWorldServerList(
+        link.sharedworld.versioned.LayoutCompat.addTitleHeader(this.layout, this.title, this.font);
+        this.serverList = link.sharedworld.versioned.LayoutCompat.addContentsList(this.layout, new SharedWorldServerList(
                 this.minecraft,
                 this.width,
-                this.layout.getContentHeight(),
+                link.sharedworld.versioned.LayoutCompat.contentHeight(this.layout),
                 this.layout.getHeaderHeight(),
                 36,
                 this
-        ));
+        ), this::addRenderableWidget);
         this.serverList.setWorlds(this.worlds, SharedWorldClient.cachedSelectedWorldId());
 
-        LinearLayout footer = this.layout.addToFooter(LinearLayout.vertical().spacing(4));
-        footer.defaultCellSetting().alignHorizontallyCenter();
+        LinearLayout footer = this.layout.addToFooter(link.sharedworld.versioned.LayoutCompat.verticalLayout(4));
+        link.sharedworld.versioned.LayoutCompat.defaultCellSetting(footer).alignHorizontallyCenter();
 
-        LinearLayout topRow = footer.addChild(LinearLayout.horizontal().spacing(4));
+        LinearLayout topRow = footer.addChild(link.sharedworld.versioned.LayoutCompat.horizontalLayout(4));
         this.joinButton = topRow.addChild(Button.builder(Component.translatable("screen.sharedworld.join"), button -> {
                     this.releaseWidgetFocus();
                     this.joinSelected();
@@ -88,7 +88,7 @@ public final class SharedWorldScreen extends Screen {
                 .width(74)
                 .build());
 
-        LinearLayout bottomRow = footer.addChild(LinearLayout.horizontal().spacing(4));
+        LinearLayout bottomRow = footer.addChild(link.sharedworld.versioned.LayoutCompat.horizontalLayout(4));
         this.editButton = bottomRow.addChild(Button.builder(Component.translatable("screen.sharedworld.edit"), button -> {
                     this.releaseWidgetFocus();
                     this.openEditWorld();
@@ -126,10 +126,10 @@ public final class SharedWorldScreen extends Screen {
     protected void repositionElements() {
         this.layout.arrangeElements();
         if (this.serverList != null) {
-            this.serverList.updateSize(this.width, this.layout);
+            this.serverList.sharedworldUpdateSize(this.width, this.layout);
         }
         if (this.vanillaButton != null) {
-            this.vanillaButton.setPosition(this.width - 118, 8);
+            link.sharedworld.versioned.WidgetCompat.setPosition(this.vanillaButton, this.width - 118, 8);
         }
     }
 
@@ -303,7 +303,7 @@ public final class SharedWorldScreen extends Screen {
 
     private void openVanillaServers() {
         SharedWorldClient.rememberVanillaView();
-        this.parent.clearFocus();
+        link.sharedworld.versioned.GuiCompat.clearFocus(this.parent);
         this.releaseWidgetFocus();
         this.minecraft.setScreen(this.parent);
     }
@@ -321,7 +321,7 @@ public final class SharedWorldScreen extends Screen {
     }
 
     private void releaseWidgetFocus() {
-        this.clearFocus();
+        link.sharedworld.versioned.GuiCompat.clearFocus(this);
         this.setFocused(null);
         if (this.joinButton != null) {
             this.joinButton.setFocused(false);

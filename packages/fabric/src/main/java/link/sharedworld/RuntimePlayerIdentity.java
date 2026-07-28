@@ -43,9 +43,9 @@ public final class RuntimePlayerIdentity {
     public static GameProfile insecureDialtoneProfile(ServerboundHelloPacket packet) {
         Objects.requireNonNull(packet, "packet");
         UUID profileId = Objects.requireNonNull(
-                packet.profileId(),
+                link.sharedworld.versioned.HelloPacketCompat.profileId(packet),
                 "SharedWorld dev insecure login requires a client profile UUID."
         );
-        return new GameProfile(profileId, packet.name());
+        return new GameProfile(profileId, link.sharedworld.versioned.HelloPacketCompat.name(packet));
     }
 }

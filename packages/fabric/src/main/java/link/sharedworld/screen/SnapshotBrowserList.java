@@ -14,7 +14,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Locale;
 
-final class SnapshotBrowserList extends ObjectSelectionList<SnapshotBrowserList.Entry> {
+final class SnapshotBrowserList extends link.sharedworld.versioned.VersionedSelectionList<SnapshotBrowserList.Entry> {
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     private final EditSharedWorldScreen owner;
 

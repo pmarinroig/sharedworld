@@ -114,7 +114,7 @@ final class BackendModCreateFlowIntegrationTest {
                     }
             );
 
-            SharedWorldModels.WorldSummaryDto createdWorld = hostClient.listWorlds().getFirst();
+            SharedWorldModels.WorldSummaryDto createdWorld = hostClient.listWorlds().get(0);
             SharedWorldIntegrationBackend.StorageSnapshot storage = SharedWorldIntegrationBackend.storageSnapshot();
 
             assertEquals("screen.sharedworld.operation_created_world", message);

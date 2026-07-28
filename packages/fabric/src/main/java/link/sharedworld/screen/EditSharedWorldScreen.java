@@ -105,7 +105,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         this.clearWidgets();
         this.previewTexture = FaviconTexture.forWorld(this.minecraft.getTextureManager(), "sharedworld/edit-preview/" + this.world.id());
 
-        LinearLayout footer = this.layout.addToFooter(LinearLayout.horizontal().spacing(8));
+        LinearLayout footer = this.layout.addToFooter(link.sharedworld.versioned.LayoutCompat.horizontalLayout(8));
         this.backButton = footer.addChild(Button.builder(Component.translatable("gui.back"), ignored -> this.onBack())
                 .width(120)
                 .build());
@@ -218,7 +218,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         this.syncTabState();
         this.iconHovered = this.isIconHovered(mouseX, mouseY);
         this.updateButtons();
-        this.renderMenuBackground(guiGraphics);
+        this.sharedworldRenderMenuBackground(guiGraphics);
         super.render(guiGraphics, mouseX, mouseY, partialTick);
 
         if (this.contentArea != null) {
@@ -272,7 +272,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
                     this.font,
                     Component.translatable("screen.sharedworld.validation_world_name_short"),
                     left,
-                    this.nameBox.getBottom() + 6,
+                    link.sharedworld.versioned.WidgetCompat.bottom(this.nameBox) + 6,
                     0xFFFF5555
             );
         }
@@ -339,10 +339,10 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         boolean tabsUnlocked = !this.loading;
 
         if (this.tabNavigationBar != null) {
-            this.tabNavigationBar.setTabActiveState(0, true);
-            this.tabNavigationBar.setTabActiveState(1, tabsUnlocked);
-            this.tabNavigationBar.setTabActiveState(2, tabsUnlocked);
-            this.tabNavigationBar.setTabActiveState(3, tabsUnlocked);
+            link.sharedworld.versioned.TabBarCompat.setTabActive(this.tabNavigationBar, 0, true);
+            link.sharedworld.versioned.TabBarCompat.setTabActive(this.tabNavigationBar, 1, tabsUnlocked);
+            link.sharedworld.versioned.TabBarCompat.setTabActive(this.tabNavigationBar, 2, tabsUnlocked);
+            link.sharedworld.versioned.TabBarCompat.setTabActive(this.tabNavigationBar, 3, tabsUnlocked);
         }
 
         this.backButton.setMessage(Component.translatable("gui.back"));
@@ -948,14 +948,14 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         return blankOr(account, SharedWorldText.string("screen.sharedworld.storage_not_linked"));
     }
 
-    private final class DetailsTab implements Tab {
+    private final class DetailsTab extends link.sharedworld.versioned.VersionedTab {
         @Override
         public Component getTabTitle() {
             return Component.translatable("screen.sharedworld.tab_details");
         }
 
         @Override
-        public Component getTabExtraNarration() {
+        protected Component sharedworldTabExtraNarration() {
             return this.getTabTitle();
         }
 
@@ -975,14 +975,14 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         }
     }
 
-    private final class BackupsTab implements Tab {
+    private final class BackupsTab extends link.sharedworld.versioned.VersionedTab {
         @Override
         public Component getTabTitle() {
             return Component.translatable("screen.sharedworld.tab_backups");
         }
 
         @Override
-        public Component getTabExtraNarration() {
+        protected Component sharedworldTabExtraNarration() {
             return this.getTabTitle();
         }
 
@@ -997,14 +997,14 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         }
     }
 
-    private final class MembersTab implements Tab {
+    private final class MembersTab extends link.sharedworld.versioned.VersionedTab {
         @Override
         public Component getTabTitle() {
             return Component.translatable("screen.sharedworld.tab_members");
         }
 
         @Override
-        public Component getTabExtraNarration() {
+        protected Component sharedworldTabExtraNarration() {
             return this.getTabTitle();
         }
 
@@ -1019,14 +1019,14 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         }
     }
 
-    private final class StorageTab implements Tab {
+    private final class StorageTab extends link.sharedworld.versioned.VersionedTab {
         @Override
         public Component getTabTitle() {
             return Component.translatable("screen.sharedworld.tab_storage");
         }
 
         @Override
-        public Component getTabExtraNarration() {
+        protected Component sharedworldTabExtraNarration() {
             return this.getTabTitle();
         }
 

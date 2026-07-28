@@ -34,7 +34,7 @@ public final class SharedWorldInviteScreen extends Screen {
                 .bounds(centerX - 100, this.height - 52, 200, 20)
                 .build());
         this.doneButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sharedworld.done"), button -> {
-                    this.parent.clearFocus();
+                    link.sharedworld.versioned.GuiCompat.clearFocus(this.parent);
                     this.minecraft.setScreen(this.parent);
                 })
                 .bounds(centerX - 100, this.height - 28, 200, 20)

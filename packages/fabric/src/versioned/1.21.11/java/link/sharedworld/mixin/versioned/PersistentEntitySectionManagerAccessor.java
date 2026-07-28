@@ -1,4 +1,4 @@
-package link.sharedworld.mixin;
+package link.sharedworld.mixin.versioned;
 
 import net.minecraft.world.level.entity.EntityPersistentStorage;
 import net.minecraft.world.level.entity.PersistentEntitySectionManager;

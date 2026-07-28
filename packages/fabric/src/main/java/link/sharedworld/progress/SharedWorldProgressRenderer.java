@@ -95,13 +95,13 @@ public final class SharedWorldProgressRenderer {
         float pingPong = cycle <= 0.5F ? cycle * 2.0F : (1.0F - cycle) * 2.0F;
         float highlightStart = clampedStart + (travel * pingPong);
         float highlightEnd = Math.min(clampedEnd, highlightStart + segmentWidth);
-        drawProgressSegment(guiGraphics, left, top, right, bottom, highlightStart, highlightEnd, ARGB.color(200, 255, 255, 255));
+        drawProgressSegment(guiGraphics, left, top, right, bottom, highlightStart, highlightEnd, link.sharedworld.versioned.GuiCompat.argb(200, 255, 255, 255));
     }
 
     private static void drawProgressBar(GuiGraphics guiGraphics, int left, int top, int right, int bottom, float progress) {
-        guiGraphics.fill(left + 1, top + 1, right - 1, bottom - 1, ARGB.color(80, 255, 255, 255));
+        guiGraphics.fill(left + 1, top + 1, right - 1, bottom - 1, link.sharedworld.versioned.GuiCompat.argb(80, 255, 255, 255));
         int filledWidth = (int) Math.ceil((right - left - 2) * Math.max(0.0F, Math.min(1.0F, progress)));
-        int color = ARGB.color(255, 255, 255, 255);
+        int color = link.sharedworld.versioned.GuiCompat.argb(255, 255, 255, 255);
         guiGraphics.fill(left + 2, top + 2, left + filledWidth, bottom - 2, color);
         guiGraphics.fill(left + 1, top, right - 1, top + 1, color);
         guiGraphics.fill(left + 1, bottom, right - 1, bottom - 1, color);

@@ -63,11 +63,11 @@ final class SharedWorldPresenceManagerIntegrationTest {
                     1L
             ));
             assertTrue(disconnectFinished.await(5, TimeUnit.SECONDS));
-            assertEquals(List.of("HostA"), List.of(world.hostClient().listWorlds().getFirst().onlinePlayerNames()));
+            assertEquals(List.of("HostA"), List.of(world.hostClient().listWorlds().get(0).onlinePlayerNames()));
 
             allowFirstHeartbeat.countDown();
             assertTrue(firstHeartbeatFinished.await(5, TimeUnit.SECONDS));
-            assertEquals(List.of("HostA"), List.of(world.hostClient().listWorlds().getFirst().onlinePlayerNames()));
+            assertEquals(List.of("HostA"), List.of(world.hostClient().listWorlds().get(0).onlinePlayerNames()));
         } finally {
             executor.shutdownNow();
         }
@@ -93,14 +93,14 @@ final class SharedWorldPresenceManagerIntegrationTest {
         );
 
         manager.tickGuestSession(world.world().id(), 1_000L);
-        assertEquals(List.of("HostA", "GuestB"), List.of(world.hostClient().listWorlds().getFirst().onlinePlayerNames()));
+        assertEquals(List.of("HostA", "GuestB"), List.of(world.hostClient().listWorlds().get(0).onlinePlayerNames()));
 
         manager.onDisconnect(session);
         manager.onDisconnect(session);
-        assertEquals(List.of("HostA"), List.of(world.hostClient().listWorlds().getFirst().onlinePlayerNames()));
+        assertEquals(List.of("HostA"), List.of(world.hostClient().listWorlds().get(0).onlinePlayerNames()));
 
         manager.tickGuestSession(world.world().id(), 2_000L);
-        assertEquals(List.of("HostA", "GuestB"), List.of(world.hostClient().listWorlds().getFirst().onlinePlayerNames()));
+        assertEquals(List.of("HostA", "GuestB"), List.of(world.hostClient().listWorlds().get(0).onlinePlayerNames()));
     }
 
     private static void sendPresence(SharedWorldApiClient client, SharedWorldPresenceManager.PresenceUpdate update) throws Exception {

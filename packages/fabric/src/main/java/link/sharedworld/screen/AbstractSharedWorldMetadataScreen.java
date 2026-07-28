@@ -108,9 +108,9 @@ abstract class AbstractSharedWorldMetadataScreen extends VersionedScreen {
     }
 
     @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
+    protected boolean sharedworldMouseScrolled(double mouseX, double mouseY, double verticalAmount) {
         if (this.maxScroll() <= 0 || !this.isInsideViewport(mouseX, mouseY)) {
-            return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
+            return false;
         }
         this.setScrollOffset(this.scrollOffset - verticalAmount * 16.0D);
         return true;
@@ -263,7 +263,7 @@ abstract class AbstractSharedWorldMetadataScreen extends VersionedScreen {
                         this.layoutForm();
                     } else {
                         this.parent.onChildOperationFinished(result);
-                        this.parent.clearFocus();
+                        link.sharedworld.versioned.GuiCompat.clearFocus(this.parent);
                         this.minecraft.setScreen(this.parent);
                     }
                 }));
@@ -323,8 +323,8 @@ abstract class AbstractSharedWorldMetadataScreen extends VersionedScreen {
         int left = this.formLeft();
         this.viewportTop = this.viewportTopInset();
         this.viewportBottom = this.height - 52;
-        this.cancelButton.setPosition(left, this.height - 28);
-        this.doneButton.setPosition(left + (FORM_WIDTH + 4) / 2, this.height - 28);
+        link.sharedworld.versioned.WidgetCompat.setPosition(this.cancelButton, left, this.height - 28);
+        link.sharedworld.versioned.WidgetCompat.setPosition(this.doneButton, left + (FORM_WIDTH + 4) / 2, this.height - 28);
 
         int y = this.viewportTop + 6;
         int visibleTop = this.viewportTop;
@@ -332,7 +332,7 @@ abstract class AbstractSharedWorldMetadataScreen extends VersionedScreen {
 
         this.nameLabelY = y - (int) this.scrollOffset;
         y += LABEL_TO_FIELD_GAP;
-        this.nameBox.setPosition(left, y - (int) this.scrollOffset);
+        link.sharedworld.versioned.WidgetCompat.setPosition(this.nameBox, left, y - (int) this.scrollOffset);
         y += FIELD_HEIGHT;
 
         List<FormattedCharSequence> nameErrorLines = this.wrapMessage(this.nameErrorMessage);
@@ -346,14 +346,14 @@ abstract class AbstractSharedWorldMetadataScreen extends VersionedScreen {
 
         this.motdLabelY = y - (int) this.scrollOffset;
         y += LABEL_TO_FIELD_GAP;
-        this.motdBox.setPosition(left, y - (int) this.scrollOffset);
+        link.sharedworld.versioned.WidgetCompat.setPosition(this.motdBox, left, y - (int) this.scrollOffset);
         y += FIELD_HEIGHT + SECTION_GAP;
 
         this.iconLabelY = y - (int) this.scrollOffset;
         y += LABEL_TO_FIELD_GAP;
         this.iconPreviewY = y - (int) this.scrollOffset;
-        this.chooseIconButton.setPosition(left + 40, this.iconPreviewY);
-        this.clearIconButton.setPosition(left + 40, this.iconPreviewY + 24);
+        link.sharedworld.versioned.WidgetCompat.setPosition(this.chooseIconButton, left + 40, this.iconPreviewY);
+        link.sharedworld.versioned.WidgetCompat.setPosition(this.clearIconButton, left + 40, this.iconPreviewY + 24);
         y += 48 + SECTION_GAP;
 
         List<FormattedCharSequence> statusLines = this.wrapMessage(this.safeStatusMessage());
@@ -372,7 +372,7 @@ abstract class AbstractSharedWorldMetadataScreen extends VersionedScreen {
     }
 
     private void updateWidgetVisibility(AbstractWidget widget, int visibleTop, int visibleBottom) {
-        widget.visible = widget.getBottom() > visibleTop && widget.getY() < visibleBottom;
+        widget.visible = link.sharedworld.versioned.WidgetCompat.bottom(widget) > visibleTop && widget.getY() < visibleBottom;
     }
 
     private List<FormattedCharSequence> wrapMessage(String message) {

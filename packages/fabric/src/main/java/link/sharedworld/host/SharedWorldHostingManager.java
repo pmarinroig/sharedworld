@@ -16,7 +16,6 @@ import link.sharedworld.sync.WorldSyncCoordinator;
 import link.sharedworld.sync.WorldSyncProgressListener;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.client.gui.screens.worldselection.WorldOpenFlows;
 import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.HttpUtil;
@@ -1291,11 +1290,8 @@ public final class SharedWorldHostingManager {
     private static final class MinecraftWorldOpenController implements WorldOpenController {
         @Override
         public void openExistingWorld(ManagedWorldStore worldStore, WorldSummaryDto world, Path worldDirectory) {
-            Minecraft.getInstance().execute(() -> {
-                WorldOpenFlows flows = new WorldOpenFlows(Minecraft.getInstance(), worldStore.levelSource(world.id()));
-                flows.openWorld(ManagedWorldStore.LEVEL_ID, () -> {
-                });
-            });
+            Minecraft.getInstance().execute(() -> link.sharedworld.versioned.WorldOpenCompat.openExistingWorld(
+                    Minecraft.getInstance(), worldStore.levelSource(world.id()), ManagedWorldStore.LEVEL_ID));
         }
     }
 

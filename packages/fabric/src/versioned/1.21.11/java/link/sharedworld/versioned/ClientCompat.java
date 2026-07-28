@@ -20,6 +20,11 @@ public final class ClientCompat {
         minecraft.gui.renderDeferredSubtitles();
     }
 
+    public static void joinServer(Minecraft minecraft, java.util.UUID profileId, String accessToken, String serverId)
+            throws com.mojang.authlib.exceptions.AuthenticationException {
+        sessionService(minecraft).joinServer(profileId, accessToken, serverId);
+    }
+
     public static java.util.UUID profileId(com.mojang.authlib.GameProfile profile) {
         return profile.id();
     }

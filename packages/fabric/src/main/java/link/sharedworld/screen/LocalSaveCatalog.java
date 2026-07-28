@@ -28,7 +28,7 @@ final class LocalSaveCatalog {
                 saves.add(new LocalSaveOption(
                         summary.getLevelId(),
                         displayName,
-                        levelSource.getLevelPath(summary.getLevelId()),
+                        levelSource.getBaseDir().resolve(summary.getLevelId()),
                         summary.getLastPlayed(),
                         summary.getIcon(),
                         summary.getInfo()

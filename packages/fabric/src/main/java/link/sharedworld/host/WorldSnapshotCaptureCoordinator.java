@@ -1,18 +1,10 @@
 package link.sharedworld.host;
 
-import link.sharedworld.mixin.DimensionDataStorageAccessor;
-import link.sharedworld.mixin.EntityStorageAccessor;
-import link.sharedworld.mixin.PersistentEntitySectionManagerAccessor;
-import link.sharedworld.mixin.ServerLevelEntityManagerAccessor;
 import link.sharedworld.sync.ManagedWorldStore;
+import link.sharedworld.versioned.EntityFlushCompat;
 import link.sharedworld.versioned.WorldFlushCompat;
 import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.util.thread.ConsecutiveExecutor;
-import net.minecraft.world.level.chunk.storage.EntityStorage;
-import net.minecraft.world.level.entity.EntityPersistentStorage;
-import net.minecraft.world.level.entity.PersistentEntitySectionManager;
-import net.minecraft.world.level.storage.DimensionDataStorage;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -171,20 +163,20 @@ final class WorldSnapshotCaptureCoordinator {
         private final String worldId;
         private final boolean previousAutoSave;
         private final List<CompletableFuture<?>> drainFutures;
-        private final List<ConsecutiveExecutor> entityDeserializerQueues;
+        private final List<Runnable> serverThreadEntityDrains;
 
         private VanillaAutoSaveWindow(
                 IntegratedServer server,
                 String worldId,
                 boolean previousAutoSave,
                 List<CompletableFuture<?>> drainFutures,
-                List<ConsecutiveExecutor> entityDeserializerQueues
+                List<Runnable> serverThreadEntityDrains
         ) {
             this.server = server;
             this.worldId = worldId;
             this.previousAutoSave = previousAutoSave;
             this.drainFutures = List.copyOf(drainFutures);
-            this.entityDeserializerQueues = List.copyOf(entityDeserializerQueues);
+            this.serverThreadEntityDrains = List.copyOf(serverThreadEntityDrains);
         }
 
         @Override
@@ -199,10 +191,10 @@ final class WorldSnapshotCaptureCoordinator {
                 );
             }
 
-            if (!this.entityDeserializerQueues.isEmpty()) {
+            if (!this.serverThreadEntityDrains.isEmpty()) {
                 awaitServerTask(this.server, () -> {
-                    for (ConsecutiveExecutor queue : this.entityDeserializerQueues) {
-                        queue.runAll();
+                    for (Runnable drain : this.serverThreadEntityDrains) {
+                        drain.run();
                     }
                     return null;
                 }, SERVER_TASK_TIMEOUT, this.worldId, "entity-deserializer-drain",
@@ -254,24 +246,10 @@ final class WorldSnapshotCaptureCoordinator {
 
             try {
                 List<CompletableFuture<?>> drainFutures = new ArrayList<>();
-                List<ConsecutiveExecutor> entityDeserializerQueues = new ArrayList<>();
+                List<Runnable> serverThreadEntityDrains = new ArrayList<>();
                 for (ServerLevel level : this.server.getAllLevels()) {
                     drainFutures.add(WorldFlushCompat.synchronizeChunks(level));
-
-                    PersistentEntitySectionManager<?> entityManager = ((ServerLevelEntityManagerAccessor) level).sharedworld$getEntityManager();
-                    EntityPersistentStorage<?> permanentStorage = ((PersistentEntitySectionManagerAccessor) entityManager).sharedworld$getPermanentStorage();
-                    if (permanentStorage instanceof EntityStorage entityStorage) {
-                        drainFutures.add(((EntityStorageAccessor) entityStorage).sharedworld$getSimpleRegionStorage().synchronize(false));
-                        entityDeserializerQueues.add(((EntityStorageAccessor) entityStorage).sharedworld$getEntityDeserializerQueue());
-                    } else {
-                        permanentStorage.flush(false);
-                    }
-
-                    DimensionDataStorage dataStorage = level.getDataStorage();
-                    CompletableFuture<?> pendingWriteFuture = ((DimensionDataStorageAccessor) dataStorage).sharedworld$getPendingWriteFuture();
-                    if (pendingWriteFuture != null) {
-                        drainFutures.add(pendingWriteFuture);
-                    }
+                    EntityFlushCompat.collectDrains(level, drainFutures, serverThreadEntityDrains);
                 }
 
                 if (this.cancelled.get()) {
@@ -279,7 +257,7 @@ final class WorldSnapshotCaptureCoordinator {
                     return NoOpAutoSaveWindow.INSTANCE;
                 }
 
-                return new VanillaAutoSaveWindow(this.server, this.worldId, this.previousAutoSave, drainFutures, entityDeserializerQueues);
+                return new VanillaAutoSaveWindow(this.server, this.worldId, this.previousAutoSave, drainFutures, serverThreadEntityDrains);
             } catch (RuntimeException | Error exception) {
                 restoreAutosaveOnServerThread();
                 throw exception;

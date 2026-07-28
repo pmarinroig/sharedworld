@@ -21,7 +21,7 @@ import java.time.format.FormatStyle;
 import java.util.List;
 import java.util.Locale;
 
-final class LocalSaveSelectionList extends ObjectSelectionList<LocalSaveSelectionList.Entry> {
+final class LocalSaveSelectionList extends link.sharedworld.versioned.VersionedSelectionList<LocalSaveSelectionList.Entry> {
     private static final DateTimeFormatter DATE_FORMAT =
             DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT).withLocale(Locale.getDefault());
     private final CreateSharedWorldScreen owner;

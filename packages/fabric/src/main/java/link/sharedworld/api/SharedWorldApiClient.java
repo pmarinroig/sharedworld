@@ -676,8 +676,8 @@ public final class SharedWorldApiClient {
                 CanonicalPlayerIdentity.normalizeUuidWithHyphens(identity.playerUuid(), "current backend player UUID")
         );
         java.util.concurrent.Future<?> join = JOIN_SERVER_EXECUTOR.submit(() -> {
-            link.sharedworld.versioned.ClientCompat.sessionService(Minecraft.getInstance())
-                    .joinServer(profileUuid, identity.accessToken(), serverId);
+            link.sharedworld.versioned.ClientCompat.joinServer(
+                    Minecraft.getInstance(), profileUuid, identity.accessToken(), serverId);
             return null;
         });
         try {

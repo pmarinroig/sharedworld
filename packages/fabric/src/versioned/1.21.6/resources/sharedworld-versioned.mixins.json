@@ -5,9 +5,13 @@
   "client": [
     "ChatComponentMixin",
     "ChunkStorageWorkerAccessor",
+    "DimensionDataStorageAccessor",
+    "EntityStorageAccessor",
     "MinecraftDisconnectMixin",
     "MinecraftServerHostPermissionMixin",
-    "MultiplayerScreenMixin"
+    "MultiplayerScreenMixin",
+    "PersistentEntitySectionManagerAccessor",
+    "ServerLevelEntityManagerAccessor"
   ],
   "injectors": {
     "defaultRequire": 1
