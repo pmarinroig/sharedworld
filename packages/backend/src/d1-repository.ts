@@ -601,7 +601,6 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
        VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(world_id, player_uuid) DO UPDATE SET
          player_name = excluded.player_name,
-         role = excluded.role,
          deleted_at = NULL`,
       membership.worldId,
       membership.playerUuid,

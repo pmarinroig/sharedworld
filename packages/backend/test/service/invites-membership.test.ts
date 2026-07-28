@@ -88,6 +88,29 @@ describe("SharedWorldService invites and membership", () => {
     await expect(repository.isWorldMember(world.id, "player-guest-2")).resolves.toBe(true);
   });
 
+  test("an owner redeeming their own share code keeps the owner role", async () => {
+    const repository = createSqliteRepository();
+    const { signer } = createBlobSigner();
+    const instance = createTestService(repository, authVerifier, signer, {});
+    await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
+    const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
+
+    const invite = await instance.createInvite(
+      { playerUuid: "player-owner", playerName: "Owner" },
+      world.id,
+      new Date("2026-01-01T00:00:00.000Z")
+    );
+    await instance.redeemInvite(
+      { playerUuid: "player-owner", playerName: "Owner" },
+      { code: invite.code },
+      new Date("2026-01-01T01:00:00.000Z")
+    );
+
+    const memberships = await repository.listMemberships(world.id);
+    const ownerMembership = memberships.find((membership) => membership.playerUuid === "player-owner");
+    expect(ownerMembership?.role).toBe("owner");
+  });
+
   test("removed members can rejoin with the same active share code", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
