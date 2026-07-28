@@ -70,7 +70,12 @@ public abstract class VersionedScreen extends Screen {
         if (this.sharedworldMouseClicked(mouseX, mouseY)) {
             return true;
         }
-        return super.mouseClicked(mouseX, mouseY, button);
+        this.sharedworldMouseClickInProgress = true;
+        try {
+            return super.mouseClicked(mouseX, mouseY, button);
+        } finally {
+            this.sharedworldMouseClickInProgress = false;
+        }
     }
 
     @Override
@@ -107,5 +112,24 @@ public abstract class VersionedScreen extends Screen {
     /** Version-neutral initial-focus hook; 1.20.x never calls a no-arg setInitialFocus, so
      * ScreenBackdropCompat's after-init hook invokes this instead. */
     protected void sharedworldSetInitialFocus() {
+    }
+
+    private boolean sharedworldMouseClickInProgress;
+
+    /**
+     * This era sets focus on the clicked widget AFTER its press handler runs, so a
+     * clicked button keeps the white focus outline indefinitely (newer versions only
+     * render focus outlines for keyboard navigation). Mouse clicks therefore never
+     * focus buttons here; edit boxes and lists still take focus normally, and
+     * keyboard navigation is unaffected.
+     */
+    @Override
+    public void setFocused(net.minecraft.client.gui.components.events.GuiEventListener listener) {
+        if (this.sharedworldMouseClickInProgress
+                && listener instanceof net.minecraft.client.gui.components.AbstractButton) {
+            super.setFocused(null);
+            return;
+        }
+        super.setFocused(listener);
     }
 }
