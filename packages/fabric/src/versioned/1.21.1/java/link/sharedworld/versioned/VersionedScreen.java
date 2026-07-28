@@ -85,13 +85,27 @@ public abstract class VersionedScreen extends Screen {
         ClientCompat.drawDeferredSubtitles(this.minecraft);
     }
 
+    /**
+     * 1.21/1.21.1 render the background (panorama + blur + menu gradient) INSIDE
+     * Screen.render, after any content the subclass drew first — blurring that
+     * content. ScreenBackdropCompat draws the backdrop before render() instead,
+     * and this override suppresses the vanilla mid-render pass.
+     */
     @Override
     public void renderBackground(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+    }
+
+    /** Called by ScreenBackdropCompat before render() so backgrounds precede content. */
+    final void sharedworldRenderBackdropBeforeRender(GuiGraphics guiGraphics, float partialTick) {
         if (this.sharedworldUsePanoramaBackdrop()) {
             this.sharedworldRenderPanoramaBackdrop(guiGraphics, partialTick);
             return;
         }
-        super.renderBackground(guiGraphics, mouseX, mouseY, partialTick);
+        if (this.minecraft != null && this.minecraft.level == null) {
+            this.renderPanorama(guiGraphics, partialTick);
+        }
+        this.renderBlurredBackground(partialTick);
+        this.renderMenuBackground(guiGraphics);
     }
 
     @Override

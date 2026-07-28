@@ -186,7 +186,23 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
 
     @Override
     public void onClose() {
-        this.parent.onClose();
+        if (this.minecraft == null) {
+            return;
+        }
+        if (canCloseThroughParent(this.parent.children())) {
+            this.parent.onClose();
+            return;
+        }
+        // A synthetic, never-shown parent (title-origin flows build one so the
+        // vanilla-servers button has somewhere to go) has an unset minecraft
+        // field; closing through it would crash. Land where its own onClose
+        // would have led.
+        this.minecraft.setScreen(new net.minecraft.client.gui.screens.TitleScreen());
+    }
+
+    /** A screen that was never shown has no initialized state to close through. */
+    static boolean canCloseThroughParent(java.util.List<? extends net.minecraft.client.gui.components.events.GuiEventListener> parentChildren) {
+        return !parentChildren.isEmpty();
     }
 
     @Override
