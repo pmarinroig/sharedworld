@@ -89,6 +89,67 @@ final class WorldSyncCoordinatorDownloadTest {
     }
 
     @Test
+    void deltaBasedOnTheJustReportedLocalStateSucceedsWithoutCachedBaselines() throws Exception {
+        // A cancelled sync can leave the working copy ahead of (or without) the
+        // cached baseline artifacts. The backend plans deltas against the state the
+        // client just reported, so the freshly scanned artifact must satisfy them.
+        ManagedWorldStore worldStore = new ManagedWorldStore(this.tempDir.resolve("managed-reported-base"));
+        Path workingCopy = worldStore.workingCopy(WORLD_ID);
+        String regionPath = "region/r.0.0.mca";
+        writeFile(workingCopy, regionPath, "local-region".getBytes());
+        // Deliberately no region baselines recorded for this world.
+
+        BuiltPack localBundle = buildPackArtifact(
+                SyncPathRules.regionBundleId(regionPath),
+                Map.of(regionPath, "local-region".getBytes())
+        );
+        BuiltPack targetBundle = buildPackArtifact(
+                localBundle.descriptor().packId(),
+                Map.of(regionPath, "target-region".getBytes())
+        );
+        Path deltaFile = Files.createTempFile(this.tempDir, "bundle-delta-", ".delta");
+        ArtifactDeltaEngine.writeDelta(localBundle.packFile(), targetBundle.packFile(), deltaFile, 4096);
+
+        try (SyncTestHttpServer server = new SyncTestHttpServer()) {
+            server.seedBlob("region-delta-blob", Files.readAllBytes(deltaFile));
+            server.setDownloadPlan(new DownloadPlanDto(
+                    WORLD_ID,
+                    "new-snapshot",
+                    new DownloadPlanEntryDto[0],
+                    null,
+                    new DownloadPackPlanDto[] {
+                            new DownloadPackPlanDto(
+                                    targetBundle.descriptor().packId(),
+                                    targetBundle.descriptor().hash(),
+                                    targetBundle.descriptor().size(),
+                                    targetBundle.descriptor().files(),
+                                    new DownloadPlanStepDto[] {
+                                            new DownloadPlanStepDto(
+                                                    "region-delta",
+                                                    "region-delta-storage",
+                                                    Files.size(deltaFile),
+                                                    "base-snapshot",
+                                                    localBundle.descriptor().hash(),
+                                                    server.downloadUrl("region-delta-blob")
+                                            )
+                                    }
+                            )
+                    },
+                    new String[0],
+                    SyncTestHttpServer.syncPolicy()
+            ));
+
+            WorldSyncCoordinator coordinator = new WorldSyncCoordinator(server.apiClient(), worldStore);
+            coordinator.ensureSynchronizedWorkingCopy(WORLD_ID, HOST_UUID);
+
+            assertArrayEquals(
+                    "target-region".getBytes(),
+                    Files.readAllBytes(workingCopy.resolve("region").resolve("r.0.0.mca"))
+            );
+        }
+    }
+
+    @Test
     void downloadFailsClosedWhenReconstructedPackHashDoesNotMatchPlan() throws Exception {
         ManagedWorldStore worldStore = new ManagedWorldStore(this.tempDir.resolve("managed-corrupt-pack"));
         Path workingCopy = worldStore.workingCopy(WORLD_ID);

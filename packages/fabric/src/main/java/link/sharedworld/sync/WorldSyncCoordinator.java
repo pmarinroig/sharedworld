@@ -216,12 +216,22 @@ public final class WorldSyncCoordinator {
                 localRegionBundles.stream().map(WorldSyncSupport.LocalArtifact::descriptor).toArray(LocalPackDescriptorDto[]::new)
         );
         WorldSyncSupport.logTiming(LOGGER, "request download plan", worldId, planStartedAt);
-        Files.deleteIfExists(localPackFile);
-        for (WorldSyncSupport.LocalArtifact bundle : localRegionBundles) {
-            Files.deleteIfExists(bundle.artifactPath());
-        }
 
-        applyDownloadPlan(worldId, worldDirectory, plan, progressListener);
+        // The plan's delta steps may be based on exactly what we just reported; keep
+        // the scanned artifacts alive so those deltas stay satisfiable even when the
+        // cached baselines are stale or missing (e.g. after a cancelled sync).
+        java.util.Map<String, Path> reportedLocalBundles = new HashMap<>();
+        for (WorldSyncSupport.LocalArtifact bundle : localRegionBundles) {
+            reportedLocalBundles.put(bundle.descriptor().packId(), bundle.artifactPath());
+        }
+        try {
+            applyDownloadPlan(worldId, worldDirectory, plan, localPackFile, reportedLocalBundles, progressListener);
+        } finally {
+            Files.deleteIfExists(localPackFile);
+            for (WorldSyncSupport.LocalArtifact bundle : localRegionBundles) {
+                Files.deleteIfExists(bundle.artifactPath());
+            }
+        }
 
         if (materializeHostPlayer) {
             WorldSyncSupport.report(progressListener, STAGE_APPLYING_WORLD_UPDATE, 0.98D, null, null, "Preparing host player data");
@@ -446,7 +456,14 @@ public final class WorldSyncCoordinator {
         Thread.sleep(delayMs);
     }
 
-    private void applyDownloadPlan(String worldId, Path worldDirectory, DownloadPlanDto plan, WorldSyncProgressListener progressListener) throws IOException, InterruptedException {
+    private void applyDownloadPlan(
+            String worldId,
+            Path worldDirectory,
+            DownloadPlanDto plan,
+            Path reportedLocalPack,
+            java.util.Map<String, Path> reportedLocalBundles,
+            WorldSyncProgressListener progressListener
+    ) throws IOException, InterruptedException {
         SyncPolicy policy = SyncPolicy.from(plan.syncPolicy());
         this.activeSyncPolicy = policy;
         long totalDownloadBytes = Arrays.stream(plan.downloads())
@@ -488,6 +505,7 @@ public final class WorldSyncCoordinator {
                     worldId,
                     plan.nonRegionPackDownload(),
                     this.worldStore.packBaselineFile(worldId),
+                    reportedLocalPack,
                     "pack-full",
                     "pack-delta",
                     downloadedBytes,
@@ -522,6 +540,7 @@ public final class WorldSyncCoordinator {
                         worldId,
                         bundle,
                         this.worldStore.regionBundleBaselineFile(worldId, bundle.packId()),
+                        reportedLocalBundles.get(bundle.packId()),
                         "region-full",
                         "region-delta",
                         downloadedBytes,
@@ -795,6 +814,7 @@ public final class WorldSyncCoordinator {
             String worldId,
             DownloadPackPlanDto download,
             Path baselineFile,
+            Path reportedLocalArtifact,
             String fullTransferMode,
             String deltaTransferMode,
             AtomicLong downloadedBytes,
@@ -819,7 +839,7 @@ public final class WorldSyncCoordinator {
                     fileTransferred = finalizeFileTransfer(fileIndex, stepStart, step.artifactSize(), downloadedBytes, totalDownloadBytes, perFileDownloadedBytes, totalFileBytes, allFileSizes, progressListener);
                     currentBase = artifactFile;
                 } else if (deltaTransferMode.equals(step.transferMode())) {
-                    Path baseFile = resolveGroupedDeltaBase(currentBase, baselineFile, step);
+                    Path baseFile = resolveGroupedDeltaBase(currentBase, baselineFile, reportedLocalArtifact, step);
                     if (baseFile == null || !Files.exists(baseFile)) {
                         throw new IOException("SharedWorld grouped artifact delta base was missing.");
                     }
@@ -849,7 +869,7 @@ public final class WorldSyncCoordinator {
         return currentBase;
     }
 
-    private Path resolveGroupedDeltaBase(Path currentBase, Path baselineFile, DownloadPlanStepDto step) throws IOException {
+    private Path resolveGroupedDeltaBase(Path currentBase, Path baselineFile, Path reportedLocalArtifact, DownloadPlanStepDto step) throws IOException {
         if (currentBase != null) {
             return currentBase;
         }
@@ -858,6 +878,14 @@ public final class WorldSyncCoordinator {
         }
         if (baselineFile != null && Files.exists(baselineFile) && step.baseHash().equals(LocalWorldHasher.hashFile(baselineFile))) {
             return baselineFile;
+        }
+        // The backend may base deltas on the state this client just reported; the
+        // scanned artifact is byte-exact for that claim even when the cached
+        // baseline has diverged (cancelled sync, partial apply).
+        if (reportedLocalArtifact != null
+                && Files.exists(reportedLocalArtifact)
+                && step.baseHash().equals(LocalWorldHasher.hashFile(reportedLocalArtifact))) {
+            return reportedLocalArtifact;
         }
         return null;
     }
