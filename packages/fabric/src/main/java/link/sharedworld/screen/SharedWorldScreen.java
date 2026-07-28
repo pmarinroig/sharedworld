@@ -347,23 +347,12 @@ public final class SharedWorldScreen extends Screen {
     }
 
     private static String friendlyError(Throwable error) {
-        Throwable cause = rootCause(error);
-        if (cause instanceof UnknownHostException || cause instanceof ConnectException) {
-            return SharedWorldText.string("screen.sharedworld.error_internet_unreachable");
-        }
-        if (cause instanceof IOException && cause.getMessage() != null) {
-            String message = cause.getMessage();
-            if (message.contains("UnresolvedAddressException") || message.contains("Connection refused")) {
-                return SharedWorldText.string("screen.sharedworld.error_backend_unreachable");
-            }
-            return message;
-        }
-        return cause.getMessage() != null ? cause.getMessage() : error.getMessage();
+        return SharedWorldApiClient.friendlyErrorMessage(error);
     }
 
     private static Throwable rootCause(Throwable error) {
         Throwable current = error;
-        while (current.getCause() != null) {
+        while (current.getCause() != null && current.getCause() != current) {
             current = current.getCause();
         }
         return current;

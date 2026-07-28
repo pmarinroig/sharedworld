@@ -30,6 +30,8 @@ final class SyncTestHttpServer implements AutoCloseable {
     private final HttpServer server;
     private final Gson gson = new Gson();
     private final Map<String, byte[]> downloadableBlobs = new LinkedHashMap<>();
+    private final Map<String, int[]> scriptedBlobFailures = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<String, Integer> blobRequestCounts = new java.util.concurrent.ConcurrentHashMap<>();
     private final Map<String, RecordedBlobUpload> uploadedBlobs = new LinkedHashMap<>();
 
     private UploadPlanDto uploadPlan;
@@ -76,6 +78,15 @@ final class SyncTestHttpServer implements AutoCloseable {
 
     void seedBlob(String blobId, byte[] body) {
         this.downloadableBlobs.put(blobId, body);
+    }
+
+    /** The next {@code count} requests for this blob answer with {@code status}. */
+    void failBlob(String blobId, int status, int count) {
+        this.scriptedBlobFailures.put(blobId, new int[]{status, count});
+    }
+
+    int blobRequestCount(String blobId) {
+        return this.blobRequestCounts.getOrDefault(blobId, 0);
     }
 
     SignedBlobUrlDto downloadUrl(String blobId) {
@@ -158,6 +169,13 @@ final class SyncTestHttpServer implements AutoCloseable {
     }
 
     private void handleBlob(HttpExchange exchange, String blobId) throws IOException {
+        this.blobRequestCounts.merge(blobId, 1, Integer::sum);
+        int[] scripted = this.scriptedBlobFailures.get(blobId);
+        if (scripted != null && scripted[1] > 0) {
+            scripted[1] -= 1;
+            writeError(exchange, "blob_transport_failure", "Scripted transient blob failure.", scripted[0]);
+            return;
+        }
         if ("PUT".equalsIgnoreCase(exchange.getRequestMethod())) {
             byte[] body = readBodyBytes(exchange);
             this.uploadedBlobs.put(blobId, new RecordedBlobUpload(body, copyHeaders(exchange.getRequestHeaders())));

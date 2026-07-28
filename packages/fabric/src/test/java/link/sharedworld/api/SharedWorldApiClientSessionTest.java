@@ -1,0 +1,218 @@
+package link.sharedworld.api;
+
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
+import link.sharedworld.SharedWorldDevSessionBridge;
+import link.sharedworld.api.SharedWorldApiClient.SharedWorldApiException;
+import link.sharedworld.api.SharedWorldModels.SessionTokenDto;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+
+import java.io.IOException;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.net.http.HttpClient;
+import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * Session lifecycle: persisted tokens skip Mojang entirely, rejected tokens
+ * trigger exactly one automatic re-auth, and transient backend identity
+ * verification failures get one full fresh attempt.
+ */
+final class SharedWorldApiClientSessionTest {
+    private static final String PLAYER_UUID = "11111111-1111-1111-1111-111111111111";
+    private static final String SESSION_JSON = """
+            {"token":"session-fresh","playerUuid":"11111111111111111111111111111111","playerName":"HostA","expiresAt":"2099-01-01T00:00:00.000Z"}
+            """;
+
+    /** In-memory SessionPersistence recording interactions. */
+    private static final class FakePersistence implements SharedWorldApiClient.SessionPersistence {
+        private final Map<String, SessionTokenDto> entries = new HashMap<>();
+        int loads;
+        int saves;
+        int clears;
+
+        @Override
+        public synchronized SessionTokenDto load(String baseUrl, String playerUuid) {
+            this.loads += 1;
+            return this.entries.get(baseUrl + "|" + playerUuid);
+        }
+
+        @Override
+        public synchronized void save(String baseUrl, String playerUuid, SessionTokenDto session) {
+            this.saves += 1;
+            this.entries.put(baseUrl + "|" + playerUuid, session);
+        }
+
+        @Override
+        public synchronized void clear(String baseUrl, String playerUuid) {
+            this.clears += 1;
+            this.entries.remove(baseUrl + "|" + playerUuid);
+        }
+    }
+
+    private HttpServer server;
+
+    @AfterEach
+    void tearDown() {
+        if (this.server != null) {
+            this.server.stop(0);
+        }
+        SharedWorldDevSessionBridge.clear();
+    }
+
+    private String startServer() throws IOException {
+        this.server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        this.server.start();
+        return "http://127.0.0.1:" + this.server.getAddress().getPort();
+    }
+
+    private static void writeJson(HttpExchange exchange, int status, String body) throws IOException {
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("content-type", "application/json");
+        exchange.sendResponseHeaders(status, bytes.length);
+        try (OutputStream output = exchange.getResponseBody()) {
+            output.write(bytes);
+        }
+    }
+
+    private SharedWorldApiClient client(String baseUrl, AtomicInteger joinCalls, FakePersistence persistence) {
+        SharedWorldDevSessionBridge.clear();
+        SharedWorldApiClient client = new SharedWorldApiClient(
+                baseUrl,
+                HttpClient.newHttpClient(),
+                () -> new SharedWorldApiClient.SessionIdentity(PLAYER_UUID, "HostA", "premium-access-token"),
+                (identity, serverId) -> joinCalls.incrementAndGet()
+        );
+        client.setSessionPersistence(persistence);
+        return client;
+    }
+
+    @Test
+    void aValidPersistedTokenSkipsMojangEntirely() throws Exception {
+        String baseUrl = startServer();
+        AtomicInteger joinCalls = new AtomicInteger();
+        FakePersistence persistence = new FakePersistence();
+        persistence.save(baseUrl, PLAYER_UUID,
+                new SessionTokenDto("token-persisted", "1111", "HostA", "2099-01-01T00:00:00.000Z"));
+        persistence.saves = 0;
+
+        SessionTokenDto session = client(baseUrl, joinCalls, persistence).ensureSession();
+
+        assertEquals("token-persisted", session.token());
+        assertEquals(0, joinCalls.get(), "no Mojang joinServer call for a persisted session");
+        assertEquals(0, persistence.saves);
+    }
+
+    @Test
+    void freshSessionsArePersistedForTheNextLaunch() throws Exception {
+        String baseUrl = startServer();
+        this.server.createContext("/auth/challenge", exchange ->
+                writeJson(exchange, 200, "{\"serverId\":\"server-1\",\"expiresAt\":\"2099-01-01T00:00:00.000Z\"}"));
+        this.server.createContext("/auth/complete", exchange -> writeJson(exchange, 200, SESSION_JSON));
+        AtomicInteger joinCalls = new AtomicInteger();
+        FakePersistence persistence = new FakePersistence();
+
+        SessionTokenDto session = client(baseUrl, joinCalls, persistence).ensureSession();
+
+        assertEquals("session-fresh", session.token());
+        assertEquals(1, joinCalls.get());
+        assertEquals(1, persistence.saves);
+        assertEquals("session-fresh", persistence.entries.get(baseUrl + "|" + PLAYER_UUID).token());
+    }
+
+    @Test
+    void aRejectedSessionTokenTriggersExactlyOneReauth() throws Exception {
+        String baseUrl = startServer();
+        AtomicInteger worldsCalls = new AtomicInteger();
+        this.server.createContext("/worlds", exchange -> {
+            if (worldsCalls.incrementAndGet() == 1) {
+                writeJson(exchange, 401, "{\"error\":\"invalid_session\",\"message\":\"Session token is invalid.\",\"status\":401}");
+                return;
+            }
+            writeJson(exchange, 200, "[]");
+        });
+        this.server.createContext("/auth/challenge", exchange ->
+                writeJson(exchange, 200, "{\"serverId\":\"server-1\",\"expiresAt\":\"2099-01-01T00:00:00.000Z\"}"));
+        this.server.createContext("/auth/complete", exchange -> writeJson(exchange, 200, SESSION_JSON));
+        AtomicInteger joinCalls = new AtomicInteger();
+        FakePersistence persistence = new FakePersistence();
+        persistence.save(baseUrl, PLAYER_UUID,
+                new SessionTokenDto("token-stale", "1111", "HostA", "2099-01-01T00:00:00.000Z"));
+
+        var worlds = client(baseUrl, joinCalls, persistence).listWorlds();
+
+        assertTrue(worlds.isEmpty());
+        assertEquals(2, worldsCalls.get(), "the request is replayed once after re-auth");
+        assertEquals(1, joinCalls.get(), "re-auth goes through the full Mojang flow");
+        assertTrue(persistence.clears >= 1, "the stale persisted token is dropped");
+        assertEquals("session-fresh", persistence.entries.get(baseUrl + "|" + PLAYER_UUID).token());
+    }
+
+    @Test
+    void aSecondSessionRejectionSurfacesTheError() throws Exception {
+        String baseUrl = startServer();
+        this.server.createContext("/worlds", exchange ->
+                writeJson(exchange, 401, "{\"error\":\"expired_session\",\"message\":\"Session token has expired.\",\"status\":401}"));
+        this.server.createContext("/auth/challenge", exchange ->
+                writeJson(exchange, 200, "{\"serverId\":\"server-1\",\"expiresAt\":\"2099-01-01T00:00:00.000Z\"}"));
+        this.server.createContext("/auth/complete", exchange -> writeJson(exchange, 200, SESSION_JSON));
+        AtomicInteger joinCalls = new AtomicInteger();
+
+        SharedWorldApiException error = assertThrows(SharedWorldApiException.class,
+                () -> client(baseUrl, joinCalls, new FakePersistence()).listWorlds());
+
+        assertEquals("expired_session", error.error());
+        assertEquals(2, joinCalls.get(), "the initial auth plus exactly one automatic re-auth, never more");
+    }
+
+    @Test
+    void transientIdentityVerificationGetsOneFullFreshAttempt() throws Exception {
+        String baseUrl = startServer();
+        AtomicInteger challengeCalls = new AtomicInteger();
+        this.server.createContext("/auth/challenge", exchange ->
+                writeJson(exchange, 200, "{\"serverId\":\"server-" + challengeCalls.incrementAndGet() + "\",\"expiresAt\":\"2099-01-01T00:00:00.000Z\"}"));
+        AtomicInteger completeCalls = new AtomicInteger();
+        this.server.createContext("/auth/complete", exchange -> {
+            if (completeCalls.incrementAndGet() == 1) {
+                writeJson(exchange, 503, "{\"error\":\"identity_verification_unavailable\",\"message\":\"Minecraft identity verification is unavailable.\",\"status\":503}");
+                return;
+            }
+            writeJson(exchange, 200, SESSION_JSON);
+        });
+        AtomicInteger joinCalls = new AtomicInteger();
+
+        SessionTokenDto session = client(baseUrl, joinCalls, new FakePersistence()).ensureSession();
+
+        assertEquals("session-fresh", session.token());
+        assertEquals(2, challengeCalls.get(), "the re-attempt starts a fresh challenge");
+        assertEquals(2, joinCalls.get(), "the re-attempt re-proves the session");
+    }
+
+    @Test
+    void malformedPersistedExpiryFallsBackToAFreshAuth() throws Exception {
+        String baseUrl = startServer();
+        this.server.createContext("/auth/challenge", exchange ->
+                writeJson(exchange, 200, "{\"serverId\":\"server-1\",\"expiresAt\":\"2099-01-01T00:00:00.000Z\"}"));
+        this.server.createContext("/auth/complete", exchange -> writeJson(exchange, 200, SESSION_JSON));
+        AtomicInteger joinCalls = new AtomicInteger();
+        FakePersistence persistence = new FakePersistence();
+        persistence.entries.put(baseUrl + "|" + PLAYER_UUID,
+                new SessionTokenDto("token-bad", "1111", "HostA", "garbage-timestamp"));
+
+        SessionTokenDto session = client(baseUrl, joinCalls, persistence).ensureSession();
+
+        assertEquals("session-fresh", session.token());
+        assertEquals(1, joinCalls.get());
+        assertEquals("session-fresh", persistence.entries.get(baseUrl + "|" + PLAYER_UUID).token(),
+                "the malformed entry is replaced by the fresh session");
+    }
+}

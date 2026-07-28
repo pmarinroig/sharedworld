@@ -48,6 +48,7 @@ public final class SharedWorldClient implements ClientModInitializer {
         SharedWorldE4mcCompatibility.logClientInitStarted();
         RuntimePlayerIdentity.resolveBackendPlayerUuidWithHyphens(Minecraft.getInstance().getUser());
         apiClient = new SharedWorldApiClient(SharedWorldClientConfigStore.shared().resolvedBackendBaseUrl());
+        apiClient.setSessionPersistence(SharedWorldSessionStore.shared());
         HostPlayerIdentity hostPlayerIdentity = apiClient::authenticatedWorldPlayerUuidWithHyphens;
         hostingManager = new SharedWorldHostingManager(
                 apiClient,

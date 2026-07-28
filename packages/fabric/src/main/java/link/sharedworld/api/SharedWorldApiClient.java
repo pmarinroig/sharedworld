@@ -59,6 +59,7 @@ public final class SharedWorldApiClient {
     private final Gson gson;
     private final SessionIdentityProvider sessionIdentityProvider;
     private final SessionJoiner sessionJoiner;
+    private SessionPersistence sessionPersistence;
     private SessionTokenDto cachedSession;
     private boolean cachedSessionIsDev;
     private boolean cachedAllowInsecureE4mc;
@@ -104,7 +105,7 @@ public final class SharedWorldApiClient {
 
     public List<WorldSummaryDto> listWorlds() throws IOException, InterruptedException {
         ensureSession();
-        return Arrays.asList(request("GET", "/worlds", null, WorldSummaryDto[].class, true));
+        return Arrays.asList(requestWithTransportRetry("GET", "/worlds", WorldSummaryDto[].class));
     }
 
     public WorldDetailsDto getWorld(String worldId) throws IOException, InterruptedException {
@@ -213,7 +214,7 @@ public final class SharedWorldApiClient {
 
     public WorldRuntimeStatusDto runtimeStatus(String worldId) throws IOException, InterruptedException {
         ensureSession();
-        return request("GET", "/worlds/" + worldId + "/runtime", null, WorldRuntimeStatusDto.class, true);
+        return requestWithTransportRetry("GET", "/worlds/" + worldId + "/runtime", WorldRuntimeStatusDto.class);
     }
 
     public WorldRuntimeStatusDto heartbeatHost(String worldId, long runtimeEpoch, String hostToken, String joinTarget) throws IOException, InterruptedException {
@@ -297,7 +298,7 @@ public final class SharedWorldApiClient {
 
     public SnapshotManifestDto latestManifest(String worldId) throws IOException, InterruptedException {
         ensureSession();
-        return request("GET", "/worlds/" + worldId + "/snapshots/latest-manifest", null, SnapshotManifestDto.class, true);
+        return requestWithTransportRetry("GET", "/worlds/" + worldId + "/snapshots/latest-manifest", SnapshotManifestDto.class);
     }
 
     public WorldSnapshotSummaryDto[] listSnapshots(String worldId) throws IOException, InterruptedException {
@@ -366,7 +367,7 @@ public final class SharedWorldApiClient {
         HttpResponse<String> response = this.httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() >= 400) {
             ErrorDto error = tryParseError(response.body(), response.statusCode());
-            throw new IOException(error.message());
+            throw new SharedWorldApiException(error.error(), error.message(), error.status());
         }
 
         try {
@@ -403,9 +404,12 @@ public final class SharedWorldApiClient {
             signedUrl.headers().forEach(builder::header);
         }
 
-        HttpResponse<Void> response = this.httpClient.send(builder.build(), HttpResponse.BodyHandlers.discarding());
+        HttpResponse<String> response = this.httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() >= 400) {
-            throw new IOException("SharedWorld blob upload failed (" + response.statusCode() + ").");
+            // Signed blob URLs may point at a non-backend store whose error
+            // body is not our JSON shape; tryParseError falls back to a
+            // generic http_error code with the real status either way.
+            throw blobTransferError("upload", response.body(), response.statusCode());
         }
     }
 
@@ -426,7 +430,7 @@ public final class SharedWorldApiClient {
 
         HttpResponse<InputStream> response = this.httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofInputStream());
         if (response.statusCode() >= 400) {
-            throw new IOException("SharedWorld blob download failed (" + response.statusCode() + ").");
+            throw blobTransferError("download", readErrorBody(response.body()), response.statusCode());
         }
 
         long compressedLength = response.headers().firstValueAsLong("content-length").orElse(-1L);
@@ -456,7 +460,7 @@ public final class SharedWorldApiClient {
 
         HttpResponse<InputStream> response = this.httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofInputStream());
         if (response.statusCode() >= 400) {
-            throw new IOException("SharedWorld blob download failed (" + response.statusCode() + ").");
+            throw blobTransferError("download", readErrorBody(response.body()), response.statusCode());
         }
 
         long length = response.headers().firstValueAsLong("content-length").orElse(-1L);
@@ -466,6 +470,23 @@ public final class SharedWorldApiClient {
         try (InputStream input = body;
              OutputStream output = Files.newOutputStream(target)) {
             input.transferTo(output);
+        }
+    }
+
+
+    private SharedWorldApiException blobTransferError(String operation, String errorBody, int statusCode) {
+        ErrorDto error = tryParseError(errorBody, statusCode);
+        String message = "http_error".equals(error.error())
+                ? "SharedWorld blob " + operation + " failed (" + statusCode + ")."
+                : error.message();
+        return new SharedWorldApiException(error.error(), message, error.status());
+    }
+
+    private static String readErrorBody(InputStream body) {
+        try (InputStream input = body) {
+            return new String(input.readNBytes(65_536), java.nio.charset.StandardCharsets.UTF_8);
+        } catch (IOException exception) {
+            return "";
         }
     }
 
@@ -482,8 +503,25 @@ public final class SharedWorldApiClient {
         releaseHost(worldId, graceful, -1L, null);
     }
 
-    public SessionTokenDto ensureSession() throws IOException, InterruptedException {
-        if (cachedSession != null && Instant.parse(cachedSession.expiresAt()).isAfter(Instant.now().plusSeconds(30))) {
+    /**
+     * Persists non-dev session tokens across restarts. Optional: nothing is
+     * persisted until a store is attached (production wires the shared
+     * SharedWorldSessionStore at client init).
+     */
+    public interface SessionPersistence {
+        SessionTokenDto load(String baseUrl, String playerUuid);
+
+        void save(String baseUrl, String playerUuid, SessionTokenDto session);
+
+        void clear(String baseUrl, String playerUuid);
+    }
+
+    public synchronized void setSessionPersistence(SessionPersistence persistence) {
+        this.sessionPersistence = persistence;
+    }
+
+    public synchronized SessionTokenDto ensureSession() throws IOException, InterruptedException {
+        if (isUsableSession(cachedSession)) {
             SharedWorldDevSessionBridge.updateAuthenticatedSession(this.cachedSessionIsDev, this.cachedAllowInsecureE4mc);
             return cachedSession;
         }
@@ -507,9 +545,38 @@ public final class SharedWorldApiClient {
             return cachedSession;
         }
 
+        if (this.sessionPersistence != null) {
+            SessionTokenDto persisted = this.sessionPersistence.load(this.baseUrl, identity.playerUuid());
+            if (isUsableSession(persisted)) {
+                cacheSession(persisted, false, false);
+                return cachedSession;
+            }
+        }
+
+        SessionTokenDto session;
+        try {
+            session = establishMojangSession(identity);
+        } catch (SharedWorldApiException exception) {
+            if (!"identity_verification_unavailable".equals(exception.error())) {
+                throw exception;
+            }
+            // The backend already retried Mojang for a couple of seconds; one
+            // full fresh attempt (new challenge + new joinServer proof) after
+            // a short pause covers blips that outlast its window.
+            Thread.sleep(2_000L);
+            session = establishMojangSession(identity);
+        }
+        cacheSession(session, false, false);
+        if (this.sessionPersistence != null) {
+            this.sessionPersistence.save(this.baseUrl, identity.playerUuid(), session);
+        }
+        return cachedSession;
+    }
+
+    private SessionTokenDto establishMojangSession(SessionIdentity identity) throws IOException, InterruptedException {
         AuthChallengeDto challenge = request("POST", "/auth/challenge", Map.of(), AuthChallengeDto.class, false);
         this.sessionJoiner.joinServer(identity, challenge.serverId());
-        SessionTokenDto session = request(
+        return request(
                 "POST",
                 "/auth/complete",
                 Map.of(
@@ -519,8 +586,32 @@ public final class SharedWorldApiClient {
                 SessionTokenDto.class,
                 false
         );
-        cacheSession(session, false, false);
-        return cachedSession;
+    }
+
+    /** Invalid or unparseable expiry means the session is not usable. */
+    private static boolean isUsableSession(SessionTokenDto session) {
+        if (session == null || session.token() == null || session.expiresAt() == null) {
+            return false;
+        }
+        try {
+            return Instant.parse(session.expiresAt()).isAfter(Instant.now().plusSeconds(30));
+        } catch (RuntimeException exception) {
+            return false;
+        }
+    }
+
+    private synchronized void invalidateSession() {
+        SessionTokenDto invalid = this.cachedSession;
+        this.cachedSession = null;
+        SharedWorldDevSessionBridge.clear();
+        if (this.sessionPersistence != null && invalid != null && !this.cachedSessionIsDev) {
+            try {
+                SessionIdentity identity = this.sessionIdentityProvider.currentIdentity();
+                this.sessionPersistence.clear(this.baseUrl, identity.playerUuid());
+            } catch (IOException exception) {
+                // Identity unavailable; the in-memory invalidation is enough.
+            }
+        }
     }
 
     private void cacheSession(SessionTokenDto session, boolean isDevSession, boolean allowInsecureE4mc) {
@@ -568,14 +659,41 @@ public final class SharedWorldApiClient {
         return new SessionIdentity(playerUuid, playerName, accessToken);
     }
 
+    private static final long JOIN_SERVER_TIMEOUT_SECONDS = 10L;
+
+    // Dedicated single thread: authlib's joinServer blocks with no timeout of
+    // its own, and a hung call must cost this one thread instead of starving
+    // the shared 4-thread IO pool that every mod feature runs on.
+    private static final java.util.concurrent.ExecutorService JOIN_SERVER_EXECUTOR =
+            java.util.concurrent.Executors.newSingleThreadExecutor(runnable -> {
+                Thread thread = new Thread(runnable, "sharedworld-mojang-join");
+                thread.setDaemon(true);
+                return thread;
+            });
+
     private static void joinMinecraftSessionServer(SessionIdentity identity, String serverId) throws IOException {
+        UUID profileUuid = UUID.fromString(
+                CanonicalPlayerIdentity.normalizeUuidWithHyphens(identity.playerUuid(), "current backend player UUID")
+        );
+        java.util.concurrent.Future<?> join = JOIN_SERVER_EXECUTOR.submit(() -> {
+            link.sharedworld.versioned.ClientCompat.sessionService(Minecraft.getInstance())
+                    .joinServer(profileUuid, identity.accessToken(), serverId);
+            return null;
+        });
         try {
-            UUID profileUuid = UUID.fromString(
-                    CanonicalPlayerIdentity.normalizeUuidWithHyphens(identity.playerUuid(), "current backend player UUID")
-            );
-            link.sharedworld.versioned.ClientCompat.sessionService(Minecraft.getInstance()).joinServer(profileUuid, identity.accessToken(), serverId);
-        } catch (com.mojang.authlib.exceptions.AuthenticationException exception) {
-            throw new IOException("Failed to prove Minecraft session to SharedWorld.", exception);
+            join.get(JOIN_SERVER_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (java.util.concurrent.TimeoutException exception) {
+            join.cancel(true);
+            throw new IOException("Timed out proving the Minecraft session to SharedWorld. Check your connection and try again.");
+        } catch (InterruptedException exception) {
+            join.cancel(true);
+            Thread.currentThread().interrupt();
+            throw new IOException("Interrupted while proving the Minecraft session to SharedWorld.", exception);
+        } catch (java.util.concurrent.ExecutionException exception) {
+            if (exception.getCause() instanceof com.mojang.authlib.exceptions.AuthenticationException authFailure) {
+                throw new IOException("Failed to prove Minecraft session to SharedWorld.", authFailure);
+            }
+            throw new IOException("Failed to prove Minecraft session to SharedWorld.", exception.getCause());
         }
     }
 
@@ -637,12 +755,38 @@ public final class SharedWorldApiClient {
         return apiError == null ? null : apiError.error();
     }
 
+    /**
+     * The single user-facing rendering of any SharedWorld failure: the
+     * backend's human message when one exists, a friendly offline/unreachable
+     * string for connectivity failures, otherwise the deepest non-blank cause
+     * message — never null and never a bare JDK socket string for the
+     * connectivity cases players actually hit.
+     */
     public static String friendlyErrorMessage(Throwable error) {
-        Throwable cause = error;
-        while (cause.getCause() != null) {
-            cause = cause.getCause();
+        if (error == null) {
+            return link.sharedworld.SharedWorldText.errorMessageOrDefault(null);
         }
-        return cause.getMessage();
+        SharedWorldApiException apiError = findApiError(error);
+        if (apiError != null && apiError.getMessage() != null && !apiError.getMessage().isBlank()) {
+            return apiError.getMessage();
+        }
+        for (Throwable cause = error; cause != null; cause = cause.getCause() == cause ? null : cause.getCause()) {
+            if (cause instanceof java.net.UnknownHostException || cause instanceof java.net.ConnectException) {
+                return link.sharedworld.SharedWorldText.string("screen.sharedworld.error_internet_unreachable");
+            }
+            String message = cause.getMessage();
+            if (message != null && (message.contains("UnresolvedAddressException") || message.contains("Connection refused"))) {
+                return link.sharedworld.SharedWorldText.string("screen.sharedworld.error_backend_unreachable");
+            }
+        }
+        String best = error.getMessage();
+        for (Throwable cause = error; cause.getCause() != null && cause.getCause() != cause; ) {
+            cause = cause.getCause();
+            if (cause.getMessage() != null && !cause.getMessage().isBlank()) {
+                best = cause.getMessage();
+            }
+        }
+        return link.sharedworld.SharedWorldText.errorMessageOrDefault(best);
     }
 
     private static SharedWorldApiException findApiError(Throwable error) {
@@ -657,6 +801,22 @@ public final class SharedWorldApiClient {
     }
 
     private <T> T request(String method, String path, Object body, Class<T> responseType, boolean authenticated) throws IOException, InterruptedException {
+        try {
+            return requestOnce(method, path, body, responseType, authenticated);
+        } catch (SharedWorldApiException exception) {
+            // A rejected session token (expired server-side, wiped backend,
+            // stale persisted token) is recoverable: re-authenticate once and
+            // replay the request. Anything else propagates.
+            if (!authenticated || exception.status() != 401
+                    || !("invalid_session".equals(exception.error()) || "expired_session".equals(exception.error()))) {
+                throw exception;
+            }
+            invalidateSession();
+            return requestOnce(method, path, body, responseType, true);
+        }
+    }
+
+    private <T> T requestOnce(String method, String path, Object body, Class<T> responseType, boolean authenticated) throws IOException, InterruptedException {
         HttpRequest.Builder builder = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + path))
                 .timeout(Duration.ofSeconds(20))
@@ -688,6 +848,57 @@ public final class SharedWorldApiClient {
         } catch (JsonSyntaxException exception) {
             throw new IOException("Failed to parse SharedWorld response.", exception);
         }
+    }
+
+
+    private static final link.sharedworld.util.RetryPolicy READ_RETRY_POLICY =
+            new link.sharedworld.util.RetryPolicy(3, 500L, 4_000L);
+
+    /**
+     * Bounded transport retry for safe idempotent reads only. Mutating calls
+     * are never replayed here; their coordinators own retry semantics.
+     */
+    private <T> T requestWithTransportRetry(String method, String path, Class<T> responseType) throws IOException, InterruptedException {
+        IOException lastFailure = null;
+        for (int attempt = 1; attempt <= READ_RETRY_POLICY.maxAttempts(); attempt++) {
+            long delayMs = READ_RETRY_POLICY.delayBeforeAttemptMs(attempt);
+            if (delayMs > 0) {
+                Thread.sleep(delayMs);
+            }
+            try {
+                return request(method, path, null, responseType, true);
+            } catch (IOException exception) {
+                if (!isRetryableTransportError(exception) || !READ_RETRY_POLICY.shouldRetry(attempt)) {
+                    throw exception;
+                }
+                lastFailure = exception;
+            }
+        }
+        throw lastFailure;
+    }
+
+    /**
+     * Retriable: connection-level failures and 5xx responses without a
+     * meaningful protocol code. Auth unavailability is excluded — the session
+     * layer already performs its own full re-attempt — as is every 4xx
+     * protocol outcome.
+     */
+    public static boolean isRetryableTransportError(Throwable error) {
+        SharedWorldApiException apiError = findApiError(error);
+        if (apiError != null) {
+            if ("identity_verification_unavailable".equals(apiError.error())) {
+                return false;
+            }
+            return apiError.status() >= 500;
+        }
+        for (Throwable cause = error; cause != null; cause = cause.getCause() == cause ? null : cause.getCause()) {
+            if (cause instanceof java.net.ConnectException
+                    || cause instanceof java.net.http.HttpTimeoutException
+                    || cause instanceof java.net.UnknownHostException) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private ErrorDto tryParseError(String body, int fallbackStatus) {

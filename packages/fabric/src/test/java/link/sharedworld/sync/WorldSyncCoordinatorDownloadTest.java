@@ -254,4 +254,87 @@ final class WorldSyncCoordinatorDownloadTest {
 
     private record BuiltPack(Path packFile, LocalPackDescriptorDto descriptor) {
     }
+
+    @Test
+    void transientBlobFailuresAreRetriedAndTheDownloadStillSucceeds() throws Exception {
+        ManagedWorldStore worldStore = new ManagedWorldStore(this.tempDir.resolve("managed-retry"));
+        Path workingCopy = worldStore.workingCopy(WORLD_ID);
+
+        BuiltPack pack = buildPackArtifact(null, Map.of("data/new.txt", "fresh-pack".getBytes()));
+
+        try (SyncTestHttpServer server = new SyncTestHttpServer()) {
+            server.seedBlob("pack-retry", Files.readAllBytes(pack.packFile()));
+            server.failBlob("pack-retry", 503, 2);
+            server.setDownloadPlan(new DownloadPlanDto(
+                    WORLD_ID,
+                    "snapshot-retry",
+                    new DownloadPlanEntryDto[0],
+                    new DownloadPackPlanDto(
+                            pack.descriptor().packId(),
+                            pack.descriptor().hash(),
+                            pack.descriptor().size(),
+                            pack.descriptor().files(),
+                            new DownloadPlanStepDto[] {
+                                    new DownloadPlanStepDto(
+                                            "pack-full",
+                                            "packs/full-retry.pack",
+                                            Files.size(pack.packFile()),
+                                            null,
+                                            null,
+                                            server.downloadUrl("pack-retry")
+                                    )
+                            }
+                    ),
+                    new DownloadPackPlanDto[0],
+                    new String[0],
+                    SyncTestHttpServer.syncPolicy()
+            ));
+
+            WorldSyncCoordinator coordinator = new WorldSyncCoordinator(server.apiClient(), worldStore);
+            coordinator.ensureSynchronizedWorkingCopy(WORLD_ID, HOST_UUID);
+
+            assertArrayEquals("fresh-pack".getBytes(), Files.readAllBytes(workingCopy.resolve("data").resolve("new.txt")));
+            assertEquals(3, server.blobRequestCount("pack-retry"), "two scripted 503s then the successful transfer");
+        }
+    }
+
+    @Test
+    void protocolBlobErrorsAreNotRetried() throws Exception {
+        ManagedWorldStore worldStore = new ManagedWorldStore(this.tempDir.resolve("managed-no-retry"));
+
+        BuiltPack pack = buildPackArtifact(null, Map.of("data/new.txt", "fresh-pack".getBytes()));
+
+        try (SyncTestHttpServer server = new SyncTestHttpServer()) {
+            // 404: the blob is simply absent — a protocol outcome, not a
+            // transport blip; retrying would only mask the real problem.
+            server.setDownloadPlan(new DownloadPlanDto(
+                    WORLD_ID,
+                    "snapshot-no-retry",
+                    new DownloadPlanEntryDto[0],
+                    new DownloadPackPlanDto(
+                            pack.descriptor().packId(),
+                            pack.descriptor().hash(),
+                            pack.descriptor().size(),
+                            pack.descriptor().files(),
+                            new DownloadPlanStepDto[] {
+                                    new DownloadPlanStepDto(
+                                            "pack-full",
+                                            "packs/full-no-retry.pack",
+                                            123L,
+                                            null,
+                                            null,
+                                            server.downloadUrl("pack-missing")
+                                    )
+                            }
+                    ),
+                    new DownloadPackPlanDto[0],
+                    new String[0],
+                    SyncTestHttpServer.syncPolicy()
+            ));
+
+            WorldSyncCoordinator coordinator = new WorldSyncCoordinator(server.apiClient(), worldStore);
+            assertThrows(IOException.class, () -> coordinator.ensureSynchronizedWorkingCopy(WORLD_ID, HOST_UUID));
+            assertEquals(1, server.blobRequestCount("pack-missing"), "4xx protocol errors are never retried");
+        }
+    }
 }

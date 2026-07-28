@@ -16,6 +16,7 @@ import link.sharedworld.api.SharedWorldModels.SyncPolicyDto;
 import link.sharedworld.api.SharedWorldModels.UploadPackPlanDto;
 import link.sharedworld.api.SharedWorldModels.UploadPlanDto;
 import link.sharedworld.api.SharedWorldModels.UploadPlanEntryDto;
+import link.sharedworld.util.RetryPolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -60,6 +61,7 @@ public final class WorldSyncCoordinator {
     private static final int REGION_DELTA_BLOCK_SIZE = 4 * 1024;
 
     private final SharedWorldApiClient apiClient;
+    private volatile SyncPolicy activeSyncPolicy;
     private final ManagedWorldStore worldStore;
 
     public WorldSyncCoordinator(SharedWorldApiClient apiClient, ManagedWorldStore worldStore) {
@@ -122,6 +124,7 @@ public final class WorldSyncCoordinator {
         WorldSyncSupport.logTiming(LOGGER, "request upload plan", worldId, planStartedAt);
 
         SyncPolicy resolvedPolicy = SyncPolicy.from(plan.syncPolicy());
+        this.activeSyncPolicy = resolvedPolicy;
         Map<String, PreparedWorldFile> filesByPath = canonicalFiles.stream()
                 .collect(Collectors.toMap(PreparedWorldFile::relativePath, file -> file));
         Map<String, WorldSyncSupport.LocalArtifact> regionBundlesById = regionBundles.stream().collect(Collectors.toMap(artifact -> artifact.descriptor().packId(), artifact -> artifact));
@@ -371,7 +374,7 @@ public final class WorldSyncCoordinator {
                         return null;
                     }
                     limiter.awaitTurn();
-                    this.apiClient.uploadBlob(
+                    withTransportRetries(() -> this.apiClient.uploadBlob(
                             preparedUpload.uploadUrl(),
                             preparedUpload.bodyPath(),
                             preparedUpload.manifestFile() != null ? preparedUpload.manifestFile().contentType() : "application/octet-stream",
@@ -389,7 +392,7 @@ public final class WorldSyncCoordinator {
                                         "Uploading changed files"
                                 );
                             }
-                    );
+                    ));
                     long finalProgress = perFileUploadedBytes.getAndSet(fileIndex, preparedUpload.bodySize());
                     long remaining = Math.max(0L, preparedUpload.bodySize() - finalProgress);
                     if (remaining > 0L) {
@@ -445,6 +448,7 @@ public final class WorldSyncCoordinator {
 
     private void applyDownloadPlan(String worldId, Path worldDirectory, DownloadPlanDto plan, WorldSyncProgressListener progressListener) throws IOException, InterruptedException {
         SyncPolicy policy = SyncPolicy.from(plan.syncPolicy());
+        this.activeSyncPolicy = policy;
         long totalDownloadBytes = Arrays.stream(plan.downloads())
                 .flatMap(download -> Arrays.stream(download.steps()))
                 .mapToLong(DownloadPlanStepDto::artifactSize)
@@ -766,9 +770,9 @@ public final class WorldSyncCoordinator {
             long stepStart = fileTransferred;
             try {
                 if ("whole-gzip".equals(step.transferMode())) {
-                    this.apiClient.downloadBlobToFile(step.download(), artifactFile, (bytesTransferred, ignoredTotalBytes) ->
+                    withTransportRetries(() -> this.apiClient.downloadBlobToFile(step.download(), artifactFile, (bytesTransferred, ignoredTotalBytes) ->
                             reportFileTransfer(fileIndex, stepStart, step.artifactSize(), bytesTransferred, downloadedBytes, totalDownloadBytes, perFileDownloadedBytes, totalFileBytes, allFileSizes, progressListener)
-                    );
+                    ));
                     fileTransferred = finalizeFileTransfer(fileIndex, stepStart, step.artifactSize(), downloadedBytes, totalDownloadBytes, perFileDownloadedBytes, totalFileBytes, allFileSizes, progressListener);
                     currentBase = artifactFile;
                 } else {
@@ -809,9 +813,9 @@ public final class WorldSyncCoordinator {
             long stepStart = fileTransferred;
             try {
                 if (fullTransferMode.equals(step.transferMode())) {
-                    this.apiClient.downloadRawBlobToFile(step.download(), artifactFile, (bytesTransferred, ignoredTotalBytes) ->
+                    withTransportRetries(() -> this.apiClient.downloadRawBlobToFile(step.download(), artifactFile, (bytesTransferred, ignoredTotalBytes) ->
                             reportFileTransfer(fileIndex, stepStart, step.artifactSize(), bytesTransferred, downloadedBytes, totalDownloadBytes, perFileDownloadedBytes, totalFileBytes, allFileSizes, progressListener)
-                    );
+                    ));
                     fileTransferred = finalizeFileTransfer(fileIndex, stepStart, step.artifactSize(), downloadedBytes, totalDownloadBytes, perFileDownloadedBytes, totalFileBytes, allFileSizes, progressListener);
                     currentBase = artifactFile;
                 } else if (deltaTransferMode.equals(step.transferMode())) {
@@ -819,9 +823,9 @@ public final class WorldSyncCoordinator {
                     if (baseFile == null || !Files.exists(baseFile)) {
                         throw new IOException("SharedWorld grouped artifact delta base was missing.");
                     }
-                    this.apiClient.downloadRawBlobToFile(step.download(), artifactFile, (bytesTransferred, ignoredTotalBytes) ->
+                    withTransportRetries(() -> this.apiClient.downloadRawBlobToFile(step.download(), artifactFile, (bytesTransferred, ignoredTotalBytes) ->
                             reportFileTransfer(fileIndex, stepStart, step.artifactSize(), bytesTransferred, downloadedBytes, totalDownloadBytes, perFileDownloadedBytes, totalFileBytes, allFileSizes, progressListener)
-                    );
+                    ));
                     fileTransferred = finalizeFileTransfer(fileIndex, stepStart, step.artifactSize(), downloadedBytes, totalDownloadBytes, perFileDownloadedBytes, totalFileBytes, allFileSizes, progressListener);
                     Path patchedFile = Files.createTempFile(this.worldStore.worldContainer(worldId), "pack-patched-", ".pack");
                     ArtifactDeltaEngine.applyDelta(baseFile, artifactFile, patchedFile);
@@ -983,21 +987,59 @@ public final class WorldSyncCoordinator {
     private record DownloadedFile(String relativePath, Path targetPath, Path tempPath) {
     }
 
+    private interface BlobTransfer {
+        void run() throws IOException, InterruptedException;
+    }
+
+    /**
+     * Bounded retry for blob transport failures only. Integrity failures
+     * (hash mismatches, missing delta bases) throw before or after the
+     * transfer itself and are never retried — sync fails closed on those.
+     * A retried transfer restarts its progress reporting, which can briefly
+     * overstate the progress bar; correctness is unaffected.
+     */
+    private void withTransportRetries(BlobTransfer transfer) throws IOException, InterruptedException {
+        SyncPolicy policy = this.activeSyncPolicy;
+        RetryPolicy retry = new RetryPolicy(3, policy == null ? 750L : policy.retryBaseDelayMs(), policy == null ? 8_000L : policy.retryMaxDelayMs());
+        IOException lastFailure = null;
+        for (int attempt = 1; attempt <= retry.maxAttempts(); attempt++) {
+            long delayMs = retry.delayBeforeAttemptMs(attempt);
+            if (delayMs > 0L) {
+                Thread.sleep(delayMs);
+            }
+            try {
+                transfer.run();
+                return;
+            } catch (IOException exception) {
+                if (!SharedWorldApiClient.isRetryableTransportError(exception) || !retry.shouldRetry(attempt)) {
+                    throw exception;
+                }
+                LOGGER.warn("SharedWorld blob transfer failed (attempt {}); retrying", attempt, exception);
+                lastFailure = exception;
+            }
+        }
+        throw lastFailure;
+    }
+
     private record SyncPolicy(
             int maxParallelDownloads,
             int maxConcurrentUploadPreparations,
             int maxConcurrentUploads,
-            int maxUploadStartsPerSecond
+            int maxUploadStartsPerSecond,
+            long retryBaseDelayMs,
+            long retryMaxDelayMs
     ) {
         private static SyncPolicy from(SyncPolicyDto dto) {
             if (dto == null) {
-                return new SyncPolicy(4, 1, 1, 1);
+                return new SyncPolicy(4, 1, 1, 1, 750L, 8_000L);
             }
             return new SyncPolicy(
                     Math.max(1, dto.maxParallelDownloads()),
                     Math.max(1, dto.maxConcurrentUploadPreparations()),
                     Math.max(1, dto.maxConcurrentUploads()),
-                    Math.max(1, dto.maxUploadStartsPerSecond())
+                    Math.max(1, dto.maxUploadStartsPerSecond()),
+                    Math.max(1L, dto.retryBaseDelayMs()),
+                    Math.max(1L, dto.retryMaxDelayMs())
             );
         }
     }

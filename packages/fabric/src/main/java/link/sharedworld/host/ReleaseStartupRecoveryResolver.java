@@ -19,8 +19,7 @@ final class ReleaseStartupRecoveryResolver {
                     || decision.backendFinalizationCompleted();
             return new Resolution(clearRecord);
         } catch (Exception exception) {
-            Throwable cause = SharedWorldReleaseCoordinator.rootCause(exception);
-            if (SharedWorldApiClient.isDeletedWorldError(cause) || SharedWorldApiClient.isMembershipRevokedError(cause)) {
+            if (SharedWorldApiClient.isDeletedWorldError(exception) || SharedWorldApiClient.isMembershipRevokedError(exception)) {
                 return new Resolution(true);
             }
             return new Resolution(false);
