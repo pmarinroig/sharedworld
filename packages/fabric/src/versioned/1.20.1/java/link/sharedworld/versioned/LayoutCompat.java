@@ -66,6 +66,15 @@ public final class LayoutCompat {
 
         @Override
         public void arrangeElements() {
+            // Nested child layouts (e.g. the button rows inside a vertical footer)
+            // report zero size until arranged; arrange them first so the packed
+            // length is computed from real sizes. The later super call re-arranges
+            // them idempotently before positioning.
+            this.visitChildren((Consumer<LayoutElement>) child -> {
+                if (child instanceof net.minecraft.client.gui.layouts.Layout childLayout) {
+                    childLayout.arrangeElements();
+                }
+            });
             int[] childCount = {0};
             int[] primarySum = {0};
             this.visitChildren((Consumer<LayoutElement>) child -> {
