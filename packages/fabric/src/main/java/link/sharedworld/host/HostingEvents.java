@@ -23,6 +23,10 @@ public interface HostingEvents {
     default void onHostStateCleared(String worldId) {
     }
 
+    /** The hosted world's member command grants changed; connected players need a permission refresh. */
+    default void onHostedMemberPermissionsChanged() {
+    }
+
     /** The backend reported the hosted world as deleted. */
     default void onWorldDeleted() {
     }

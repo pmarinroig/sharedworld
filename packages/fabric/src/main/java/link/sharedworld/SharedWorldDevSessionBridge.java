@@ -1,7 +1,11 @@
 package link.sharedworld;
 
+import java.util.Map;
+
+import link.sharedworld.host.MemberCommandGrant;
+
 public final class SharedWorldDevSessionBridge {
-    private static volatile State state = new State(false, false, false, null);
+    private static volatile State state = new State(false, false, false, null, Map.of());
 
     private SharedWorldDevSessionBridge() {
     }
@@ -12,7 +16,8 @@ public final class SharedWorldDevSessionBridge {
                 currentSessionIsDev,
                 backendAllowsInsecureE4mc,
                 current.hostingSharedWorld(),
-                current.hostingSharedWorldOwnerUuid()
+                current.hostingSharedWorldOwnerUuid(),
+                current.hostedMemberGrants()
         );
     }
 
@@ -26,7 +31,24 @@ public final class SharedWorldDevSessionBridge {
                 current.currentSessionIsDev(),
                 current.backendAllowsInsecureE4mc(),
                 hostingSharedWorld,
-                normalizeOwnerUuid(hostingSharedWorld ? ownerUuid : null)
+                normalizeOwnerUuid(hostingSharedWorld ? ownerUuid : null),
+                hostingSharedWorld ? current.hostedMemberGrants() : Map.of()
+        );
+    }
+
+    /**
+     * Replace the hosted world's member command grants. Keys must already be
+     * {@link link.sharedworld.host.SharedWorldHostPermissionPolicy#commandGrantKey}
+     * lookup keys. Ignored (cleared) while not hosting.
+     */
+    public static void setHostedMemberGrants(Map<String, MemberCommandGrant> grants) {
+        State current = state;
+        state = new State(
+                current.currentSessionIsDev(),
+                current.backendAllowsInsecureE4mc(),
+                current.hostingSharedWorld(),
+                current.hostingSharedWorldOwnerUuid(),
+                current.hostingSharedWorld() && grants != null ? Map.copyOf(grants) : Map.of()
         );
     }
 
@@ -46,6 +68,10 @@ public final class SharedWorldDevSessionBridge {
         return state.hostingSharedWorldOwnerUuid();
     }
 
+    public static Map<String, MemberCommandGrant> hostedMemberGrants() {
+        return state.hostedMemberGrants();
+    }
+
     public static boolean isInsecureDialtoneBypassAllowed() {
         State current = state;
         return current.currentSessionIsDev()
@@ -54,7 +80,7 @@ public final class SharedWorldDevSessionBridge {
     }
 
     public static void clear() {
-        state = new State(false, false, false, null);
+        state = new State(false, false, false, null, Map.of());
     }
 
     private static String normalizeOwnerUuid(String ownerUuid) {
@@ -68,7 +94,8 @@ public final class SharedWorldDevSessionBridge {
             boolean currentSessionIsDev,
             boolean backendAllowsInsecureE4mc,
             boolean hostingSharedWorld,
-            String hostingSharedWorldOwnerUuid
+            String hostingSharedWorldOwnerUuid,
+            Map<String, MemberCommandGrant> hostedMemberGrants
     ) {
     }
 }

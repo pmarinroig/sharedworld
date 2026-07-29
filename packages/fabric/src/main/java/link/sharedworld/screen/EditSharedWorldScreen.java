@@ -325,8 +325,18 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         this.drawKeyValue(guiGraphics, detailX + 12, detailY + 18, Component.translatable("screen.sharedworld.members_player"), this.selectedMember.playerName(), 84);
         this.drawKeyValue(guiGraphics, detailX + 12, detailY + 34, Component.translatable("screen.sharedworld.members_role"), formatRole(this.selectedMember.role()), 84);
         this.drawKeyValue(guiGraphics, detailX + 12, detailY + 50, Component.translatable("screen.sharedworld.members_joined"), formatTimestamp(this.selectedMember.joinedAt()), 84);
+        this.drawKeyValue(
+                guiGraphics,
+                detailX + 12,
+                detailY + 66,
+                Component.translatable("screen.sharedworld.members_commands"),
+                Component.translatable(this.isOwnerMembership(this.selectedMember) || this.selectedMember.canUseCommands()
+                        ? "screen.sharedworld.members_commands_allowed"
+                        : "screen.sharedworld.members_commands_blocked").getString(),
+                84
+        );
         if (!this.isOwner() && !this.isOwnerMembership(this.selectedMember)) {
-            this.drawWrappedText(guiGraphics, Component.translatable("screen.sharedworld.members_owner_only"), detailX + 12, detailY + 80, detailWidth - 24, 0xFFFFD37A);
+            this.drawWrappedText(guiGraphics, Component.translatable("screen.sharedworld.members_owner_only"), detailX + 12, detailY + 96, detailWidth - 24, 0xFFFFD37A);
         }
 
     }
@@ -377,8 +387,12 @@ public final class EditSharedWorldScreen extends VersionedScreen {
             this.primaryButton.active = !this.loading && !this.actionInFlight && this.isOwner() && this.selectedSnapshot != null && !this.selectedSnapshot.isLatest();
         } else if (currentTab == this.membersTab) {
             this.primaryButton.visible = true;
-            this.secondaryButton.visible = false;
-            this.secondaryButton.active = false;
+            this.secondaryButton.visible = true;
+            this.secondaryButton.setMessage(Component.translatable(
+                    this.selectedMember != null && this.selectedMember.canUseCommands()
+                            ? "screen.sharedworld.revoke_commands"
+                            : "screen.sharedworld.allow_commands"));
+            this.secondaryButton.active = !this.loading && !this.actionInFlight && this.isOwner() && this.selectedMember != null && !this.isOwnerMembership(this.selectedMember);
             this.primaryButton.setMessage(Component.translatable(this.confirmKick
                     ? "screen.sharedworld.confirm_remove"
                     : "screen.sharedworld.remove_member"));
@@ -469,6 +483,10 @@ public final class EditSharedWorldScreen extends VersionedScreen {
                 this.confirmRestore = false;
                 this.refreshStatus();
             }
+            return;
+        }
+        if (currentTab == this.membersTab) {
+            this.toggleSelectedMemberCommands();
             return;
         }
     }
@@ -598,6 +616,38 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         }, error -> {
             this.actionInFlight = false;
             this.confirmKick = false;
+            this.setStatusError(AbstractSharedWorldMetadataScreen.friendlyMessage(error));
+            this.updateButtons();
+        });
+    }
+
+    private void toggleSelectedMemberCommands() {
+        WorldMembershipDto member = this.selectedMember;
+        if (member == null || this.isOwnerMembership(member) || !this.isOwner()) {
+            return;
+        }
+        boolean grantCommands = !member.canUseCommands();
+        this.actionInFlight = true;
+        this.setStatusWarningKey("screen.sharedworld.edit_status_updating_permissions");
+        this.dataController.setMemberCommandPermission(this.world.id(), member.playerUuid(), grantCommands, updated -> {
+            this.actionInFlight = false;
+            this.setStatusSuccessKey(grantCommands
+                    ? "screen.sharedworld.edit_status_commands_allowed"
+                    : "screen.sharedworld.edit_status_commands_revoked");
+            // Owner-hosting shortcut: reach the live integrated server now rather
+            // than on the next heartbeat echo.
+            var hostingManager = SharedWorldClient.hostingManager();
+            if (hostingManager != null) {
+                hostingManager.applyLocalMemberPermissionChange(
+                        this.world.id(),
+                        member.playerUuid(),
+                        member.playerName(),
+                        grantCommands
+                );
+            }
+            this.reloadData();
+        }, error -> {
+            this.actionInFlight = false;
             this.setStatusError(AbstractSharedWorldMetadataScreen.friendlyMessage(error));
             this.updateButtons();
         });

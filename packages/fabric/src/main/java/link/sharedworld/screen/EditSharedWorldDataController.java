@@ -123,6 +123,28 @@ final class EditSharedWorldDataController {
         }));
     }
 
+    void setMemberCommandPermission(
+            String worldId,
+            String playerUuid,
+            boolean canUseCommands,
+            Consumer<WorldMembershipDto> onSuccess,
+            Consumer<Throwable> onError
+    ) {
+        CompletableFuture.supplyAsync(() -> {
+            try {
+                return this.apiClient.setMemberCommandPermission(worldId, playerUuid, canUseCommands);
+            } catch (Exception exception) {
+                throw new RuntimeException(exception);
+            }
+        }, this.ioExecutor).whenComplete((membership, error) -> this.mainThreadExecutor.accept(() -> {
+            if (error != null) {
+                onError.accept(rootCause(error));
+                return;
+            }
+            onSuccess.accept(membership);
+        }));
+    }
+
     static List<WorldMembershipDto> normalizedMemberships(WorldDetailsDto details) {
         List<WorldMembershipDto> memberships = details.memberships() == null
                 ? new ArrayList<>()

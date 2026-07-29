@@ -242,6 +242,11 @@ public final class SharedWorldClient implements ClientModInitializer {
         }
 
         @Override
+        public void onHostedMemberPermissionsChanged() {
+            refreshHostedPermissionLevels();
+        }
+
+        @Override
         public void onWorldDeleted() {
             releaseCoordinator.onWorldDeleted();
         }
@@ -276,6 +281,9 @@ public final class SharedWorldClient implements ClientModInitializer {
             }
             for (var serverPlayer : playerList.getPlayers()) {
                 playerList.sendPlayerPermissionLevel(serverPlayer);
+                // Re-send the command tree so .requires() gates re-evaluate against
+                // the player's new permission level without a reconnect.
+                server.getCommands().sendCommands(serverPlayer);
             }
         }
     }

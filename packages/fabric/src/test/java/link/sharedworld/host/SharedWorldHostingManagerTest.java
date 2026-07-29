@@ -3,6 +3,7 @@ package link.sharedworld.host;
 import com.google.gson.Gson;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import link.sharedworld.SharedWorldDevSessionBridge;
 import link.sharedworld.api.SharedWorldApiClient;
 import link.sharedworld.host.HostingEvents;
 import link.sharedworld.api.SharedWorldModels;
@@ -33,6 +34,7 @@ import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -260,6 +262,88 @@ final class SharedWorldHostingManagerTest {
                 "SharedWorld host startup requires a finalized snapshot manifest. Fresh-world startup is no longer supported.",
                 error.getMessage()
         );
+    }
+
+    @Test
+    void heartbeatMembershipsSeedBridgeGrantsAndFireOneRefreshPerChange() throws Exception {
+        AtomicInteger permissionRefreshes = new AtomicInteger();
+        HostingEvents events = new HostingEvents() {
+            @Override
+            public void onHostedMemberPermissionsChanged() {
+                permissionRefreshes.incrementAndGet();
+            }
+        };
+        SharedWorldHostingManager manager = new SharedWorldHostingManager(
+                apiClient(),
+                new ManagedWorldStore(this.tempDir.resolve("managed-heartbeat-grants")),
+                null,
+                new RecordingWorldOpenController(),
+                new HostStartupProgressRelayController(
+                        (worldId, runtimeEpoch, hostToken, progress) -> {
+                        },
+                        Runnable::run,
+                        () -> 0L
+                ),
+                new InMemoryHostRecoveryStore(),
+                events,
+                Runnable::run,
+                Runnable::run
+        );
+
+        setField(manager, "world", world("world-1", "Handoff World"));
+        setField(manager, "hostPlayerUuid", HOST_UUID);
+        setField(manager, "runtimeEpoch", 7L);
+        setField(manager, "hostToken", "token-7");
+        setField(manager, "hostSessionGeneration", 1L);
+        setField(manager, "startupAttemptId", 7L);
+        setField(manager, "publishedJoinTarget", "join.example");
+        setField(manager, "phase", SharedWorldHostingManager.Phase.RUNNING);
+        ((AtomicBoolean) getField(manager, "startupStarted")).set(true);
+
+        String memberUuid = "33333333-3333-3333-3333-333333333333";
+        SharedWorldDevSessionBridge.setHostingSharedWorld(true, HOST_UUID);
+        try {
+            Method onHeartbeatSucceeded = SharedWorldHostingManager.class.getDeclaredMethod(
+                    "onHeartbeatSucceeded",
+                    Class.forName("link.sharedworld.host.SharedWorldHostingManager$HostAttemptContext"),
+                    SharedWorldModels.HostHeartbeatResponseDto.class,
+                    String.class,
+                    boolean.class
+            );
+            onHeartbeatSucceeded.setAccessible(true);
+            SharedWorldModels.HostHeartbeatResponseDto response = heartbeatResponseWithMembers(
+                    "world-1",
+                    "host-live",
+                    7L,
+                    "join.example",
+                    new SharedWorldModels.HostHeartbeatMembershipDto[]{
+                            new SharedWorldModels.HostHeartbeatMembershipDto(HOST_UUID, "Host", false),
+                            new SharedWorldModels.HostHeartbeatMembershipDto(memberUuid, "Guest", true)
+                    }
+            );
+
+            onHeartbeatSucceeded.invoke(manager, hostAttemptContext(1L, 7L, "world-1", 7L, "token-7"), response, "join.example", false);
+
+            assertEquals(1, permissionRefreshes.get());
+            MemberCommandGrant grant = SharedWorldDevSessionBridge.hostedMemberGrants()
+                    .get(SharedWorldHostPermissionPolicy.commandGrantKey(memberUuid));
+            assertNotNull(grant);
+            assertTrue(grant.canUseCommands());
+            assertEquals("Guest", grant.playerName());
+
+            // An identical membership list must not re-trigger a refresh.
+            onHeartbeatSucceeded.invoke(manager, hostAttemptContext(1L, 7L, "world-1", 7L, "token-7"), response, "join.example", false);
+            assertEquals(1, permissionRefreshes.get());
+
+            // The owner-hosting shortcut applies a toggle without waiting for a heartbeat.
+            manager.applyLocalMemberPermissionChange("world-1", memberUuid, "Guest", false);
+            assertEquals(2, permissionRefreshes.get());
+            assertFalse(SharedWorldDevSessionBridge.hostedMemberGrants()
+                    .get(SharedWorldHostPermissionPolicy.commandGrantKey(memberUuid))
+                    .canUseCommands());
+        } finally {
+            SharedWorldDevSessionBridge.clear();
+        }
     }
 
     @Test
@@ -806,6 +890,16 @@ final class SharedWorldHostingManagerTest {
     }
 
     private static SharedWorldModels.HostHeartbeatResponseDto heartbeatResponse(String worldId, String phase, long runtimeEpoch, String joinTarget) {
+        return heartbeatResponseWithMembers(worldId, phase, runtimeEpoch, joinTarget, new SharedWorldModels.HostHeartbeatMembershipDto[0]);
+    }
+
+    private static SharedWorldModels.HostHeartbeatResponseDto heartbeatResponseWithMembers(
+            String worldId,
+            String phase,
+            long runtimeEpoch,
+            String joinTarget,
+            SharedWorldModels.HostHeartbeatMembershipDto[] memberships
+    ) {
         return new SharedWorldModels.HostHeartbeatResponseDto(
                 worldId,
                 phase,
@@ -822,7 +916,7 @@ final class SharedWorldHostingManagerTest {
                 null,
                 null,
                 null,
-                new SharedWorldModels.HostHeartbeatMembershipDto[0]
+                memberships
         );
     }
 

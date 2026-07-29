@@ -3,6 +3,7 @@ package link.sharedworld.host;
 import link.sharedworld.SharedWorldDevSessionBridge;
 import link.sharedworld.SharedWorldText;
 import link.sharedworld.api.SharedWorldApiClient;
+import link.sharedworld.api.SharedWorldModels;
 import link.sharedworld.api.SharedWorldModels.HostAssignmentDto;
 import link.sharedworld.api.SharedWorldModels.HostHeartbeatResponseDto;
 import link.sharedworld.api.SharedWorldModels.StartupProgressDto;
@@ -27,6 +28,8 @@ import java.nio.file.Path;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
@@ -489,6 +492,30 @@ public final class SharedWorldHostingManager {
         return this.saveInFlight.get() != 0L;
     }
 
+    /**
+     * Owner-hosting shortcut: when the owner toggles a member's command permission
+     * while hosting that world themselves, apply it to the live server immediately
+     * instead of waiting for the next heartbeat to echo it back.
+     */
+    public void applyLocalMemberPermissionChange(String worldId, String playerUuid, String playerName, boolean canUseCommands) {
+        ActiveHostSession session = activeHostSession();
+        if (session == null
+                || worldId == null
+                || !worldId.equals(session.worldId())
+                || !SharedWorldDevSessionBridge.isHostingSharedWorld()
+                || playerUuid == null
+                || playerUuid.isBlank()) {
+            return;
+        }
+        Map<String, MemberCommandGrant> grants = new LinkedHashMap<>(SharedWorldDevSessionBridge.hostedMemberGrants());
+        grants.put(
+                SharedWorldHostPermissionPolicy.commandGrantKey(playerUuid),
+                new MemberCommandGrant(playerName, canUseCommands)
+        );
+        SharedWorldDevSessionBridge.setHostedMemberGrants(grants);
+        this.events.onHostedMemberPermissionsChanged();
+    }
+
     public void beginCoordinatedRelease() {
         this.coordinatedRelease = CoordinatedRelease.ACTIVE;
     }
@@ -759,6 +786,33 @@ public final class SharedWorldHostingManager {
             SharedWorldDevSessionBridge.setHostingSharedWorld(true, this.world.ownerUuid());
             this.events.onHostSessionLive(this.world.id(), this.world.name());
             setPhase(Phase.RUNNING, SharedWorldText.string("screen.sharedworld.hosting_live_at", confirmedJoinTarget));
+        }
+        applyHeartbeatMemberships(runtime.memberships());
+    }
+
+    /**
+     * Keep the bridge's member command grants in sync with the heartbeat's
+     * membership list, so owner-side permission toggles reach a live host within
+     * one heartbeat interval. Guests can only connect after the first live
+     * heartbeat published the join target, so seeding here is early enough.
+     */
+    private void applyHeartbeatMemberships(SharedWorldModels.HostHeartbeatMembershipDto[] memberships) {
+        if (memberships == null || !SharedWorldDevSessionBridge.isHostingSharedWorld()) {
+            return;
+        }
+        Map<String, MemberCommandGrant> grants = new LinkedHashMap<>();
+        for (SharedWorldModels.HostHeartbeatMembershipDto membership : memberships) {
+            if (membership == null || membership.playerUuid() == null || membership.playerUuid().isBlank()) {
+                continue;
+            }
+            grants.put(
+                    SharedWorldHostPermissionPolicy.commandGrantKey(membership.playerUuid()),
+                    new MemberCommandGrant(membership.playerName(), membership.canUseCommands())
+            );
+        }
+        if (!grants.equals(SharedWorldDevSessionBridge.hostedMemberGrants())) {
+            SharedWorldDevSessionBridge.setHostedMemberGrants(grants);
+            this.events.onHostedMemberPermissionsChanged();
         }
     }
 

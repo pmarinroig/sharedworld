@@ -55,10 +55,14 @@ final class MemberBrowserList extends link.sharedworld.versioned.VersionedSelect
             int x = this.getContentX();
             int y = this.getContentY();
             guiGraphics.drawString(MemberBrowserList.this.minecraft.font, Component.literal(this.membership.playerName()), x, y + 4, 0xFFFFFFFF);
-            String subtitle = SharedWorldText.string("owner".equalsIgnoreCase(this.membership.role())
+            boolean isOwnerRow = "owner".equalsIgnoreCase(this.membership.role());
+            String subtitle = SharedWorldText.string(isOwnerRow
                     ? "screen.sharedworld.role_owner"
                     : "screen.sharedworld.role_member");
-            guiGraphics.drawString(MemberBrowserList.this.minecraft.font, Component.literal(subtitle), x, y + 16, "owner".equalsIgnoreCase(this.membership.role()) ? 0xFFFFD37A : 0xFF9AA8BA);
+            if (!isOwnerRow && this.membership.canUseCommands()) {
+                subtitle = subtitle + " • " + SharedWorldText.string("screen.sharedworld.members_commands");
+            }
+            guiGraphics.drawString(MemberBrowserList.this.minecraft.font, Component.literal(subtitle), x, y + 16, isOwnerRow ? 0xFFFFD37A : 0xFF9AA8BA);
         }
 
         @Override
