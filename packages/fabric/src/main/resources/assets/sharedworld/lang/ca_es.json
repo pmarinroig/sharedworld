@@ -242,5 +242,17 @@
   "screen.sharedworld.waiting_error_unknown_action": "Shared World ha retornat una acció d'espera desconeguda.",
   "screen.sharedworld.waiting_error_invalid_response": "Shared World ha retornat una resposta d'espera no vàlida.",
   "screen.sharedworld.error_host_version_mismatch": "L'amfitrió actual juga a Minecraft %s, però tu ets a %s. Fes servir la mateixa versió de Minecraft que l'amfitrió per unir-t'hi.",
-  "screen.sharedworld.error_snapshot_newer_client": "Aquest món es va desar per última vegada a Minecraft %s, que és més recent que la teva %s. Actualitza Minecraft per allotjar-lo: obrir-lo aquí podria corrompre el món."
+  "screen.sharedworld.error_snapshot_newer_client": "Aquest món es va desar per última vegada a Minecraft %s, que és més recent que la teva %s. Actualitza Minecraft per allotjar-lo: obrir-lo aquí podria corrompre el món.",
+  "sharedworld.command.owner_only": "Només el propietari del món pot fer servir aquesta ordre, i només mentre allotja el seu propi món compartit.",
+  "sharedworld.command.unknown_member": "Cap membre d'aquest món compartit es diu %s.",
+  "sharedworld.command.cannot_target_owner": "El propietari sempre té permisos d'ordres.",
+  "sharedworld.command.cannot_target_self": "No et pots eliminar del teu propi món compartit.",
+  "sharedworld.command.op.success": "%s ara pot fer servir ordres.",
+  "sharedworld.command.op.already": "%s ja pot fer servir ordres.",
+  "sharedworld.command.deop.success": "%s ja no pot fer servir ordres.",
+  "sharedworld.command.deop.already": "%s ja no té permisos d'ordres.",
+  "sharedworld.command.ban.success": "%s ha estat eliminat d'aquest món compartit i el codi d'invitació s'ha rotat.",
+  "sharedworld.command.ban.disconnected": "Has estat eliminat d'aquest món compartit.",
+  "sharedworld.command.kick.success": "S'han expulsat %s jugador(s) de la sessió.",
+  "sharedworld.command.kick.nobody": "No s'ha pogut expulsar cap jugador."
 }

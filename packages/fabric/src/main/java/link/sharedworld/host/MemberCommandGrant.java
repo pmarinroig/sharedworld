@@ -3,7 +3,8 @@ package link.sharedworld.host;
 /**
  * A member's command-permission state while this client hosts their shared world,
  * keyed in the bridge by {@link SharedWorldHostPermissionPolicy#commandGrantKey}.
- * The player name rides along so in-game commands can resolve offline members.
+ * The canonical (hyphenated) UUID and player name ride along so in-game commands
+ * can resolve members by name — including offline ones — and address the backend.
  */
-public record MemberCommandGrant(String playerName, boolean canUseCommands) {
+public record MemberCommandGrant(String playerUuid, String playerName, boolean canUseCommands) {
 }

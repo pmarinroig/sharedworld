@@ -242,5 +242,17 @@
   "screen.sharedworld.waiting_error_unknown_action": "Shared World devolvió una acción de espera desconocida.",
   "screen.sharedworld.waiting_error_invalid_response": "Shared World devolvió una respuesta de espera no válida.",
   "screen.sharedworld.error_host_version_mismatch": "El anfitrión actual juega en Minecraft %s, pero tú estás en %s. Usa la misma versión de Minecraft que el anfitrión para unirte.",
-  "screen.sharedworld.error_snapshot_newer_client": "Este mundo se guardó por última vez en Minecraft %s, que es más reciente que tu %s. Actualiza Minecraft para alojarlo: abrirlo aquí podría corromper el mundo."
+  "screen.sharedworld.error_snapshot_newer_client": "Este mundo se guardó por última vez en Minecraft %s, que es más reciente que tu %s. Actualiza Minecraft para alojarlo: abrirlo aquí podría corromper el mundo.",
+  "sharedworld.command.owner_only": "Solo el propietario del mundo puede usar este comando, y solo mientras aloja su propio mundo compartido.",
+  "sharedworld.command.unknown_member": "Ningún miembro de este mundo compartido se llama %s.",
+  "sharedworld.command.cannot_target_owner": "El propietario siempre tiene permisos de comandos.",
+  "sharedworld.command.cannot_target_self": "No puedes eliminarte de tu propio mundo compartido.",
+  "sharedworld.command.op.success": "%s ahora puede usar comandos.",
+  "sharedworld.command.op.already": "%s ya puede usar comandos.",
+  "sharedworld.command.deop.success": "%s ya no puede usar comandos.",
+  "sharedworld.command.deop.already": "%s ya no tiene permisos de comandos.",
+  "sharedworld.command.ban.success": "%s fue eliminado de este mundo compartido y el código de invitación se rotó.",
+  "sharedworld.command.ban.disconnected": "Fuiste eliminado de este mundo compartido.",
+  "sharedworld.command.kick.success": "Se expulsó a %s jugador(es) de la sesión.",
+  "sharedworld.command.kick.nobody": "No se pudo expulsar a ningún jugador."
 }

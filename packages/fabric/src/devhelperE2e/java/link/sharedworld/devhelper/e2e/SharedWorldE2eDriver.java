@@ -1,8 +1,10 @@
 package link.sharedworld.devhelper.e2e;
 
 import link.sharedworld.SharedWorldClient;
+import link.sharedworld.SharedWorldDevSessionBridge;
 import link.sharedworld.SharedWorldPlaySessionTracker;
 import link.sharedworld.api.SharedWorldModels.WorldSummaryDto;
+import link.sharedworld.host.MemberCommandGrant;
 import link.sharedworld.host.SharedWorldHostingManager;
 import link.sharedworld.integration.E4mcDomainTracker;
 import link.sharedworld.screen.SharedWorldErrorScreen;
@@ -52,6 +54,9 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
         AWAIT_CANCEL_COMPLETE,
         AWAIT_PUBLISH,
         AWAIT_HOST_LIVE,
+        OP_DRILL_AWAIT_COMMAND,
+        OP_DRILL_AWAIT_GRANT,
+        OP_DRILL_AWAIT_DIFFICULTY,
         AWAIT_SHUTDOWN_COMMAND,
         AWAIT_RELEASE_COMPLETE,
         AWAIT_EXIT
@@ -64,6 +69,7 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
         AWAIT_WORLD_LISTED,
         BEGIN_JOIN,
         AWAIT_INGAME,
+        AWAIT_COMMAND_DRILL,
         AWAIT_HOST_DEPARTURE,
         AWAIT_EXIT
     }
@@ -251,6 +257,40 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
             case AWAIT_HOST_LIVE -> {
                 if (SharedWorldClient.hostingManager().phase() == SharedWorldHostingManager.Phase.RUNNING) {
                     this.markers.emit("host-live", this.targetWorld.get().id());
+                    this.hostStep = HostStep.OP_DRILL_AWAIT_COMMAND;
+                }
+            }
+            case OP_DRILL_AWAIT_COMMAND -> {
+                // The host (owner) grants the guest command permission through the
+                // real in-game /op — the same chat-command path a player uses.
+                if (minecraft.player == null) {
+                    return;
+                }
+                if ("op-drill".equals(this.commands.poll())) {
+                    String guestName = firstNonOwnerMemberName();
+                    if (guestName == null) {
+                        this.markers.emit("op-drill-failed", "no non-owner member in hosted grants");
+                        return;
+                    }
+                    minecraft.player.connection.sendCommand("op " + guestName);
+                    this.markers.emit("op-drill-sent", guestName);
+                    this.hostStep = HostStep.OP_DRILL_AWAIT_GRANT;
+                }
+            }
+            case OP_DRILL_AWAIT_GRANT -> {
+                boolean granted = SharedWorldDevSessionBridge.hostedMemberGrants().values().stream()
+                        .anyMatch(MemberCommandGrant::canUseCommands);
+                if (granted) {
+                    this.markers.emit("op-drill-granted", null);
+                    this.hostStep = HostStep.OP_DRILL_AWAIT_DIFFICULTY;
+                }
+            }
+            case OP_DRILL_AWAIT_DIFFICULTY -> {
+                // Proof the grant is live: the guest's vanilla /difficulty took
+                // effect on the integrated server.
+                IntegratedServer server = minecraft.getSingleplayerServer();
+                if (server != null && server.getWorldData().getDifficulty() == net.minecraft.world.Difficulty.HARD) {
+                    this.markers.emit("difficulty-changed", "hard");
                     this.hostStep = HostStep.AWAIT_SHUTDOWN_COMMAND;
                 }
             }
@@ -367,6 +407,17 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
                 if (minecraft.level != null && session != null
                         && session.role() == SharedWorldPlaySessionTracker.SessionRole.GUEST) {
                     this.markers.emit("guest-ingame", session.worldId());
+                    this.guestStep = GuestStep.AWAIT_COMMAND_DRILL;
+                }
+            }
+            case AWAIT_COMMAND_DRILL -> {
+                if (minecraft.player == null) {
+                    return;
+                }
+                if ("command-drill".equals(this.commands.poll())) {
+                    // Freshly /op'ed by the host; a vanilla admin command must work.
+                    minecraft.player.connection.sendCommand("difficulty hard");
+                    this.markers.emit("guest-command-sent", "difficulty hard");
                     this.guestStep = GuestStep.AWAIT_HOST_DEPARTURE;
                 }
             }
@@ -388,6 +439,16 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
     }
 
     // ---------------------------------------------------------------- shared
+
+    private static String firstNonOwnerMemberName() {
+        String ownerUuid = SharedWorldDevSessionBridge.hostingSharedWorldOwnerUuid();
+        for (MemberCommandGrant grant : SharedWorldDevSessionBridge.hostedMemberGrants().values()) {
+            if (ownerUuid == null || !link.sharedworld.CanonicalPlayerIdentity.sameUuid(grant.playerUuid(), ownerUuid)) {
+                return grant.playerName();
+            }
+        }
+        return null;
+    }
 
     private void lookUpWorldByName(java.util.function.Consumer<WorldSummaryDto> onFound) {
         // Refresh at most every 2 seconds and never concurrently.

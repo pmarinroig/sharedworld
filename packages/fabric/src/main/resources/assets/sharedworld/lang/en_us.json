@@ -242,5 +242,17 @@
   "screen.sharedworld.waiting_error_unknown_action": "Shared World returned an unknown waiting action.",
   "screen.sharedworld.waiting_error_invalid_response": "Shared World returned an invalid waiting response.",
   "screen.sharedworld.error_host_version_mismatch": "The current host is playing on Minecraft %s, but you are on %s. Match the host's Minecraft version to join.",
-  "screen.sharedworld.error_snapshot_newer_client": "This world was last saved on Minecraft %s, which is newer than your %s. Update Minecraft to host it - opening it here could corrupt the world."
+  "screen.sharedworld.error_snapshot_newer_client": "This world was last saved on Minecraft %s, which is newer than your %s. Update Minecraft to host it - opening it here could corrupt the world.",
+  "sharedworld.command.owner_only": "Only the world owner can use this command, and only while hosting their own shared world.",
+  "sharedworld.command.unknown_member": "No member of this shared world is named %s.",
+  "sharedworld.command.cannot_target_owner": "The owner always has command permissions.",
+  "sharedworld.command.cannot_target_self": "You cannot remove yourself from your own shared world.",
+  "sharedworld.command.op.success": "%s can now use commands.",
+  "sharedworld.command.op.already": "%s can already use commands.",
+  "sharedworld.command.deop.success": "%s can no longer use commands.",
+  "sharedworld.command.deop.already": "%s already has no command permissions.",
+  "sharedworld.command.ban.success": "%s was removed from this shared world and the share code was rotated.",
+  "sharedworld.command.ban.disconnected": "You were removed from this shared world.",
+  "sharedworld.command.kick.success": "Kicked %s player(s) from the session.",
+  "sharedworld.command.kick.nobody": "No matching players could be kicked."
 }

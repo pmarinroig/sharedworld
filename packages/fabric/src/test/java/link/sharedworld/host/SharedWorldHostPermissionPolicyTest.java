@@ -52,7 +52,7 @@ final class SharedWorldHostPermissionPolicyTest {
     void ownerTierBeatsAnyGrantEntry() {
         Map<String, MemberCommandGrant> grants = Map.of(
                 SharedWorldHostPermissionPolicy.commandGrantKey(OWNER_UUID),
-                new MemberCommandGrant("Owner", false)
+                new MemberCommandGrant(OWNER_UUID, "Owner", false)
         );
         assertEquals(
                 SharedWorldHostPermissionPolicy.Tier.OWNER,
@@ -64,7 +64,7 @@ final class SharedWorldHostPermissionPolicyTest {
     void grantedMemberGetsOperatorTier() {
         Map<String, MemberCommandGrant> grants = Map.of(
                 SharedWorldHostPermissionPolicy.commandGrantKey(MEMBER_UUID),
-                new MemberCommandGrant("Member", true)
+                new MemberCommandGrant(MEMBER_UUID, "Member", true)
         );
         assertEquals(
                 SharedWorldHostPermissionPolicy.Tier.OPERATOR,
@@ -76,7 +76,7 @@ final class SharedWorldHostPermissionPolicyTest {
     void grantLookupIsHyphenAndCaseInsensitive() {
         Map<String, MemberCommandGrant> grants = Map.of(
                 SharedWorldHostPermissionPolicy.commandGrantKey(MEMBER_UUID),
-                new MemberCommandGrant("Member", true)
+                new MemberCommandGrant(MEMBER_UUID, "Member", true)
         );
         assertEquals(
                 SharedWorldHostPermissionPolicy.Tier.OPERATOR,
@@ -93,7 +93,7 @@ final class SharedWorldHostPermissionPolicyTest {
     void ungrantedMembersUnknownProfilesAndGarbageStayNone() {
         Map<String, MemberCommandGrant> grants = Map.of(
                 SharedWorldHostPermissionPolicy.commandGrantKey(MEMBER_UUID),
-                new MemberCommandGrant("Member", false)
+                new MemberCommandGrant(MEMBER_UUID, "Member", false)
         );
         assertEquals(
                 SharedWorldHostPermissionPolicy.Tier.NONE,
@@ -121,7 +121,7 @@ final class SharedWorldHostPermissionPolicyTest {
     void notHostingIsAlwaysNoneTier() {
         Map<String, MemberCommandGrant> grants = Map.of(
                 SharedWorldHostPermissionPolicy.commandGrantKey(MEMBER_UUID),
-                new MemberCommandGrant("Member", true)
+                new MemberCommandGrant(MEMBER_UUID, "Member", true)
         );
         assertEquals(
                 SharedWorldHostPermissionPolicy.Tier.NONE,

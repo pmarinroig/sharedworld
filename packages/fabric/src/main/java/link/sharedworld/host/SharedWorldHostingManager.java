@@ -492,6 +492,11 @@ public final class SharedWorldHostingManager {
         return this.saveInFlight.get() != 0L;
     }
 
+    /** Canonical UUID of the local host player while a host attempt is active; null otherwise. */
+    public String activeHostPlayerUuid() {
+        return activeHostSession() == null ? null : this.hostPlayerUuid;
+    }
+
     /**
      * Owner-hosting shortcut: when the owner toggles a member's command permission
      * while hosting that world themselves, apply it to the live server immediately
@@ -510,7 +515,7 @@ public final class SharedWorldHostingManager {
         Map<String, MemberCommandGrant> grants = new LinkedHashMap<>(SharedWorldDevSessionBridge.hostedMemberGrants());
         grants.put(
                 SharedWorldHostPermissionPolicy.commandGrantKey(playerUuid),
-                new MemberCommandGrant(playerName, canUseCommands)
+                new MemberCommandGrant(playerUuid, playerName, canUseCommands)
         );
         SharedWorldDevSessionBridge.setHostedMemberGrants(grants);
         this.events.onHostedMemberPermissionsChanged();
@@ -807,7 +812,7 @@ public final class SharedWorldHostingManager {
             }
             grants.put(
                     SharedWorldHostPermissionPolicy.commandGrantKey(membership.playerUuid()),
-                    new MemberCommandGrant(membership.playerName(), membership.canUseCommands())
+                    new MemberCommandGrant(membership.playerUuid(), membership.playerName(), membership.canUseCommands())
             );
         }
         if (!grants.equals(SharedWorldDevSessionBridge.hostedMemberGrants())) {
