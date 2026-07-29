@@ -24,7 +24,8 @@ import {
   requireOwner,
   requireSessionAccess,
   requireWorldDetails,
-  requireWorldStorageBinding
+  requireWorldStorageBinding,
+  resolveRuntimeState
 } from "./runtime-access.ts";
 
 const SNAPSHOT_RETENTION_ALL_RECENT_MS = 24 * 60 * 60_000;
@@ -43,6 +44,10 @@ export async function latestManifest(svc: ServiceContext, ctx: RequestContext, w
 /**
  * Restoring a backup republishes it as the newest snapshot rather than rewriting
  * history; the restored manifest keeps pointing at the already-stored artifacts.
+ * The republished snapshot carries the original's game-version stamps so the
+ * cross-version guardrail keeps working on restored worlds, and restore is
+ * refused while any host runtime is active: changing the latest snapshot under
+ * a live host would invalidate its in-flight delta bases.
  */
 export async function restoreSnapshot(
   svc: ServiceContext,
@@ -53,12 +58,19 @@ export async function restoreSnapshot(
 ): Promise<SnapshotActionResult> {
   const world = await requireWorldDetails(svc, worldId, ctx.playerUuid);
   requireOwner(world, ctx, "restore backups");
+  const resolved = await resolveRuntimeState(svc, worldId, now);
+  if (resolved.runtime != null) {
+    throw new HttpError(409, "world_busy", "SharedWorld backups cannot be restored while the world is being hosted.");
+  }
   const snapshot = await svc.repository.getSnapshot(worldId, snapshotId);
   if (!snapshot) {
     throw snapshotNotFoundError();
   }
+  const gameVersions = await svc.repository.getSnapshotGameVersions(worldId, snapshotId);
   await svc.repository.finalizeSnapshot(worldId, ctx, {
     baseSnapshotId: snapshot.snapshotId,
+    dataVersion: gameVersions?.dataVersion ?? null,
+    minecraftVersion: gameVersions?.minecraftVersion ?? null,
     files: snapshot.files,
     packs: snapshot.packs
   }, now);
@@ -84,6 +96,10 @@ export async function deleteSnapshot(
   }
   if (world.lastSnapshotId === snapshotId) {
     throw new HttpError(409, "cannot_delete_latest_snapshot", "The latest backup cannot be deleted.");
+  }
+  const deltaBases = await svc.repository.listSnapshotDeltaBases(worldId);
+  if (deltaBases.some((edge) => edge.baseSnapshotId === snapshotId && edge.snapshotId !== snapshotId)) {
+    throw new HttpError(409, "snapshot_base_in_use", "Another backup still builds on this one, so it cannot be deleted.");
   }
   const deletion = await svc.repository.deleteSnapshots(worldId, [snapshotId]);
   await deleteUnreferencedBlobs(svc, binding, deletion.unreferencedStorageKeys);
@@ -124,6 +140,7 @@ export async function finalizeSnapshot(
 export async function applySnapshotRetention(svc: ServiceContext, worldId: string, now: Date): Promise<void> {
   const snapshots = await svc.repository.listSnapshotsForWorld(worldId);
   const keep = selectSnapshotsToKeep(snapshots, now);
+  await expandKeepSetWithDeltaBases(svc, worldId, keep);
   const deleteIds = snapshots
     .map((snapshot) => snapshot.snapshotId)
     .filter((snapshotId) => !keep.has(snapshotId));
@@ -371,6 +388,33 @@ function isZeroOrNullChainDepth(value: number | null): boolean {
 
 function snapshotNotFoundError(): HttpError {
   return new HttpError(404, "snapshot_not_found", "SharedWorld backup not found.");
+}
+
+/**
+ * Retention buckets purely by age, but a delta snapshot is only reconstructable
+ * while every base in its chain still exists: pruning a base would let
+ * deleteSnapshots reclaim the base's blobs and leave the surviving delta
+ * permanently unreconstructable. Keep the transitive closure of delta bases
+ * reachable from every kept snapshot.
+ */
+async function expandKeepSetWithDeltaBases(svc: ServiceContext, worldId: string, keep: Set<string>): Promise<void> {
+  const edges = await svc.repository.listSnapshotDeltaBases(worldId);
+  const basesByReferrer = new Map<string, string[]>();
+  for (const edge of edges) {
+    const bases = basesByReferrer.get(edge.snapshotId) ?? [];
+    bases.push(edge.baseSnapshotId);
+    basesByReferrer.set(edge.snapshotId, bases);
+  }
+  const pending = [...keep];
+  while (pending.length > 0) {
+    const snapshotId = pending.pop()!;
+    for (const baseSnapshotId of basesByReferrer.get(snapshotId) ?? []) {
+      if (!keep.has(baseSnapshotId)) {
+        keep.add(baseSnapshotId);
+        pending.push(baseSnapshotId);
+      }
+    }
+  }
 }
 
 function selectSnapshotsToKeep(

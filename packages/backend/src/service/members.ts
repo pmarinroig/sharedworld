@@ -11,12 +11,13 @@ import { HttpError } from "../http.ts";
 import { inviteCode as generateInviteCode, randomId } from "../ids.ts";
 import type { RequestContext } from "../repository.ts";
 import type { ServiceContext } from "./context.ts";
-import { requireOwner, requireWorldDetails } from "./runtime-access.ts";
+import { requireOwner, requireWorldDetails, worldNotFoundError } from "./runtime-access.ts";
 import { getWorld } from "./worlds.ts";
 
 export async function createInvite(svc: ServiceContext, ctx: RequestContext, worldId: string, now: Date): Promise<InviteCode> {
   const world = await requireWorldDetails(svc, worldId, ctx.playerUuid);
   requireOwner(world, ctx, "manage invite codes");
+  await svc.repository.revokeSupersededInvites(worldId);
   const activeInvite = await svc.repository.getActiveInvite(worldId, now);
   if (activeInvite) {
     return activeInvite;
@@ -30,7 +31,11 @@ export async function createInvite(svc: ServiceContext, ctx: RequestContext, wor
     expiresAt: new Date(now.getTime() + INVITE_TTL_MS).toISOString(),
     status: "active"
   };
-  return svc.repository.createInvite(worldId, ctx, invite);
+  const created = await svc.repository.createInvite(worldId, ctx, invite);
+  // Concurrent resets/creates can each insert a code; self-heal so exactly one
+  // stays active, and hand back whichever code won.
+  await svc.repository.revokeSupersededInvites(worldId);
+  return await svc.repository.getActiveInvite(worldId, now) ?? created;
 }
 
 export async function redeemInvite(svc: ServiceContext, ctx: RequestContext, request: RedeemInviteRequest, now: Date): Promise<WorldDetails> {
@@ -44,6 +49,11 @@ export async function redeemInvite(svc: ServiceContext, ctx: RequestContext, req
   }
   if (new Date(invite.expiresAt).getTime() < now.getTime()) {
     throw new HttpError(410, "invite_expired", "Invite code has expired.");
+  }
+  if (!await svc.repository.hasActiveWorld(invite.worldId)) {
+    // The world was deleted after the code was issued; refuse before inserting
+    // a membership row that would reference a soft-deleted world forever.
+    throw worldNotFoundError();
   }
 
   await svc.repository.addMembership({
@@ -61,7 +71,7 @@ export async function redeemInvite(svc: ServiceContext, ctx: RequestContext, req
 export async function resetInvite(svc: ServiceContext, ctx: RequestContext, worldId: string, now: Date): Promise<ResetInviteResponse> {
   const world = await requireWorldDetails(svc, worldId, ctx.playerUuid);
   requireOwner(world, ctx, "reset invite codes");
-  const revokedInviteIds = await svc.repository.revokeActiveInvites(worldId, now.toISOString());
+  const revokedInviteIds = await svc.repository.revokeActiveInvites(worldId);
   const invite = await createInvite(svc, ctx, worldId, now);
   return {
     revokedInviteIds,
@@ -85,5 +95,9 @@ export async function kickMember(
   if (!result) {
     throw new HttpError(404, "member_not_found", "SharedWorld member not found.");
   }
+  // Kicking rotates the share code: the previous code stays valid for up to
+  // seven days otherwise, and the kicked player could immediately rejoin with it.
+  await svc.repository.revokeActiveInvites(worldId);
+  await createInvite(svc, ctx, worldId, now);
   return result;
 }

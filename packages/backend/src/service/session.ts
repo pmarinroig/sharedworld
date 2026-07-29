@@ -19,7 +19,7 @@ import {
 
 import { HttpError } from "../http.ts";
 import { randomId } from "../ids.ts";
-import type { RequestContext } from "../repository.ts";
+import type { RequestContext, UncleanShutdownWarning } from "../repository.ts";
 import {
   assignHostStarting,
   matchesHostAuthorization,
@@ -118,18 +118,21 @@ export async function enterSession(
       now,
       () => randomId("rt")
     );
-    if (requestedWaiterSessionId != null) {
-      await svc.repository.cancelWaiterSession(worldId, ctx, { waiterSessionId: requestedWaiterSessionId });
+    if (await svc.repository.claimRuntimeAssignment(assigned.runtime)) {
+      if (requestedWaiterSessionId != null) {
+        await svc.repository.cancelWaiterSession(worldId, ctx, { waiterSessionId: requestedWaiterSessionId });
+      }
+      return {
+        action: "host",
+        world,
+        latestManifest,
+        runtime: toRuntimeStatus(worldId, assigned.runtime, resolved.candidate, resolved.warning),
+        assignment: assigned.assignment,
+        waiterSessionId: null
+      };
     }
-    await svc.repository.upsertRuntimeRecord(assigned.runtime);
-    return {
-      action: "host",
-      world,
-      latestManifest,
-      runtime: toRuntimeStatus(worldId, assigned.runtime, resolved.candidate, resolved.warning),
-      assignment: assigned.assignment,
-      waiterSessionId: null
-    };
+    // Lost the acquire race to a concurrent claimant; fall through to the
+    // waiting flow, which re-resolves against the winner's runtime.
   }
   const waiterSessionId = requestedWaiterSessionId ?? randomId("wait");
   const waiterSessionActive = requestedWaiterSessionId != null
@@ -154,16 +157,18 @@ export async function enterSession(
       now,
       () => randomId("rt")
     );
-    await svc.repository.cancelWaiterSession(worldId, ctx, { waiterSessionId });
-    await svc.repository.upsertRuntimeRecord(assigned.runtime);
-    return {
-      action: "host",
-      world,
-      latestManifest,
-      runtime: toRuntimeStatus(worldId, assigned.runtime, waitingResolved.candidate, waitingResolved.warning),
-      assignment: assigned.assignment,
-      waiterSessionId: null
-    };
+    if (await svc.repository.claimRuntimeAssignment(assigned.runtime)) {
+      await svc.repository.cancelWaiterSession(worldId, ctx, { waiterSessionId });
+      return {
+        action: "host",
+        world,
+        latestManifest,
+        runtime: toRuntimeStatus(worldId, assigned.runtime, waitingResolved.candidate, waitingResolved.warning),
+        assignment: assigned.assignment,
+        waiterSessionId: null
+      };
+    }
+    // Lost the promotion race; keep waiting against the winner's runtime.
   }
   return {
     action: "wait",
@@ -240,11 +245,20 @@ export async function observeWaiting(
       now,
       () => randomId("rt")
     );
-    await svc.repository.cancelWaiterSession(worldId, ctx, { waiterSessionId });
-    await svc.repository.upsertRuntimeRecord(assigned.runtime);
+    if (await svc.repository.claimRuntimeAssignment(assigned.runtime)) {
+      await svc.repository.cancelWaiterSession(worldId, ctx, { waiterSessionId });
+      return {
+        action: "restart",
+        runtime: toRuntimeStatus(worldId, assigned.runtime, resolved.candidate, resolved.warning),
+        assignment: null,
+        waiterSessionId: null
+      };
+    }
+    // Lost the promotion race; restart so the client re-enters against the
+    // winner's runtime instead of acting on a stale assignment.
     return {
       action: "restart",
-      runtime: toRuntimeStatus(worldId, assigned.runtime, resolved.candidate, resolved.warning),
+      runtime,
       assignment: null,
       waiterSessionId: null
     };
@@ -334,7 +348,9 @@ export async function heartbeatHost(
   const updated = request.minecraftVersion != null && request.minecraftVersion.trim().length > 0
     ? { ...refreshed, hostMinecraftVersion: request.minecraftVersion.trim() }
     : refreshed;
-  await svc.repository.upsertRuntimeRecord(updated);
+  if (!await svc.repository.updateAuthorizedRuntime(updated)) {
+    throw hostNotActiveError();
+  }
   return toRuntimeStatus(worldId, updated, runtimeCandidateFromRuntime(updated));
 }
 
@@ -371,7 +387,9 @@ export async function setHostStartupProgress(
       }
     : null;
   const updated = setHostProgress(authorized.runtime, progress, now);
-  await svc.repository.upsertRuntimeRecord(updated);
+  if (!await svc.repository.updateAuthorizedRuntime(updated)) {
+    throw hostNotActiveError();
+  }
   return toRuntimeStatus(worldId, updated, runtimeCandidateFromRuntime(updated));
 }
 
@@ -395,6 +413,10 @@ export async function setPlayerPresence(
 /**
  * Responsibility:
  * Freeze the authoritative host runtime into host-finalizing before the final snapshot upload.
+ *
+ * A retried begin from the runtime that already moved to host-finalizing is a
+ * success replay, not a lost lease: shutdown-time requests are exactly the ones
+ * clients retry after network flaps.
  */
 export async function beginFinalization(
   svc: ServiceContext,
@@ -411,10 +433,15 @@ export async function beginFinalization(
     now,
     request.runtimeEpoch,
     request.hostToken,
-    ["host-starting", "host-live"]
+    ["host-starting", "host-live", "host-finalizing"]
   );
+  if (authorized.runtime.phase === "host-finalizing") {
+    return runtimeToFinalizationResult(worldId, authorized.runtime, null);
+  }
   const updated = moveToFinalizing(authorized.runtime, now);
-  await svc.repository.upsertRuntimeRecord(updated);
+  if (!await svc.repository.updateAuthorizedRuntime(updated)) {
+    throw hostNotActiveError();
+  }
   return runtimeToFinalizationResult(worldId, updated, null);
 }
 
@@ -436,12 +463,24 @@ export async function completeFinalization(
   const resolved = await resolveRuntimeState(svc, worldId, now);
   const runtime = resolved.runtime;
   if (runtime == null || runtime.phase !== "host-finalizing") {
+    if (await isReleasedEpochReplay(svc, worldId, request.runtimeEpoch, resolved.warning)) {
+      return runtimeToFinalizationResult(worldId, null, resolved.candidate);
+    }
     throw new HttpError(409, "not_finalizing", "SharedWorld is not currently finalizing.");
   }
   if (!matchesHostAuthorization(runtime, ctx.playerUuid, request.runtimeEpoch, request.hostToken)) {
     throw hostNotActiveError();
   }
-  await svc.repository.deleteRuntimeRecord(worldId);
+  const deleted = await svc.repository.deleteRuntimeRecord(worldId, {
+    runtimeEpoch: runtime.runtimeEpoch,
+    runtimeToken: runtime.runtimeToken
+  });
+  if (!deleted) {
+    if (await isReleasedEpochReplay(svc, worldId, request.runtimeEpoch, resolved.warning)) {
+      return runtimeToFinalizationResult(worldId, null, resolved.candidate);
+    }
+    throw hostNotActiveError();
+  }
   await svc.repository.clearWorldPresence(worldId);
   await svc.repository.clearUncleanShutdownWarning(worldId);
   return runtimeToFinalizationResult(worldId, null, resolved.candidate);
@@ -465,8 +504,13 @@ export async function abandonFinalization(
   if (current == null || current.phase !== "host-finalizing") {
     return runtimeToFinalizationResult(worldId, current, resolved.candidate);
   }
-  await svc.repository.deleteRuntimeRecord(worldId);
-  await svc.repository.clearWorldPresence(worldId);
+  const deleted = await svc.repository.deleteRuntimeRecord(worldId, {
+    runtimeEpoch: current.runtimeEpoch,
+    runtimeToken: current.runtimeToken
+  });
+  if (deleted) {
+    await svc.repository.clearWorldPresence(worldId);
+  }
   return runtimeToFinalizationResult(worldId, null, resolved.candidate);
 }
 
@@ -478,23 +522,41 @@ export async function releaseHost(
   now: Date
 ) {
   await requireSessionAccess(svc, ctx, worldId, { allowRevokedHost: true });
-  await requireAuthorizedRuntime(
-    svc,
-    ctx,
-    worldId,
-    now,
-    request.runtimeEpoch,
-    request.hostToken,
-    ["host-starting", "host-live", "host-finalizing"]
-  );
+  const resolved = await resolveRuntimeState(svc, worldId, now);
+  const runtime = resolved.runtime;
+  const authorized = runtime != null
+    && (runtime.phase === "host-starting" || runtime.phase === "host-live" || runtime.phase === "host-finalizing")
+    && matchesHostAuthorization(runtime, ctx.playerUuid, request.runtimeEpoch, request.hostToken);
+  if (!authorized) {
+    // A retried release of an already-released epoch is a success replay, not a
+    // lost lease; a genuinely expired lease left an unclean warning and still 409s.
+    if (await isReleasedEpochReplay(svc, worldId, request.runtimeEpoch, resolved.warning)) {
+      return releaseHostResult(worldId, request, resolved, now);
+    }
+    throw hostNotActiveError();
+  }
   await svc.repository.clearWaitersForPlayer(worldId, ctx.playerUuid);
-  await svc.repository.deleteRuntimeRecord(worldId);
-  await svc.repository.clearWorldPresence(worldId);
-  if (request.graceful) {
-    await svc.repository.clearUncleanShutdownWarning(worldId);
+  const deleted = await svc.repository.deleteRuntimeRecord(worldId, {
+    runtimeEpoch: runtime.runtimeEpoch,
+    runtimeToken: runtime.runtimeToken
+  });
+  if (deleted) {
+    await svc.repository.clearWorldPresence(worldId);
+    if (request.graceful) {
+      await svc.repository.clearUncleanShutdownWarning(worldId);
+    }
   }
   const resolvedStatus = await resolveRuntimeState(svc, worldId, now);
-  const status = toRuntimeStatus(worldId, resolvedStatus.runtime, resolvedStatus.candidate, resolvedStatus.warning);
+  return releaseHostResult(worldId, request, resolvedStatus, now);
+}
+
+function releaseHostResult(
+  worldId: string,
+  request: ReleaseHostRequest,
+  resolved: ResolvedRuntimeState,
+  now: Date
+) {
+  const status = toRuntimeStatus(worldId, resolved.runtime, resolved.candidate, resolved.warning);
   return {
     worldId,
     releasedAt: now.toISOString(),
@@ -504,6 +566,27 @@ export async function releaseHost(
     nextHostUuid: request.graceful ? status.candidateUuid : null,
     nextHostPlayerName: request.graceful ? status.candidatePlayerName : null
   };
+}
+
+/**
+ * A mutation retried after its original succeeded finds the runtime gone but the
+ * world's epoch high-water mark equal to its own epoch. An unclean-shutdown
+ * warning for that same epoch means the lease actually expired, which is a real
+ * authority loss, never a replay.
+ */
+async function isReleasedEpochReplay(
+  svc: ServiceContext,
+  worldId: string,
+  runtimeEpoch: number | null | undefined,
+  warning: UncleanShutdownWarning | null
+): Promise<boolean> {
+  if (runtimeEpoch == null || runtimeEpoch < 1) {
+    return false;
+  }
+  if (warning != null && warning.runtimeEpoch === runtimeEpoch) {
+    return false;
+  }
+  return (await svc.repository.getLastRuntimeEpoch(worldId)) === runtimeEpoch;
 }
 
 function runtimeToFinalizationResult(

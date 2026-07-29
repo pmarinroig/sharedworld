@@ -111,7 +111,7 @@ describe("SharedWorldService invites and membership", () => {
     expect(ownerMembership?.role).toBe("owner");
   });
 
-  test("removed members can rejoin with the same active share code", async () => {
+  test("kicking a member rotates the share code so the old code stops working", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, authVerifier, signer, {});
@@ -137,15 +137,104 @@ describe("SharedWorldService invites and membership", () => {
 
     await expect(instance.getWorld({ playerUuid: "player-guest", playerName: "Guest" }, world.id)).rejects.toThrow("not found");
 
-    const rejoined = await instance.redeemInvite(
+    // The kicked player's copy of the code is dead.
+    await expect(instance.redeemInvite(
       { playerUuid: "player-guest", playerName: "Guest Again" },
       { code: invite.code },
       new Date("2026-01-01T00:07:00.000Z")
-    );
+    )).rejects.toThrow("no longer active");
 
+    // The owner immediately holds a fresh code, and a re-invited player rejoins with it.
+    const rotated = await instance.createInvite(
+      { playerUuid: "player-owner", playerName: "Owner" },
+      world.id,
+      new Date("2026-01-01T00:08:00.000Z")
+    );
+    expect(rotated.code).not.toBe(invite.code);
+    const rejoined = await instance.redeemInvite(
+      { playerUuid: "player-guest", playerName: "Guest Again" },
+      { code: rotated.code },
+      new Date("2026-01-01T00:09:00.000Z")
+    );
     expect(rejoined.id).toBe(world.id);
-    expect(rejoined.activeInviteCode).toBeNull();
     await expect(repository.isWorldMember(world.id, "player-guest")).resolves.toBe(true);
+  });
+
+  test("duplicate active codes from racing resets self-heal down to the newest one", async () => {
+    const repository = createSqliteRepository();
+    const { signer } = createBlobSigner();
+    const instance = createTestService(repository, authVerifier, signer, {});
+    await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
+    const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
+    // Two concurrent resets interleaved so both inserted an active code.
+    for (const [id, code, createdAt] of [
+      ["invite_a", "AAAAAA", "2026-01-01T00:00:00.000Z"],
+      ["invite_b", "BBBBBB", "2026-01-01T00:00:01.000Z"]
+    ] as const) {
+      await repository.createInvite(world.id, { playerUuid: "player-owner", playerName: "Owner" }, {
+        id,
+        worldId: world.id,
+        code,
+        createdByUuid: "player-owner",
+        createdAt,
+        expiresAt: "2026-01-08T00:00:00.000Z",
+        status: "active"
+      });
+    }
+
+    const invite = await instance.createInvite(
+      { playerUuid: "player-owner", playerName: "Owner" },
+      world.id,
+      new Date("2026-01-01T00:01:00.000Z")
+    );
+    expect(invite.code).toBe("BBBBBB");
+
+    // The superseded code is dead, not invisibly redeemable.
+    await expect(instance.redeemInvite(
+      { playerUuid: "player-guest", playerName: "Guest" },
+      { code: "AAAAAA" },
+      new Date("2026-01-01T00:02:00.000Z")
+    )).rejects.toThrow("no longer active");
+    const redeemed = await instance.redeemInvite(
+      { playerUuid: "player-guest", playerName: "Guest" },
+      { code: "BBBBBB" },
+      new Date("2026-01-01T00:02:30.000Z")
+    );
+    expect(redeemed.id).toBe(world.id);
+  });
+
+  test("redeeming a code for a deleted world fails without creating an orphan membership", async () => {
+    const repository = createSqliteRepository();
+    const { signer } = createBlobSigner();
+    const instance = createTestService(repository, authVerifier, signer, {});
+    await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
+    const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
+    const invite = await instance.createInvite(
+      { playerUuid: "player-owner", playerName: "Owner" },
+      world.id,
+      new Date("2026-01-01T00:00:00.000Z")
+    );
+    // Capture the code before deletion hard-deletes the invite rows.
+    const code = invite.code;
+    await repository.deleteWorldForPlayer({ playerUuid: "player-owner", playerName: "Owner" }, world.id, new Date("2026-01-01T00:01:00.000Z"));
+    // Re-insert the invite row to simulate the redeem racing the deletion after
+    // the code lookup already succeeded.
+    await repository.createInvite(world.id, { playerUuid: "player-owner", playerName: "Owner" }, {
+      id: "invite_race",
+      worldId: world.id,
+      code,
+      createdByUuid: "player-owner",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      expiresAt: "2026-01-08T00:00:00.000Z",
+      status: "active"
+    });
+
+    await expect(instance.redeemInvite(
+      { playerUuid: "player-guest", playerName: "Guest" },
+      { code },
+      new Date("2026-01-01T00:02:00.000Z")
+    )).rejects.toThrow("not found");
+    await expect(repository.hasWorldMembership(world.id, "player-guest")).resolves.toBe(false);
   });
 
   test("kicked members get membership_revoked from session endpoints while the world stays active", async () => {

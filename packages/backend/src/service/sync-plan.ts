@@ -361,7 +361,18 @@ async function buildPackDownloadSteps(
     if (localPackHash != null && cursor.baseHash != null && localPackHash === cursor.baseHash) {
       break;
     }
-    cursor = await loadSnapshotPack(svc, worldId, cursor.baseSnapshotId, cursor.packId, snapshotCache);
+    const base = await loadSnapshotPack(svc, worldId, cursor.baseSnapshotId, cursor.packId, snapshotCache);
+    if (base == null) {
+      // The chain needs a base artifact whose snapshot row no longer exists. A
+      // truncated plan would fail client-side mid-apply with a confusing
+      // missing-delta-base error; refuse loudly instead.
+      throw new HttpError(
+        409,
+        "snapshot_chain_broken",
+        `SharedWorld backup data for '${latestPack.packId}' is missing a delta base artifact.`
+      );
+    }
+    cursor = base;
   }
   return steps.reverse();
 }

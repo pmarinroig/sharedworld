@@ -165,7 +165,9 @@ async function createSeededWorldResult(
     () => randomId("rt")
   );
   await svc.repository.clearWaitersForPlayer(world.id, ctx.playerUuid);
-  await svc.repository.upsertRuntimeRecord(initialUpload.runtime);
+  if (!await svc.repository.claimRuntimeAssignment(initialUpload.runtime)) {
+    throw new HttpError(409, "world_busy", "SharedWorld is already being set up.");
+  }
   return {
     world: await hydrateWorldDetails(svc, world, ctx.requestOrigin),
     initialUploadAssignment: initialUpload.assignment

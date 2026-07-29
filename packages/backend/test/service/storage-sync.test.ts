@@ -916,4 +916,47 @@ describe("SharedWorldService storage and sync planning", () => {
     expect(coldDownloadPlan.nonRegionPackDownload?.steps[0].transferMode).toBe("pack-full");
     expect(coldDownloadPlan.nonRegionPackDownload?.steps[1].transferMode).toBe("pack-delta");
   });
+
+  test("a delta chain whose base snapshot is gone fails the download plan loudly instead of truncating it", async () => {
+    const repository = createSqliteRepository();
+    const { signer } = createBlobSigner();
+    const instance = createTestService(repository, authVerifier, signer, {});
+    await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
+    const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Broken Chain", "broken-chain");
+    await claimHostForTest(instance, { playerUuid: "player-owner", playerName: "Owner" }, world.id);
+    const owner = { playerUuid: "player-owner", playerName: "Owner" };
+
+    const snapshotA = await instance.finalizeSnapshot(owner, world.id, {
+      files: [],
+      packs: [{
+        packId: "non-region",
+        hash: "pack-a",
+        size: 100,
+        storageKey: "packs/full/a.pack",
+        transferMode: "pack-full",
+        files: [{ path: "level.dat", hash: "level-a", size: 90, contentType: "application/octet-stream" }]
+      }]
+    }, new Date("2099-01-01T10:00:00.000Z"));
+    await instance.finalizeSnapshot(owner, world.id, {
+      files: [],
+      packs: [{
+        packId: "non-region",
+        hash: "pack-b",
+        size: 20,
+        storageKey: "packs/delta/a-b.bin",
+        transferMode: "pack-delta",
+        baseSnapshotId: snapshotA.snapshotId,
+        baseHash: "pack-a",
+        chainDepth: 1,
+        files: [{ path: "level.dat", hash: "level-b", size: 91, contentType: "application/octet-stream" }]
+      }]
+    }, new Date("2099-01-01T11:00:00.000Z"));
+
+    // Simulate legacy data where the base was pruned before retention became
+    // chain-aware: the delta survives but its base snapshot row is gone.
+    await repository.deleteSnapshots(world.id, [snapshotA.snapshotId]);
+
+    await expect(instance.downloadPlan(owner, world.id, { files: [], nonRegionPack: null, regionBundles: [] }))
+      .rejects.toThrow("missing a delta base artifact");
+  });
 });

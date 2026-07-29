@@ -254,7 +254,7 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       await this.run("UPDATE worlds SET deleted_at = ? WHERE id = ?", deletedAt, worldId);
       await this.run("DELETE FROM invite_codes WHERE world_id = ?", worldId);
       await this.run("DELETE FROM handoff_waiters WHERE world_id = ?", worldId);
-      await this.run("DELETE FROM world_runtime WHERE world_id = ?", worldId);
+      await this.retireWorldRuntime(worldId, null);
       await this.run("DELETE FROM world_presence WHERE world_id = ?", worldId);
       return { worldDeleted: true, deletedCustomIconStorageKey: asNullableString(world.custom_icon_storage_key) };
     }
@@ -268,7 +268,7 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       ctx.playerUuid
     );
     await this.run("DELETE FROM handoff_waiters WHERE world_id = ? AND player_uuid = ?", worldId, ctx.playerUuid);
-    await this.run("DELETE FROM world_runtime WHERE world_id = ? AND host_uuid = ?", worldId, ctx.playerUuid);
+    await this.retireWorldRuntime(worldId, ctx.playerUuid);
     await this.run("DELETE FROM world_presence WHERE world_id = ? AND player_uuid = ?", worldId, ctx.playerUuid);
 
     const count = await this.first<Row>(
@@ -279,12 +279,46 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       await this.run("UPDATE worlds SET deleted_at = ? WHERE id = ?", deletedAt, worldId);
       await this.run("DELETE FROM invite_codes WHERE world_id = ?", worldId);
       await this.run("DELETE FROM handoff_waiters WHERE world_id = ?", worldId);
-      await this.run("DELETE FROM world_runtime WHERE world_id = ?", worldId);
+      await this.retireWorldRuntime(worldId, null);
       await this.run("DELETE FROM world_presence WHERE world_id = ?", worldId);
       return { worldDeleted: true, deletedCustomIconStorageKey: asNullableString(world.custom_icon_storage_key) };
     }
 
     return { worldDeleted: false, deletedCustomIconStorageKey: null };
+  }
+
+  /**
+   * Deleting or leaving a world must never reset the epoch high-water mark
+   * (protocol invariant I3): retire the runtime's epoch into
+   * worlds.last_runtime_epoch before dropping the row.
+   */
+  private async retireWorldRuntime(worldId: string, hostUuid: string | null): Promise<void> {
+    if (hostUuid == null) {
+      await this.run(
+        `UPDATE worlds
+         SET last_runtime_epoch = MAX(
+           COALESCE(last_runtime_epoch, 0),
+           COALESCE((SELECT runtime_epoch FROM world_runtime WHERE world_id = ?), 0)
+         )
+         WHERE id = ?`,
+        worldId,
+        worldId
+      );
+      await this.run("DELETE FROM world_runtime WHERE world_id = ?", worldId);
+      return;
+    }
+    await this.run(
+      `UPDATE worlds
+       SET last_runtime_epoch = MAX(
+         COALESCE(last_runtime_epoch, 0),
+         COALESCE((SELECT runtime_epoch FROM world_runtime WHERE world_id = ? AND host_uuid = ?), 0)
+       )
+       WHERE id = ?`,
+      worldId,
+      hostUuid,
+      worldId
+    );
+    await this.run("DELETE FROM world_runtime WHERE world_id = ? AND host_uuid = ?", worldId, hostUuid);
   }
 
   async isStorageKeyReferenced(storageKey: string): Promise<boolean> {
@@ -578,6 +612,25 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     return rows.map((row) => String(row.id));
   }
 
+  /**
+   * Self-healing guard for concurrent invite resets: whatever interleaving
+   * produced multiple active codes, only the newest survives.
+   */
+  async revokeSupersededInvites(worldId: string): Promise<void> {
+    await this.run(
+      `UPDATE invite_codes SET status = 'revoked'
+       WHERE world_id = ? AND status = 'active'
+         AND id != (
+           SELECT id FROM invite_codes
+           WHERE world_id = ? AND status = 'active'
+           ORDER BY created_at DESC, id DESC
+           LIMIT 1
+         )`,
+      worldId,
+      worldId
+    );
+  }
+
   async getActiveInvite(worldId: string, now: Date): Promise<InviteCode | null> {
     await this.run(
       "UPDATE invite_codes SET status = 'expired' WHERE world_id = ? AND status = 'active' AND expires_at < ?",
@@ -588,7 +641,7 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       `SELECT id, world_id, code, created_by_uuid, created_at, expires_at, redeemed_by_uuid, redeemed_at, status
        FROM invite_codes
        WHERE world_id = ? AND status = 'active'
-       ORDER BY created_at DESC
+       ORDER BY created_at DESC, id DESC
        LIMIT 1`,
       worldId
     );
@@ -680,6 +733,11 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     return row ? mapRuntimeRow(row) : null;
   }
 
+  /**
+   * Unfenced write used only for test seeding; production session flows go
+   * through claimRuntimeAssignment / updateAuthorizedRuntime so a stale writer
+   * can never overwrite a newer runtime epoch.
+   */
   async upsertRuntimeRecord(runtime: WorldRuntimeRecord): Promise<void> {
     await this.run(
       `INSERT INTO world_runtime (
@@ -732,18 +790,135 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     );
   }
 
-  async deleteRuntimeRecord(worldId: string): Promise<void> {
+  /**
+   * Fresh host assignment. The conditional upsert only lands when no runtime row
+   * exists or the existing row carries a strictly older epoch, so two racing
+   * acquires can never both install the same epoch; the loser sees false.
+   */
+  async claimRuntimeAssignment(runtime: WorldRuntimeRecord): Promise<boolean> {
+    const changes = await this.runWithChanges(
+      `INSERT INTO world_runtime (
+         world_id, host_uuid, host_player_name, runtime_phase, runtime_epoch, runtime_token,
+         claimed_at, expires_at, join_target, candidate_uuid, revoked_at,
+         startup_deadline_at, runtime_token_issued_at, last_progress_at,
+         startup_progress_label, startup_progress_mode, startup_progress_fraction, startup_progress_updated_at, updated_at,
+         host_minecraft_version
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(world_id) DO UPDATE SET
+         host_uuid = excluded.host_uuid,
+         host_player_name = excluded.host_player_name,
+         runtime_phase = excluded.runtime_phase,
+         runtime_epoch = excluded.runtime_epoch,
+         runtime_token = excluded.runtime_token,
+         claimed_at = excluded.claimed_at,
+         expires_at = excluded.expires_at,
+         join_target = excluded.join_target,
+         candidate_uuid = excluded.candidate_uuid,
+         revoked_at = excluded.revoked_at,
+         startup_deadline_at = excluded.startup_deadline_at,
+         runtime_token_issued_at = excluded.runtime_token_issued_at,
+         last_progress_at = excluded.last_progress_at,
+         startup_progress_label = excluded.startup_progress_label,
+         startup_progress_mode = excluded.startup_progress_mode,
+         startup_progress_fraction = excluded.startup_progress_fraction,
+         startup_progress_updated_at = excluded.startup_progress_updated_at,
+         updated_at = excluded.updated_at,
+         host_minecraft_version = excluded.host_minecraft_version
+       WHERE world_runtime.runtime_epoch < excluded.runtime_epoch`,
+      runtime.worldId,
+      runtime.hostUuid,
+      runtime.hostPlayerName,
+      runtime.phase,
+      runtime.runtimeEpoch,
+      runtime.runtimeToken ?? null,
+      runtime.claimedAt ?? runtime.updatedAt,
+      runtime.expiresAt ?? null,
+      runtime.joinTarget,
+      runtime.candidateUuid,
+      runtime.revokedAt ?? null,
+      runtime.startupDeadlineAt ?? null,
+      runtime.runtimeTokenIssuedAt ?? null,
+      runtime.lastProgressAt ?? null,
+      runtime.startupProgress?.label ?? null,
+      runtime.startupProgress?.mode ?? null,
+      runtime.startupProgress?.fraction ?? null,
+      runtime.startupProgress?.updatedAt ?? null,
+      runtime.updatedAt,
+      runtime.hostMinecraftVersion ?? null
+    );
+    return changes > 0;
+  }
+
+  /**
+   * Refresh-style write (heartbeat, progress, phase transition) fenced on the
+   * record's own epoch/token. A no-op means the caller's runtime was replaced
+   * between its read and this write, and the caller must treat that as lost
+   * authority instead of resurrecting the old row.
+   */
+  async updateAuthorizedRuntime(runtime: WorldRuntimeRecord): Promise<boolean> {
+    if (runtime.runtimeToken == null) {
+      return false;
+    }
+    const changes = await this.runWithChanges(
+      `UPDATE world_runtime SET
+         host_uuid = ?,
+         host_player_name = ?,
+         runtime_phase = ?,
+         claimed_at = ?,
+         expires_at = ?,
+         join_target = ?,
+         candidate_uuid = ?,
+         revoked_at = ?,
+         startup_deadline_at = ?,
+         runtime_token_issued_at = ?,
+         last_progress_at = ?,
+         startup_progress_label = ?,
+         startup_progress_mode = ?,
+         startup_progress_fraction = ?,
+         startup_progress_updated_at = ?,
+         updated_at = ?,
+         host_minecraft_version = ?
+       WHERE world_id = ? AND runtime_epoch = ? AND runtime_token = ?`,
+      runtime.hostUuid,
+      runtime.hostPlayerName,
+      runtime.phase,
+      runtime.claimedAt ?? runtime.updatedAt,
+      runtime.expiresAt ?? null,
+      runtime.joinTarget,
+      runtime.candidateUuid,
+      runtime.revokedAt ?? null,
+      runtime.startupDeadlineAt ?? null,
+      runtime.runtimeTokenIssuedAt ?? null,
+      runtime.lastProgressAt ?? null,
+      runtime.startupProgress?.label ?? null,
+      runtime.startupProgress?.mode ?? null,
+      runtime.startupProgress?.fraction ?? null,
+      runtime.startupProgress?.updatedAt ?? null,
+      runtime.updatedAt,
+      runtime.hostMinecraftVersion ?? null,
+      runtime.worldId,
+      runtime.runtimeEpoch,
+      runtime.runtimeToken
+    );
+    return changes > 0;
+  }
+
+  async deleteRuntimeRecord(worldId: string, expected: { runtimeEpoch: number; runtimeToken: string | null }): Promise<boolean> {
     await this.run(
       `UPDATE worlds
-       SET last_runtime_epoch = MAX(
-         COALESCE(last_runtime_epoch, 0),
-         COALESCE((SELECT runtime_epoch FROM world_runtime WHERE world_id = ?), 0)
-       )
+       SET last_runtime_epoch = MAX(COALESCE(last_runtime_epoch, 0), ?)
        WHERE id = ?`,
-      worldId,
+      expected.runtimeEpoch,
       worldId
     );
-    await this.run("DELETE FROM world_runtime WHERE world_id = ?", worldId);
+    const changes = await this.runWithChanges(
+      `DELETE FROM world_runtime
+       WHERE world_id = ? AND runtime_epoch = ? AND COALESCE(runtime_token, '') = COALESCE(?, '')`,
+      worldId,
+      expected.runtimeEpoch,
+      expected.runtimeToken
+    );
+    return changes > 0;
   }
 
   async getLastRuntimeEpoch(worldId: string): Promise<number> {
@@ -912,7 +1087,7 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       `SELECT id, world_id, created_at, created_by_uuid
        FROM snapshots
        WHERE world_id = ?
-       ORDER BY created_at DESC
+       ORDER BY created_at DESC, id DESC
        LIMIT 1`,
       worldId
     );
@@ -1006,7 +1181,7 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       `SELECT id, world_id, created_at, created_by_uuid
        FROM snapshots
        WHERE world_id = ?
-       ORDER BY created_at DESC`,
+       ORDER BY created_at DESC, id DESC`,
       worldId
     );
     return rows.map((row) => ({
@@ -1014,6 +1189,42 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       worldId: String(row.world_id),
       createdAt: String(row.created_at),
       createdByUuid: String(row.created_by_uuid)
+    }));
+  }
+
+  async getSnapshotGameVersions(worldId: string, snapshotId: string): Promise<{ dataVersion: number | null; minecraftVersion: string | null } | null> {
+    const row = await this.first<Row>(
+      "SELECT data_version, minecraft_version FROM snapshots WHERE world_id = ? AND id = ?",
+      worldId,
+      snapshotId
+    );
+    if (!row) {
+      return null;
+    }
+    return {
+      dataVersion: row.data_version == null ? null : Number(row.data_version),
+      minecraftVersion: asNullableString(row.minecraft_version)
+    };
+  }
+
+  async listSnapshotDeltaBases(worldId: string): Promise<Array<{ snapshotId: string; baseSnapshotId: string }>> {
+    const fileRows = await this.all<Row>(
+      `SELECT DISTINCT sf.snapshot_id, sf.base_snapshot_id
+       FROM snapshot_files sf
+       JOIN snapshots s ON s.id = sf.snapshot_id
+       WHERE s.world_id = ? AND sf.base_snapshot_id IS NOT NULL`,
+      worldId
+    );
+    const packRows = await this.all<Row>(
+      `SELECT DISTINCT sp.snapshot_id, sp.base_snapshot_id
+       FROM snapshot_packs sp
+       JOIN snapshots s ON s.id = sp.snapshot_id
+       WHERE s.world_id = ? AND sp.base_snapshot_id IS NOT NULL`,
+      worldId
+    );
+    return [...fileRows, ...packRows].map((row) => ({
+      snapshotId: String(row.snapshot_id),
+      baseSnapshotId: String(row.base_snapshot_id)
     }));
   }
 
@@ -1303,6 +1514,11 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     await this.db.prepare(query).bind(...normalizeBoundValues(values)).run();
   }
 
+  private async runWithChanges(query: string, ...values: unknown[]): Promise<number> {
+    const result = await this.db.prepare(query).bind(...normalizeBoundValues(values)).run();
+    return Number(result.meta?.changes ?? 0);
+  }
+
   private async currentCustomIconStorageKey(worldId: string): Promise<string | null> {
     const row = await this.first<Row>(
       "SELECT custom_icon_storage_key FROM worlds WHERE id = ?",
@@ -1402,12 +1618,13 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     const warning = timedOutUncleanShutdownWarning(runtime, now);
     if (warning != null) {
       await this.setUncleanShutdownWarning(worldId, warning);
-      await this.deleteRuntimeRecord(worldId);
+      await this.deleteRuntimeRecord(worldId, { runtimeEpoch: runtime.runtimeEpoch, runtimeToken: runtime.runtimeToken });
       await this.clearWaiters(worldId);
+      await this.clearWorldPresence(worldId);
       return null;
     }
     if (resolveRuntimeTimeout(runtime, null, now) == null) {
-      await this.deleteRuntimeRecord(worldId);
+      await this.deleteRuntimeRecord(worldId, { runtimeEpoch: runtime.runtimeEpoch, runtimeToken: runtime.runtimeToken });
       return null;
     }
     return runtime;

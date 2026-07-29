@@ -471,4 +471,166 @@ describe("SharedWorldService snapshots and retention", () => {
     expect(deleted).toContain("blobs/ma/march-old.bin");
     expect(deleted).not.toContain("blobs/sh/shared.bin");
   });
+
+  test("retention keeps every delta base a surviving snapshot still needs", async () => {
+    const repository = createSqliteRepository();
+    const { signer, deleted } = createBlobSigner();
+    const instance = createTestService(repository, authVerifier, signer, {});
+    await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
+    const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Chain Retention", "chain-retention");
+    await claimHostForTest(instance, { playerUuid: "player-owner", playerName: "Owner" }, world.id);
+    const owner = { playerUuid: "player-owner", playerName: "Owner" };
+
+    // Two saves on day one: a full pack, then a delta on top of it.
+    const snapshotA = await instance.finalizeSnapshot(owner, world.id, {
+      files: [],
+      packs: [{
+        packId: "non-region",
+        hash: "pack-a",
+        size: 100,
+        storageKey: "packs/full/a.pack",
+        transferMode: "pack-full",
+        files: [{ path: "level.dat", hash: "level-a", size: 90, contentType: "application/octet-stream" }]
+      }]
+    }, new Date("2026-01-01T10:00:00.000Z"));
+    const snapshotB = await instance.finalizeSnapshot(owner, world.id, {
+      files: [],
+      packs: [{
+        packId: "non-region",
+        hash: "pack-b",
+        size: 20,
+        storageKey: "packs/delta/a-b.bin",
+        transferMode: "pack-delta",
+        baseSnapshotId: snapshotA.snapshotId,
+        baseHash: "pack-a",
+        chainDepth: 1,
+        files: [{ path: "level.dat", hash: "level-b", size: 91, contentType: "application/octet-stream" }]
+      }]
+    }, new Date("2026-01-01T11:00:00.000Z"));
+
+    // Two days later a third save extends the chain. Age-based retention alone
+    // would prune snapshot A (its day bucket is already represented by B) and
+    // delete the full artifact every reconstruction of B and C starts from.
+    const snapshotC = await instance.finalizeSnapshot(owner, world.id, {
+      files: [],
+      packs: [{
+        packId: "non-region",
+        hash: "pack-c",
+        size: 21,
+        storageKey: "packs/delta/b-c.bin",
+        transferMode: "pack-delta",
+        baseSnapshotId: snapshotB.snapshotId,
+        baseHash: "pack-b",
+        chainDepth: 2,
+        files: [{ path: "level.dat", hash: "level-c", size: 92, contentType: "application/octet-stream" }]
+      }]
+    }, new Date("2026-01-03T12:00:00.000Z"));
+
+    const kept = await repository.listSnapshotsForWorld(world.id);
+    expect(kept.map((snapshot) => snapshot.snapshotId).sort()).toEqual(
+      [snapshotA.snapshotId, snapshotB.snapshotId, snapshotC.snapshotId].sort()
+    );
+    expect(deleted).toHaveLength(0);
+
+    // A cold client still receives the full reconstruction chain.
+    const plan = await instance.downloadPlan(owner, world.id, { files: [], nonRegionPack: null, regionBundles: [] });
+    expect(plan.nonRegionPackDownload?.steps.map((step) => step.transferMode)).toEqual(["pack-full", "pack-delta", "pack-delta"]);
+    expect(plan.nonRegionPackDownload?.steps[0]?.storageKey).toBe("packs/full/a.pack");
+  });
+
+  test("a backup another backup builds on cannot be deleted until its dependant is gone", async () => {
+    const repository = createSqliteRepository();
+    const { signer } = createBlobSigner();
+    const instance = createTestService(repository, authVerifier, signer, {});
+    await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
+    const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Delete Guard", "delete-guard");
+    await claimHostForTest(instance, { playerUuid: "player-owner", playerName: "Owner" }, world.id);
+    const owner = { playerUuid: "player-owner", playerName: "Owner" };
+
+    const snapshotA = await instance.finalizeSnapshot(owner, world.id, {
+      files: [],
+      packs: [{
+        packId: "non-region",
+        hash: "pack-a",
+        size: 100,
+        storageKey: "packs/full/a.pack",
+        transferMode: "pack-full",
+        files: [{ path: "level.dat", hash: "level-a", size: 90, contentType: "application/octet-stream" }]
+      }]
+    }, new Date("2026-01-01T10:00:00.000Z"));
+    const snapshotB = await instance.finalizeSnapshot(owner, world.id, {
+      files: [],
+      packs: [{
+        packId: "non-region",
+        hash: "pack-b",
+        size: 20,
+        storageKey: "packs/delta/a-b.bin",
+        transferMode: "pack-delta",
+        baseSnapshotId: snapshotA.snapshotId,
+        baseHash: "pack-a",
+        chainDepth: 1,
+        files: [{ path: "level.dat", hash: "level-b", size: 91, contentType: "application/octet-stream" }]
+      }]
+    }, new Date("2026-01-01T11:00:00.000Z"));
+    await instance.finalizeSnapshot(owner, world.id, {
+      files: [],
+      packs: [{
+        packId: "non-region",
+        hash: "pack-c",
+        size: 100,
+        storageKey: "packs/full/c.pack",
+        transferMode: "pack-full",
+        files: [{ path: "level.dat", hash: "level-c", size: 92, contentType: "application/octet-stream" }]
+      }]
+    }, new Date("2026-01-01T12:00:00.000Z"));
+
+    await expect(instance.deleteSnapshot(owner, world.id, snapshotA.snapshotId))
+      .rejects.toThrow("Another backup still builds on this one");
+
+    await instance.deleteSnapshot(owner, world.id, snapshotB.snapshotId);
+    await instance.deleteSnapshot(owner, world.id, snapshotA.snapshotId);
+    const remaining = await repository.listSnapshotsForWorld(world.id);
+    expect(remaining).toHaveLength(1);
+  });
+
+  test("the latest backup is well-defined even when two snapshots share a timestamp", async () => {
+    const repository = createSqliteRepository();
+    const { signer } = createBlobSigner();
+    const instance = createTestService(repository, authVerifier, signer, {});
+    await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
+    const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Latest Tie", "latest-tie");
+    await claimHostForTest(instance, { playerUuid: "player-owner", playerName: "Owner" }, world.id);
+    const owner = { playerUuid: "player-owner", playerName: "Owner" };
+    const sameInstant = new Date("2026-01-01T10:00:00.000Z");
+
+    // A duplicated finalize (client retry) lands two snapshots with one timestamp.
+    for (const suffix of ["one", "two"]) {
+      await instance.finalizeSnapshot(owner, world.id, {
+        files: [{
+          path: "level.dat",
+          hash: `level-${suffix}`,
+          size: 10,
+          compressedSize: 5,
+          storageKey: `blobs/le/level-${suffix}.bin`,
+          contentType: "application/octet-stream"
+        }]
+      }, sameInstant);
+    }
+
+    const summaries = await instance.listSnapshots(owner, world.id);
+    expect(summaries).toHaveLength(2);
+    const flaggedLatest = summaries.filter((summary) => summary.isLatest);
+    expect(flaggedLatest).toHaveLength(1);
+
+    const worldDetails = await instance.getWorld(owner, world.id);
+    expect(worldDetails.lastSnapshotId).toBe(flaggedLatest[0].snapshotId);
+    const latestManifest = await instance.latestManifest(owner, world.id);
+    expect(latestManifest?.snapshotId).toBe(flaggedLatest[0].snapshotId);
+
+    // The delete guard protects exactly the snapshot everything else calls latest.
+    await expect(instance.deleteSnapshot(owner, world.id, flaggedLatest[0].snapshotId))
+      .rejects.toThrow("The latest backup cannot be deleted.");
+    const other = summaries.find((summary) => !summary.isLatest)!;
+    await instance.deleteSnapshot(owner, world.id, other.snapshotId);
+  });
 });

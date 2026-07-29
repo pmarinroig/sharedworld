@@ -82,8 +82,8 @@ class SqliteD1PreparedStatement implements D1PreparedStatement {
   }
 
   async run(): Promise<{ success: boolean; meta?: Record<string, unknown> }> {
-    this.db.query(this.query).run(...this.values);
-    return { success: true };
+    const result = this.db.query(this.query).run(...this.values);
+    return { success: true, meta: { changes: Number(result.changes) } };
   }
 }
 

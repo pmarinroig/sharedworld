@@ -29,25 +29,21 @@ export async function resolveRuntimeState(svc: ServiceContext, worldId: string, 
   const candidate = choosePreferredCandidate(waiters.filter((waiter) => waiter.waiting), memberships);
   const before = await svc.repository.getRuntimeRecord(worldId, now);
   const timeoutWarning = timedOutUncleanShutdownWarning(before, now);
-  if (timeoutWarning != null) {
+  if (timeoutWarning != null && before != null) {
     await svc.repository.setUncleanShutdownWarning(worldId, timeoutWarning);
-    await svc.repository.deleteRuntimeRecord(worldId);
+    await svc.repository.deleteRuntimeRecord(worldId, { runtimeEpoch: before.runtimeEpoch, runtimeToken: before.runtimeToken });
     await svc.repository.clearWaiters(worldId);
     await svc.repository.clearWorldPresence(worldId);
     return {
       runtime: null,
       candidate: null,
       warning: timeoutWarning,
-      retiredRuntimeEpoch: before?.runtimeEpoch ?? null
+      retiredRuntimeEpoch: before.runtimeEpoch
     };
   }
   const afterTimeout = resolveRuntimeTimeout(before, candidate, now);
-  if (before !== afterTimeout) {
-    if (afterTimeout == null) {
-      await svc.repository.deleteRuntimeRecord(worldId);
-    } else {
-      await svc.repository.upsertRuntimeRecord(afterTimeout);
-    }
+  if (before != null && afterTimeout == null) {
+    await svc.repository.deleteRuntimeRecord(worldId, { runtimeEpoch: before.runtimeEpoch, runtimeToken: before.runtimeToken });
   }
   const warning = await svc.repository.getUncleanShutdownWarning(worldId);
   const retiredRuntimeEpoch = afterTimeout == null

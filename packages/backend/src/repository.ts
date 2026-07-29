@@ -147,7 +147,8 @@ export interface StorageRepository {
 export interface MembershipRepository {
   createInvite(worldId: string, ctx: RequestContext, invite: InviteCode): Promise<InviteCode>;
   getInviteByCode(code: string): Promise<InviteCode | null>;
-  revokeActiveInvites(worldId: string, revokedAt: string): Promise<string[]>;
+  revokeActiveInvites(worldId: string): Promise<string[]>;
+  revokeSupersededInvites(worldId: string): Promise<void>;
   getActiveInvite(worldId: string, now: Date): Promise<InviteCode | null>;
   addMembership(membership: WorldMembership): Promise<void>;
   isWorldMember(worldId: string, playerUuid: string): Promise<boolean>;
@@ -158,8 +159,14 @@ export interface MembershipRepository {
 
 export interface RuntimeRepository {
   getRuntimeRecord(worldId: string, now: Date): Promise<WorldRuntimeRecord | null>;
+  /** Unfenced write for test seeding; session flows use the fenced methods below. */
   upsertRuntimeRecord(runtime: WorldRuntimeRecord): Promise<void>;
-  deleteRuntimeRecord(worldId: string): Promise<void>;
+  /** Install a fresh assignment; false when a same-or-newer epoch already holds the row. */
+  claimRuntimeAssignment(runtime: WorldRuntimeRecord): Promise<boolean>;
+  /** Refresh the record fenced on its own epoch/token; false means authority was lost. */
+  updateAuthorizedRuntime(runtime: WorldRuntimeRecord): Promise<boolean>;
+  /** Retire the epoch high-water mark, then delete only the expected epoch/token row. */
+  deleteRuntimeRecord(worldId: string, expected: { runtimeEpoch: number; runtimeToken: string | null }): Promise<boolean>;
   getLastRuntimeEpoch(worldId: string): Promise<number>;
   getUncleanShutdownWarning(worldId: string): Promise<UncleanShutdownWarning | null>;
   setUncleanShutdownWarning(worldId: string, warning: UncleanShutdownWarning): Promise<void>;
@@ -179,6 +186,8 @@ export interface SnapshotRepository {
   getSnapshot(worldId: string, snapshotId: string): Promise<SnapshotManifest | null>;
   listSnapshotSummaries(worldId: string): Promise<WorldSnapshotSummary[]>;
   listSnapshotsForWorld(worldId: string): Promise<SnapshotRecord[]>;
+  getSnapshotGameVersions(worldId: string, snapshotId: string): Promise<{ dataVersion: number | null; minecraftVersion: string | null } | null>;
+  listSnapshotDeltaBases(worldId: string): Promise<Array<{ snapshotId: string; baseSnapshotId: string }>>;
   finalizeSnapshot(worldId: string, ctx: RequestContext, request: FinalizeSnapshotRequest, now: Date): Promise<SnapshotManifest>;
   deleteSnapshots(worldId: string, snapshotIds: string[]): Promise<SnapshotDeletionResult>;
 }

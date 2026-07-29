@@ -807,4 +807,80 @@ describe("SharedWorldService lifecycle", () => {
     const latest = await instance.latestManifest({ playerUuid: "player-guest", playerName: "Guest" }, world.id);
     expect(latest?.files.map((file) => file.path)).toEqual(["old.dat"]);
   });
+
+  test("retried begin-finalization from the finalizing runtime replays success", async () => {
+    const repository = createSqliteRepository();
+    const { signer } = createBlobSigner();
+    const instance = createTestService(repository, authVerifier, signer, {});
+    await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
+    const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "World", "world");
+    await instance.enterSession({ playerUuid: "player-owner", playerName: "Owner" }, world.id, {}, new Date("2099-01-01T00:00:00.000Z"));
+    const runtime = await repository.getRuntimeRecord(world.id, new Date("2099-01-01T00:00:01.000Z"));
+    const auth = { runtimeEpoch: runtime?.runtimeEpoch, hostToken: runtime?.runtimeToken };
+
+    const first = await instance.beginFinalization({ playerUuid: "player-owner", playerName: "Owner" }, world.id, auth, new Date("2099-01-01T00:00:02.000Z"));
+    expect(first.status).toBe("finalizing");
+
+    // The client retried after a network flap; the original request already landed.
+    const retried = await instance.beginFinalization({ playerUuid: "player-owner", playerName: "Owner" }, world.id, auth, new Date("2099-01-01T00:00:03.000Z"));
+    expect(retried.status).toBe("finalizing");
+  });
+
+  test("retried complete-finalization and release-host after success replay success instead of a lost lease", async () => {
+    const repository = createSqliteRepository();
+    const { signer } = createBlobSigner();
+    const instance = createTestService(repository, authVerifier, signer, {});
+    await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
+    const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "World", "world");
+    await instance.enterSession({ playerUuid: "player-owner", playerName: "Owner" }, world.id, {}, new Date("2099-01-01T00:00:00.000Z"));
+    const runtime = await repository.getRuntimeRecord(world.id, new Date("2099-01-01T00:00:01.000Z"));
+    const auth = { runtimeEpoch: runtime?.runtimeEpoch, hostToken: runtime?.runtimeToken };
+
+    await instance.beginFinalization({ playerUuid: "player-owner", playerName: "Owner" }, world.id, auth, new Date("2099-01-01T00:00:02.000Z"));
+    const completed = await instance.completeFinalization({ playerUuid: "player-owner", playerName: "Owner" }, world.id, auth, new Date("2099-01-01T00:00:03.000Z"));
+    expect(completed.status).toBe("idle");
+
+    const retriedComplete = await instance.completeFinalization({ playerUuid: "player-owner", playerName: "Owner" }, world.id, auth, new Date("2099-01-01T00:00:04.000Z"));
+    expect(retriedComplete.status).toBe("idle");
+
+    const retriedRelease = await instance.releaseHost(
+      { playerUuid: "player-owner", playerName: "Owner" },
+      world.id,
+      { ...auth, graceful: true },
+      new Date("2099-01-01T00:00:05.000Z")
+    );
+    expect(retriedRelease.graceful).toBe(true);
+    expect(await repository.getRuntimeRecord(world.id, new Date("2099-01-01T00:00:06.000Z"))).toBeNull();
+
+    // The replay never blocks the next real session: a fresh host claims epoch 2.
+    const reentered = await instance.enterSession({ playerUuid: "player-owner", playerName: "Owner" }, world.id, {}, new Date("2099-01-01T00:00:07.000Z"));
+    expect(reentered.action).toBe("host");
+    expect(reentered.assignment?.runtimeEpoch).toBe((runtime?.runtimeEpoch ?? 0) + 1);
+  });
+
+  test("[P1] a lease that expired into an unclean warning rejects a retried release as a real authority loss", async () => {
+    const repository = createSqliteRepository();
+    const { signer } = createBlobSigner();
+    const instance = createTestService(repository, authVerifier, signer, {});
+    await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
+    const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "World", "world");
+    await instance.enterSession({ playerUuid: "player-owner", playerName: "Owner" }, world.id, {}, new Date("2099-01-01T00:00:00.000Z"));
+    const runtime = await repository.getRuntimeRecord(world.id, new Date("2099-01-01T00:00:01.000Z"));
+    const auth = { runtimeEpoch: runtime?.runtimeEpoch, hostToken: runtime?.runtimeToken };
+    await instance.heartbeatHost(
+      { playerUuid: "player-owner", playerName: "Owner" },
+      world.id,
+      { ...auth, joinTarget: "host.example:25565" },
+      new Date("2099-01-01T00:00:02.000Z")
+    );
+
+    // The host went silent long past the lease deadline, then its shutdown retry arrives.
+    await expect(instance.releaseHost(
+      { playerUuid: "player-owner", playerName: "Owner" },
+      world.id,
+      { ...auth, graceful: true },
+      new Date("2099-01-01T00:30:00.000Z")
+    )).rejects.toThrow("host lease is no longer active");
+    expect(await repository.getUncleanShutdownWarning(world.id)).not.toBeNull();
+  });
 });
