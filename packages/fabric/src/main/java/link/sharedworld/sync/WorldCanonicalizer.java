@@ -159,8 +159,15 @@ public final class WorldCanonicalizer {
     }
 
     private static boolean shouldSyncPath(Path path) {
-        String fileName = path.getFileName().toString();
-        return !"session.lock".equals(fileName) && !fileName.endsWith(".dat_old");
+        return !isLocalOnlyFileName(path.getFileName().toString());
+    }
+
+    /**
+     * Files that never leave the machine: excluded from sync uploads and from
+     * exports to the vanilla saves folder alike.
+     */
+    public static boolean isLocalOnlyFileName(String fileName) {
+        return "session.lock".equals(fileName) || fileName.endsWith(".dat_old");
     }
 
     private static byte[] gzipBytes(byte[] rawBytes) {

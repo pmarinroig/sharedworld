@@ -254,5 +254,11 @@
   "sharedworld.command.ban.success": "%s was removed from this shared world and the share code was rotated.",
   "sharedworld.command.ban.disconnected": "You were removed from this shared world.",
   "sharedworld.command.kick.success": "Kicked %s player(s) from the session.",
-  "sharedworld.command.kick.nobody": "No matching players could be kicked."
+  "sharedworld.command.kick.nobody": "No matching players could be kicked.",
+  "screen.sharedworld.export_to_singleplayer": "Export to Singleplayer",
+  "screen.sharedworld.export_progress_syncing": "Downloading the latest world state...",
+  "screen.sharedworld.export_progress_copying": "Copying the world into your saves folder...",
+  "screen.sharedworld.export_done": "Exported to your singleplayer saves as \"%s\".",
+  "screen.sharedworld.export_blocked_hosting": "Stop hosting this world before exporting it.",
+  "screen.sharedworld.export_blocked_playing": "Leave this world before exporting it."
 }

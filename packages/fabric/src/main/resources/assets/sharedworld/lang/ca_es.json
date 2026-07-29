@@ -254,5 +254,11 @@
   "sharedworld.command.ban.success": "%s ha estat eliminat d'aquest món compartit i el codi d'invitació s'ha rotat.",
   "sharedworld.command.ban.disconnected": "Has estat eliminat d'aquest món compartit.",
   "sharedworld.command.kick.success": "S'han expulsat %s jugador(s) de la sessió.",
-  "sharedworld.command.kick.nobody": "No s'ha pogut expulsar cap jugador."
+  "sharedworld.command.kick.nobody": "No s'ha pogut expulsar cap jugador.",
+  "screen.sharedworld.export_to_singleplayer": "Exportar a un jugador",
+  "screen.sharedworld.export_progress_syncing": "Baixant l'estat més recent del món...",
+  "screen.sharedworld.export_progress_copying": "Copiant el món a la teva carpeta de partides...",
+  "screen.sharedworld.export_done": "Exportat als teus mons d'un jugador com a \"%s\".",
+  "screen.sharedworld.export_blocked_hosting": "Deixa d'allotjar aquest món abans d'exportar-lo.",
+  "screen.sharedworld.export_blocked_playing": "Surt d'aquest món abans d'exportar-lo."
 }

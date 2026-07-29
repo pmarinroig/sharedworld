@@ -368,8 +368,9 @@ public final class EditSharedWorldScreen extends VersionedScreen {
 
         if (currentTab == this.detailsTab) {
             this.primaryButton.visible = true;
-            this.secondaryButton.visible = false;
-            this.secondaryButton.active = false;
+            this.secondaryButton.visible = this.isOwner();
+            this.secondaryButton.setMessage(Component.translatable("screen.sharedworld.export_to_singleplayer"));
+            this.secondaryButton.active = !this.loading && !this.actionInFlight && this.isOwner();
             this.primaryButton.setMessage(Component.translatable(this.savingDetails
                     ? "screen.sharedworld.saving"
                     : "screen.sharedworld.save_changes"));
@@ -475,6 +476,12 @@ public final class EditSharedWorldScreen extends VersionedScreen {
 
     private void onSecondaryAction() {
         Tab currentTab = this.tabManager.getCurrentTab();
+        if (currentTab == this.detailsTab) {
+            if (this.isOwner() && !this.loading && !this.actionInFlight && this.details != null) {
+                this.minecraft.setScreen(new ExportSharedWorldProgressScreen(this, this.details));
+            }
+            return;
+        }
         if (currentTab == this.backupsTab) {
             if (this.confirmDelete) {
                 this.deleteSnapshot();
@@ -619,6 +626,13 @@ public final class EditSharedWorldScreen extends VersionedScreen {
             this.setStatusError(AbstractSharedWorldMetadataScreen.friendlyMessage(error));
             this.updateButtons();
         });
+    }
+
+    void onExportFinished(String message) {
+        this.setStatusSuccess(message);
+        this.updateButtons();
+        link.sharedworld.versioned.GuiCompat.clearFocus(this);
+        this.minecraft.setScreen(this);
     }
 
     private void toggleSelectedMemberCommands() {
