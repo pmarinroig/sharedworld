@@ -191,6 +191,17 @@ public final class SharedWorldApiClient {
         request("DELETE", "/worlds/" + worldId + "/members/" + playerUuid, null, null, true);
     }
 
+    public SharedWorldModels.WorldMembershipDto setMemberCommandPermission(
+            String worldId,
+            String playerUuid,
+            boolean canUseCommands
+    ) throws IOException, InterruptedException {
+        ensureSession();
+        Map<String, Object> body = Map.of("canUseCommands", canUseCommands);
+        return request("PATCH", "/worlds/" + worldId + "/members/" + playerUuid, body,
+                SharedWorldModels.WorldMembershipDto.class, true);
+    }
+
     public WorldDetailsDto redeemInvite(String code) throws IOException, InterruptedException {
         ensureSession();
         return request("POST", "/invites/redeem", Map.of("code", code), WorldDetailsDto.class, true);
@@ -217,7 +228,7 @@ public final class SharedWorldApiClient {
         return requestWithTransportRetry("GET", "/worlds/" + worldId + "/runtime", WorldRuntimeStatusDto.class);
     }
 
-    public WorldRuntimeStatusDto heartbeatHost(String worldId, long runtimeEpoch, String hostToken, String joinTarget) throws IOException, InterruptedException {
+    public SharedWorldModels.HostHeartbeatResponseDto heartbeatHost(String worldId, long runtimeEpoch, String hostToken, String joinTarget) throws IOException, InterruptedException {
         ensureSession();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("runtimeEpoch", runtimeEpoch);
@@ -229,7 +240,7 @@ public final class SharedWorldApiClient {
         if (minecraftVersion != null) {
             body.put("minecraftVersion", minecraftVersion);
         }
-        return request("POST", "/worlds/" + worldId + "/heartbeat", body, WorldRuntimeStatusDto.class, true);
+        return request("POST", "/worlds/" + worldId + "/heartbeat", body, SharedWorldModels.HostHeartbeatResponseDto.class, true);
     }
 
     public void setHostStartupProgress(String worldId, long runtimeEpoch, String hostToken, SharedWorldModels.StartupProgressDto progress) throws IOException, InterruptedException {

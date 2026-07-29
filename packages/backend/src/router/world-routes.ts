@@ -1,4 +1,4 @@
-import type { CreateWorldRequest, RedeemInviteRequest, UpdateWorldRequest } from "../../../shared/src/index.ts";
+import type { CreateWorldRequest, RedeemInviteRequest, UpdateMemberPermissionsRequest, UpdateWorldRequest } from "../../../shared/src/index.ts";
 
 import { json, ok, readJson } from "../http.ts";
 import type { RouterService } from "./shared.ts";
@@ -15,6 +15,7 @@ export function worldRoutes(
     | "listWorlds"
     | "redeemInvite"
     | "resetInvite"
+    | "setMemberCommandPermission"
     | "updateWorld"
   >
 ): RouteDefinition[] {
@@ -76,6 +77,18 @@ export function worldRoutes(
       pattern: new UrlPattern({ pathname: "/worlds/:worldId/members/:playerUuid" }),
       auth: true,
       handler: async (_request, params, ctx) => json(await service.kickMember(ctx, requireParam(params.worldId, "worldId"), requireParam(params.playerUuid, "playerUuid")))
+    },
+    {
+      method: "PATCH",
+      pattern: new UrlPattern({ pathname: "/worlds/:worldId/members/:playerUuid" }),
+      auth: true,
+      handler: async (request, params, ctx) =>
+        json(await service.setMemberCommandPermission(
+          ctx,
+          requireParam(params.worldId, "worldId"),
+          requireParam(params.playerUuid, "playerUuid"),
+          await readJson<UpdateMemberPermissionsRequest>(request)
+        ))
     }
   ];
 }

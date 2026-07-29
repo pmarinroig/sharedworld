@@ -200,7 +200,7 @@ final class SharedWorldHostingManagerTest {
         Method onHeartbeatSucceeded = SharedWorldHostingManager.class.getDeclaredMethod(
                 "onHeartbeatSucceeded",
                 Class.forName("link.sharedworld.host.SharedWorldHostingManager$HostAttemptContext"),
-                SharedWorldModels.WorldRuntimeStatusDto.class,
+                SharedWorldModels.HostHeartbeatResponseDto.class,
                 String.class,
                 boolean.class
         );
@@ -208,7 +208,7 @@ final class SharedWorldHostingManagerTest {
         onHeartbeatSucceeded.invoke(
                 manager,
                 hostAttemptContext(1L, 7L, "world-1", 7L, "token-7"),
-                runtimeStatus("world-1", "host-live", 7L, "join.example"),
+                heartbeatResponse("world-1", "host-live", 7L, "join.example"),
                 "join.example",
                 false
         );
@@ -802,6 +802,27 @@ final class SharedWorldHostingManagerTest {
                 null,
                 null,
                 null
+        );
+    }
+
+    private static SharedWorldModels.HostHeartbeatResponseDto heartbeatResponse(String worldId, String phase, long runtimeEpoch, String joinTarget) {
+        return new SharedWorldModels.HostHeartbeatResponseDto(
+                worldId,
+                phase,
+                runtimeEpoch,
+                "player-host",
+                "Host",
+                null,
+                null,
+                joinTarget,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                new SharedWorldModels.HostHeartbeatMembershipDto[0]
         );
     }
 

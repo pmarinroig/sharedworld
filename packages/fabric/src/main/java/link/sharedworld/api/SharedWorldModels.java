@@ -82,8 +82,19 @@ public final class SharedWorldModels {
             String playerName,
             String role,
             String joinedAt,
-            String deletedAt
+            String deletedAt,
+            boolean canUseCommands
     ) {
+        public WorldMembershipDto(
+                String worldId,
+                String playerUuid,
+                String playerName,
+                String role,
+                String joinedAt,
+                String deletedAt
+        ) {
+            this(worldId, playerUuid, playerName, role, joinedAt, deletedAt, false);
+        }
     }
 
     public record WorldDetailsDto(
@@ -470,6 +481,58 @@ public final class SharedWorldModels {
             String hostToken,
             String startupDeadlineAt
     ) {
+    }
+
+    public record HostHeartbeatMembershipDto(
+            String playerUuid,
+            String playerName,
+            boolean canUseCommands
+    ) {
+    }
+
+    /**
+     * The heartbeat response body is a flat superset of {@link WorldRuntimeStatusDto}:
+     * the same runtime fields at the top level plus the world's active membership
+     * list. Older clients bind the identical body to WorldRuntimeStatusDto and
+     * ignore the extra field, so this record must mirror it field-for-field.
+     */
+    public record HostHeartbeatResponseDto(
+            String worldId,
+            String phase,
+            long runtimeEpoch,
+            String hostUuid,
+            String hostPlayerName,
+            String candidateUuid,
+            String candidatePlayerName,
+            String joinTarget,
+            String startupDeadlineAt,
+            String runtimeTokenIssuedAt,
+            String lastProgressAt,
+            String revokedAt,
+            StartupProgressDto startupProgress,
+            UncleanShutdownWarningDto uncleanShutdownWarning,
+            String hostMinecraftVersion,
+            HostHeartbeatMembershipDto[] memberships
+    ) {
+        public WorldRuntimeStatusDto toRuntimeStatus() {
+            return new WorldRuntimeStatusDto(
+                    worldId,
+                    phase,
+                    runtimeEpoch,
+                    hostUuid,
+                    hostPlayerName,
+                    candidateUuid,
+                    candidatePlayerName,
+                    joinTarget,
+                    startupDeadlineAt,
+                    runtimeTokenIssuedAt,
+                    lastProgressAt,
+                    revokedAt,
+                    startupProgress,
+                    uncleanShutdownWarning,
+                    hostMinecraftVersion
+            );
+        }
     }
 
     public record EnterSessionResponseDto(

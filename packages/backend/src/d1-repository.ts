@@ -654,7 +654,8 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
        VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(world_id, player_uuid) DO UPDATE SET
          player_name = excluded.player_name,
-         deleted_at = NULL`,
+         deleted_at = NULL,
+         can_use_commands = 0`,
       membership.worldId,
       membership.playerUuid,
       membership.playerName,
@@ -1427,7 +1428,7 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
 
   async listMemberships(worldId: string): Promise<WorldMembership[]> {
     const rows = await this.all<Row>(
-      `SELECT world_id, player_uuid, player_name, role, joined_at, deleted_at
+      `SELECT world_id, player_uuid, player_name, role, joined_at, deleted_at, can_use_commands
        FROM world_memberships
        WHERE world_id = ? AND deleted_at IS NULL
        ORDER BY joined_at ASC`,
@@ -1439,8 +1440,21 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       playerName: String(row.player_name),
       role: String(row.role) as WorldMembership["role"],
       joinedAt: String(row.joined_at),
-      deletedAt: asNullableString(row.deleted_at)
+      deletedAt: asNullableString(row.deleted_at),
+      canUseCommands: Number(row.can_use_commands) !== 0
     }));
+  }
+
+  async setMembershipCommandPermission(worldId: string, playerUuid: string, canUseCommands: boolean): Promise<boolean> {
+    const changes = await this.runWithChanges(
+      `UPDATE world_memberships
+       SET can_use_commands = ?
+       WHERE world_id = ? AND player_uuid = ? AND deleted_at IS NULL`,
+      canUseCommands ? 1 : 0,
+      worldId,
+      playerUuid
+    );
+    return changes > 0;
   }
 
   private async loadSnapshot(snapshotId: string, worldId: string, createdAt: string, createdByUuid: string): Promise<SnapshotManifest> {

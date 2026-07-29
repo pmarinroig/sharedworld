@@ -249,7 +249,8 @@ describe("SharedWorldService invites and membership", () => {
       playerName: "Guest",
       role: "member",
       joinedAt: "2026-01-02T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
 
     await instance.claimHost(
@@ -318,7 +319,8 @@ describe("SharedWorldService invites and membership", () => {
       playerName: "Guest",
       role: "member",
       joinedAt: new Date().toISOString(),
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
 
     await expect(instance.createInvite({ playerUuid: "player-guest", playerName: "Guest" }, world.id)).rejects.toThrow("Only the SharedWorld owner can manage invite codes.");

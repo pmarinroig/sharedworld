@@ -121,7 +121,8 @@ describe("D1SharedWorldRepository", () => {
       playerName: "Host",
       role: "member",
       joinedAt: "2099-01-01T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
     await repository.upsertRuntimeRecord(runtimeFixture(world.id, 5, "rt_hosting"));
 

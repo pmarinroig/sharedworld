@@ -74,7 +74,8 @@ export async function addMember(repository: SharedWorldRepository, worldId: stri
     playerName: player.playerName,
     role: "member",
     joinedAt,
-    deletedAt: null
+    deletedAt: null,
+    canUseCommands: false
   });
 }
 

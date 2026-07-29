@@ -97,7 +97,7 @@ describe("router lifecycle contracts", () => {
     const router = lifecycleRouter({
       async heartbeatHost(_ctx, worldId, request) {
         calls.push({ kind: "heartbeat", worldId, body: request });
-        return runtimeStatusFixture({ worldId, phase: "host-live", runtimeEpoch: 7, joinTarget: "join.example" });
+        return { ...runtimeStatusFixture({ worldId, phase: "host-live", runtimeEpoch: 7, joinTarget: "join.example" }), memberships: [] };
       },
       async setHostStartupProgress(_ctx, worldId, request) {
         calls.push({ kind: "progress", worldId, body: request });

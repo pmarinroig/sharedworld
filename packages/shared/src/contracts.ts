@@ -102,6 +102,11 @@ export interface WorldMembership {
   role: MembershipRole;
   joinedAt: string;
   deletedAt: string | null;
+  canUseCommands: boolean;
+}
+
+export interface UpdateMemberPermissionsRequest {
+  canUseCommands: boolean;
 }
 
 export interface ImportedWorldSource {
@@ -199,6 +204,21 @@ export interface WorldRuntimeStatus {
   startupProgress: HostStartupProgress | null;
   uncleanShutdownWarning: UncleanShutdownWarning | null;
   hostMinecraftVersion: string | null;
+}
+
+export interface HostHeartbeatMembership {
+  playerUuid: string;
+  playerName: string;
+  canUseCommands: boolean;
+}
+
+/**
+ * Host heartbeat response: a FLAT superset of WorldRuntimeStatus. Older mod
+ * clients bind this to WorldRuntimeStatus and ignore the extra field, so the
+ * membership data must stay at the top level (never nested).
+ */
+export interface HostHeartbeatResponse extends WorldRuntimeStatus {
+  memberships: HostHeartbeatMembership[];
 }
 
 export interface EnterSessionRequest {

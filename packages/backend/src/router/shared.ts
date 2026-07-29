@@ -41,6 +41,7 @@ export type RouterService = Pick<
   | "restoreSnapshot"
   | "runtimeStatus"
   | "setHostStartupProgress"
+  | "setMemberCommandPermission"
   | "setPlayerPresence"
   | "updateWorld"
   | "uploadStorageBlob"

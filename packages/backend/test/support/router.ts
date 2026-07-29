@@ -85,7 +85,8 @@ function membershipFixture(overrides: Partial<WorldMembership> = {}): WorldMembe
     playerName: overrides.playerName ?? "Owner",
     role: overrides.role ?? "owner",
     joinedAt: overrides.joinedAt ?? "2099-01-01T00:00:00.000Z",
-    deletedAt: overrides.deletedAt ?? null
+    deletedAt: overrides.deletedAt ?? null,
+    canUseCommands: overrides.canUseCommands ?? false
   };
 }
 
@@ -318,6 +319,9 @@ const defaultRouterService = {
   },
   async setHostStartupProgress(_ctx, _worldId, _request, _now) {
     return unexpectedRouteCall("setHostStartupProgress");
+  },
+  async setMemberCommandPermission(_ctx, _worldId, _targetPlayerUuid, _request) {
+    return unexpectedRouteCall("setMemberCommandPermission");
   },
   async setPlayerPresence(_ctx, _worldId, _request, _now) {
     return unexpectedRouteCall("setPlayerPresence");

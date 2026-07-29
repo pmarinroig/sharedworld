@@ -40,7 +40,8 @@ describe("SharedWorldService lifecycle", () => {
       playerName: "Member",
       role: "member",
       joinedAt: "2099-01-01T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
     await repository.upsertWaiterSession(world.id, { playerUuid: "player-member", playerName: "Member" }, "wait-member", new Date("2099-01-01T00:00:00.000Z"));
 
@@ -78,7 +79,8 @@ describe("SharedWorldService lifecycle", () => {
       playerName: "Member",
       role: "member",
       joinedAt: "2099-01-01T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
 
     const observed = await instance.observeWaiting(
@@ -103,7 +105,8 @@ describe("SharedWorldService lifecycle", () => {
       playerName: "Guest",
       role: "member",
       joinedAt: "2026-01-02T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
 
     await instance.claimHost(
@@ -140,7 +143,8 @@ describe("SharedWorldService lifecycle", () => {
       playerName: "Guest",
       role: "member",
       joinedAt: "2026-01-02T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
 
     await instance.claimHost(
@@ -304,7 +308,8 @@ describe("SharedWorldService lifecycle", () => {
       playerName: "Guest",
       role: "member",
       joinedAt: "2099-01-01T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
 
     const entered = await instance.enterSession(
@@ -352,7 +357,8 @@ describe("SharedWorldService lifecycle", () => {
       playerName: "Guest",
       role: "member",
       joinedAt: "2099-01-01T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
 
     const entered = await instance.enterSession(
@@ -409,7 +415,8 @@ describe("SharedWorldService lifecycle", () => {
       playerName: "Guest",
       role: "member",
       joinedAt: "2099-01-01T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
 
     const entered = await instance.enterSession(
@@ -469,7 +476,8 @@ describe("SharedWorldService lifecycle", () => {
       playerName: "Guest",
       role: "member",
       joinedAt: "2099-01-01T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
 
     const entered = await instance.enterSession(
@@ -725,7 +733,8 @@ describe("SharedWorldService lifecycle", () => {
       playerName: "Guest",
       role: "member",
       joinedAt: "2026-01-02T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
 
     await instance.claimHost({ playerUuid: "player-owner", playerName: "Owner" }, world.id, {}, new Date("2099-01-03T00:00:00.000Z"));
@@ -764,7 +773,8 @@ describe("SharedWorldService lifecycle", () => {
       playerName: "Guest",
       role: "member",
       joinedAt: "2026-01-02T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
 
     await instance.claimHost({ playerUuid: "player-owner", playerName: "Owner" }, world.id, {}, new Date("2099-01-03T00:00:00.000Z"));

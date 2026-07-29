@@ -4,6 +4,7 @@ import link.sharedworld.SharedWorldDevSessionBridge;
 import link.sharedworld.SharedWorldText;
 import link.sharedworld.api.SharedWorldApiClient;
 import link.sharedworld.api.SharedWorldModels.HostAssignmentDto;
+import link.sharedworld.api.SharedWorldModels.HostHeartbeatResponseDto;
 import link.sharedworld.api.SharedWorldModels.StartupProgressDto;
 import link.sharedworld.api.SharedWorldModels.SnapshotManifestDto;
 import link.sharedworld.api.SharedWorldModels.WorldRuntimeStatusDto;
@@ -668,13 +669,13 @@ public final class SharedWorldHostingManager {
         String heartbeatJoinTarget = joinTarget == null || joinTarget.isBlank() ? null : joinTarget;
         CompletableFuture.runAsync(() -> {
             try {
-                WorldRuntimeStatusDto runtime = this.apiClient.heartbeatHost(
+                HostHeartbeatResponseDto response = this.apiClient.heartbeatHost(
                         context.worldId(),
                         context.runtimeEpoch(),
                         context.hostToken(),
                         heartbeatJoinTarget
                 );
-                dispatchToMainThread(() -> onHeartbeatSucceeded(context, runtime, heartbeatJoinTarget, duringSnapshotUpload));
+                dispatchToMainThread(() -> onHeartbeatSucceeded(context, response, heartbeatJoinTarget, duringSnapshotUpload));
             } catch (Exception exception) {
                 dispatchToMainThread(() -> handleHeartbeatFailure(context, exception, duringSnapshotUpload));
             }
@@ -702,7 +703,7 @@ public final class SharedWorldHostingManager {
 
     private void onHeartbeatSucceeded(
             HostAttemptContext context,
-            WorldRuntimeStatusDto runtime,
+            HostHeartbeatResponseDto runtime,
             String joinTarget,
             boolean duringSnapshotUpload
     ) {

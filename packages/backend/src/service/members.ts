@@ -4,7 +4,8 @@ import {
   type KickMemberResponse,
   type RedeemInviteRequest,
   type ResetInviteResponse,
-  type WorldDetails
+  type WorldDetails,
+  type WorldMembership
 } from "../../../shared/src/index.ts";
 
 import { HttpError } from "../http.ts";
@@ -62,10 +63,35 @@ export async function redeemInvite(svc: ServiceContext, ctx: RequestContext, req
     playerName: ctx.playerName,
     role: "member",
     joinedAt: now.toISOString(),
-    deletedAt: null
+    deletedAt: null,
+    canUseCommands: false
   });
 
   return getWorld(svc, ctx, invite.worldId, now);
+}
+
+export async function setMemberCommandPermission(
+  svc: ServiceContext,
+  ctx: RequestContext,
+  worldId: string,
+  targetPlayerUuid: string,
+  canUseCommands: boolean
+): Promise<WorldMembership> {
+  const world = await requireWorldDetails(svc, worldId, ctx.playerUuid);
+  requireOwner(world, ctx, "change member command permissions");
+  if (targetPlayerUuid === world.ownerUuid) {
+    throw new HttpError(400, "cannot_modify_owner", "The SharedWorld owner always has full command permissions.");
+  }
+  const updated = await svc.repository.setMembershipCommandPermission(worldId, targetPlayerUuid, canUseCommands);
+  if (!updated) {
+    throw new HttpError(404, "member_not_found", "SharedWorld member not found.");
+  }
+  const membership = (await svc.repository.listMemberships(worldId))
+    .find((member) => member.playerUuid === targetPlayerUuid);
+  if (!membership) {
+    throw new HttpError(404, "member_not_found", "SharedWorld member not found.");
+  }
+  return membership;
 }
 
 export async function resetInvite(svc: ServiceContext, ctx: RequestContext, worldId: string, now: Date): Promise<ResetInviteResponse> {

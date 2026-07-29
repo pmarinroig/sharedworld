@@ -155,6 +155,8 @@ export interface MembershipRepository {
   hasWorldMembership(worldId: string, playerUuid: string): Promise<boolean>;
   kickMember(worldId: string, removedPlayerUuid: string, removedAt: string): Promise<KickMemberResponse | null>;
   listMemberships(worldId: string): Promise<WorldMembership[]>;
+  /** Set the command-permission flag on an active membership; false when no active row exists. */
+  setMembershipCommandPermission(worldId: string, playerUuid: string, canUseCommands: boolean): Promise<boolean>;
 }
 
 export interface RuntimeRepository {

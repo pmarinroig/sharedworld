@@ -27,7 +27,8 @@ describe("SharedWorldService handoff", () => {
       playerName: "Bravo",
       role: "member",
       joinedAt: "2026-01-01T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
     const now = new Date();
     await repository.upsertWaiterSession(world.id, { playerUuid: "player-b", playerName: "Bravo" }, "wait_b", now);
@@ -115,7 +116,8 @@ describe("SharedWorldService handoff", () => {
       playerName: "Guest",
       role: "member",
       joinedAt: "2026-01-02T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
 
     await repository.upsertWaiterSession(
@@ -144,7 +146,8 @@ describe("SharedWorldService handoff", () => {
       playerName: "Guest",
       role: "member",
       joinedAt: "2026-01-02T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
 
     await instance.claimHost({ playerUuid: "player-owner", playerName: "Owner" }, world.id, {}, new Date("2099-01-03T00:00:00.000Z"));
@@ -198,7 +201,8 @@ describe("SharedWorldService handoff", () => {
       playerName: "Guest",
       role: "member",
       joinedAt: "2026-01-02T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
 
     await instance.claimHost({ playerUuid: "player-owner", playerName: "Owner" }, world.id, {}, new Date("2099-01-03T00:00:00.000Z"));
@@ -229,7 +233,8 @@ describe("SharedWorldService handoff", () => {
       playerName: "Guest",
       role: "member",
       joinedAt: "2026-01-02T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
 
     await instance.claimHost({ playerUuid: "player-owner", playerName: "Owner" }, world.id, {}, new Date("2099-01-03T00:00:00.000Z"));
@@ -275,7 +280,8 @@ describe("SharedWorldService handoff", () => {
       playerName: "Guest",
       role: "member",
       joinedAt: "2026-01-02T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
 
     await instance.claimHost(
@@ -366,7 +372,8 @@ describe("SharedWorldService handoff", () => {
       playerName: "Alpha",
       role: "member",
       joinedAt: "2026-01-01T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
     await repository.addMembership({
       worldId: world.id,
@@ -374,7 +381,8 @@ describe("SharedWorldService handoff", () => {
       playerName: "Bravo",
       role: "member",
       joinedAt: "2026-01-02T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
 
     await instance.claimHost({ playerUuid: "player-owner", playerName: "Owner" }, world.id, {}, new Date("2099-01-03T00:00:00.000Z"));
@@ -417,7 +425,8 @@ describe("SharedWorldService handoff", () => {
       playerName: "Alpha",
       role: "member",
       joinedAt: "2026-01-01T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
     await repository.addMembership({
       worldId: world.id,
@@ -425,7 +434,8 @@ describe("SharedWorldService handoff", () => {
       playerName: "Bravo",
       role: "member",
       joinedAt: "2026-01-02T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
 
     await instance.claimHost({ playerUuid: "player-owner", playerName: "Owner" }, world.id, {}, new Date("2099-01-03T00:00:00.000Z"));
@@ -468,7 +478,8 @@ describe("SharedWorldService handoff", () => {
       playerName: "Host",
       role: "member",
       joinedAt: "2026-01-02T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
 
     await instance.claimHost(
@@ -567,7 +578,8 @@ describe("SharedWorldService handoff", () => {
       playerName: "Host",
       role: "member",
       joinedAt: "2099-01-02T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
 
     await instance.claimHost(
@@ -770,7 +782,8 @@ describe("SharedWorldService handoff", () => {
       playerName: "Alpha",
       role: "member",
       joinedAt: "2026-01-02T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
     await repository.addMembership({
       worldId: world.id,
@@ -778,7 +791,8 @@ describe("SharedWorldService handoff", () => {
       playerName: "Bravo",
       role: "member",
       joinedAt: "2026-01-02T00:01:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
 
     await instance.claimHost(
@@ -836,7 +850,8 @@ describe("SharedWorldService handoff", () => {
       playerName: "Guest",
       role: "member",
       joinedAt: "2026-01-02T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
 
     await instance.claimHost(
@@ -891,7 +906,8 @@ describe("SharedWorldService handoff", () => {
       playerName: "Guest",
       role: "member",
       joinedAt: "2026-01-02T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
 
     await instance.claimHost(

@@ -13,6 +13,7 @@ import type {
   EnterSessionResponse,
   FinalizeSnapshotRequest,
   HeartbeatRequest,
+  HostHeartbeatResponse,
   HostStartupProgressRequest,
   InviteCode,
   KickMemberResponse,
@@ -27,9 +28,11 @@ import type {
   SnapshotManifest,
   StorageLinkCompleteRequest,
   StorageUsageSummary,
+  UpdateMemberPermissionsRequest,
   UpdateWorldRequest,
   UploadPlanRequest,
   WorldDetails,
+  WorldMembership,
   WorldRuntimeStatus,
   WorldSnapshotSummary,
   WorldSummary
@@ -157,6 +160,15 @@ export class SharedWorldService {
     return members.kickMember(this.svc, ctx, worldId, removedPlayerUuid, now);
   }
 
+  async setMemberCommandPermission(
+    ctx: RequestContext,
+    worldId: string,
+    targetPlayerUuid: string,
+    request: UpdateMemberPermissionsRequest
+  ): Promise<WorldMembership> {
+    return members.setMemberCommandPermission(this.svc, ctx, worldId, targetPlayerUuid, request.canUseCommands === true);
+  }
+
   // --- snapshots ---
 
   async listSnapshots(ctx: RequestContext, worldId: string): Promise<WorldSnapshotSummary[]> {
@@ -229,7 +241,7 @@ export class SharedWorldService {
     return session.cancelWaiting(this.svc, ctx, worldId, request, now);
   }
 
-  async heartbeatHost(ctx: RequestContext, worldId: string, request: HeartbeatRequest, now = new Date()) {
+  async heartbeatHost(ctx: RequestContext, worldId: string, request: HeartbeatRequest, now = new Date()): Promise<HostHeartbeatResponse> {
     return session.heartbeatHost(this.svc, ctx, worldId, request, now);
   }
 

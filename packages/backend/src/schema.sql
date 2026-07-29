@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS world_memberships (
   role TEXT NOT NULL,
   joined_at TEXT NOT NULL,
   deleted_at TEXT,
+  can_use_commands INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (world_id, player_uuid),
   FOREIGN KEY (world_id) REFERENCES worlds(id),
   FOREIGN KEY (player_uuid) REFERENCES users(player_uuid)

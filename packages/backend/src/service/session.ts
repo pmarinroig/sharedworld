@@ -8,6 +8,8 @@ import {
   type EnterSessionResponse,
   type FinalizationActionResult,
   type HeartbeatRequest,
+  type HostHeartbeatMembership,
+  type HostHeartbeatResponse,
   type HostStartupProgressRequest,
   type ObserveWaitingRequest,
   type ObserveWaitingResponse,
@@ -328,7 +330,7 @@ export async function heartbeatHost(
   worldId: string,
   request: HeartbeatRequest,
   now: Date
-): Promise<WorldRuntimeStatus> {
+): Promise<HostHeartbeatResponse> {
   await requireSessionAccess(svc, ctx, worldId);
   if (request.runtimeEpoch == null || request.runtimeEpoch < 0 || request.hostToken == null) {
     throw hostNotActiveError();
@@ -339,7 +341,7 @@ export async function heartbeatHost(
     throw hostNotActiveError();
   }
   if (runtime.phase === "host-finalizing") {
-    return toRuntimeStatus(worldId, runtime, resolved.candidate);
+    return withHeartbeatMemberships(svc, worldId, toRuntimeStatus(worldId, runtime, resolved.candidate));
   }
   if (runtime.phase !== "host-starting" && runtime.phase !== "host-live") {
     throw hostNotActiveError();
@@ -351,7 +353,25 @@ export async function heartbeatHost(
   if (!await svc.repository.updateAuthorizedRuntime(updated)) {
     throw hostNotActiveError();
   }
-  return toRuntimeStatus(worldId, updated, runtimeCandidateFromRuntime(updated));
+  return withHeartbeatMemberships(svc, worldId, toRuntimeStatus(worldId, updated, runtimeCandidateFromRuntime(updated)));
+}
+
+/**
+ * The heartbeat response is a FLAT superset of WorldRuntimeStatus: the host uses
+ * the membership list to keep in-game command permissions current, while older
+ * clients bind the same body to WorldRuntimeStatus and ignore the extra field.
+ */
+async function withHeartbeatMemberships(
+  svc: ServiceContext,
+  worldId: string,
+  status: WorldRuntimeStatus
+): Promise<HostHeartbeatResponse> {
+  const memberships: HostHeartbeatMembership[] = (await svc.repository.listMemberships(worldId)).map((member) => ({
+    playerUuid: member.playerUuid,
+    playerName: member.playerName,
+    canUseCommands: member.canUseCommands
+  }));
+  return { ...status, memberships };
 }
 
 /**

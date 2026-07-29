@@ -48,7 +48,8 @@ describe("SharedWorldService world management", () => {
       playerName: "Guest",
       role: "member",
       joinedAt: "2026-01-02T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
 
     await instance.claimHost({ playerUuid: "player-owner", playerName: "Owner" }, world.id, {}, new Date("2099-01-03T00:00:00.000Z"));
@@ -218,7 +219,8 @@ describe("SharedWorldService world management", () => {
       playerName: "Guest",
       role: "member",
       joinedAt: "2026-03-31T00:01:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
     await claimHostForTest(instance, { playerUuid: "player-owner", playerName: "Owner" }, world.id);
     await seedGoogleDriveStorageObject(repository, "blobs/member/cleanup.bin", 5);
@@ -323,7 +325,8 @@ describe("SharedWorldService world management", () => {
       playerName: "Guest",
       role: "member",
       joinedAt: new Date().toISOString(),
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
 
     await expect(
@@ -422,7 +425,8 @@ describe("SharedWorldService world management", () => {
       playerName: "Alpha",
       role: "member",
       joinedAt: "2026-01-01T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
     await repository.addMembership({
       worldId: world.id,
@@ -430,7 +434,8 @@ describe("SharedWorldService world management", () => {
       playerName: "Bravo",
       role: "member",
       joinedAt: "2026-01-02T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
 
     await instance.deleteWorld({ playerUuid: "player-owner", playerName: "Owner" }, world.id, new Date("2026-01-03T00:00:00.000Z"));
@@ -452,7 +457,8 @@ describe("SharedWorldService world management", () => {
       playerName: "Guest",
       role: "member",
       joinedAt: "2026-01-02T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
 
     await instance.deleteWorld({ playerUuid: "player-guest", playerName: "Guest" }, world.id, new Date("2026-01-03T00:00:00.000Z"));
@@ -475,7 +481,8 @@ describe("SharedWorldService world management", () => {
       playerName: "Guest",
       role: "member",
       joinedAt: "2026-01-02T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
 
     await instance.claimHost(
@@ -523,7 +530,8 @@ describe("SharedWorldService world management", () => {
       playerName: "Guest",
       role: "member",
       joinedAt: "2026-01-02T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
 
     await instance.claimHost({ playerUuid: "player-owner", playerName: "Owner" }, world.id, {}, new Date("2099-01-03T00:00:00.000Z"));
@@ -563,7 +571,8 @@ describe("SharedWorldService world management", () => {
       playerName: "Guest",
       role: "member",
       joinedAt: "2026-01-02T00:00:00.000Z",
-      deletedAt: null
+      deletedAt: null,
+      canUseCommands: false
     });
 
     await instance.claimHost({ playerUuid: "player-owner", playerName: "Owner" }, world.id, {}, new Date("2099-01-03T00:00:00.000Z"));
