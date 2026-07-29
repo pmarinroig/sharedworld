@@ -61,14 +61,13 @@ final class SharedWorldWaitingFlowLogic {
             String ownerUuid,
             String currentPlayerUuid,
             WorldRuntimeStatusDto runtime,
-            boolean transitionStarted,
             boolean actionInFlight,
             long nowMillis
     ) {
         if (runtime == null || ownerUuid == null || currentPlayerUuid == null) {
             return false;
         }
-        if (transitionStarted || actionInFlight) {
+        if (actionInFlight) {
             return false;
         }
         if (!"host-finalizing".equals(runtime.phase())) {

@@ -77,6 +77,26 @@ final class SharedWorldSessionCoordinatorTest {
     }
 
     @Test
+    void doubleActivatedJoinSendsASingleEnterSession() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            var world = SharedWorldCoordinatorHarness.world("world-1", "World", "player-owner");
+            harness.sessionBackend.enqueueEnterResponse(SharedWorldCoordinatorHarness.connectResponse(world, 7L, "join.example"));
+
+            // A double-clicked Join button fires twice before the first
+            // enter-session response arrives.
+            harness.sessionCoordinator.beginJoin(harness.parentScreen(), world);
+            harness.sessionCoordinator.beginJoin(harness.parentScreen(), world);
+            harness.runUntilIdle();
+
+            assertEquals(1, harness.sessionBackend.enterCalls());
+            assertTrue(harness.clientShell.actions().contains("connect:join.example"));
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
     void immediateConnectFailureShowsJoinErrorAndClearsPendingRuntimeContext() throws Exception {
         SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
         try {
@@ -89,6 +109,9 @@ final class SharedWorldSessionCoordinatorTest {
 
             assertTrue(harness.clientShell.actions().contains("connectFailed:join.example"));
             assertTrue(harness.clientShell.actions().contains("setScreen:join-error"));
+            // The armed pending guest session must not survive to bind to the
+            // next server the player joins.
+            assertTrue(harness.clientShell.actions().contains("clearPlaySession"));
             assertNull(harness.sessionCoordinator.waitingView());
             assertNull(harness.recoveryStore.load());
 

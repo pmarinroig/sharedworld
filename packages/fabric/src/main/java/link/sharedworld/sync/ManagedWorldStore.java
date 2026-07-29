@@ -63,6 +63,62 @@ public final class ManagedWorldStore {
         Files.createDirectories(this.worldContainer(worldId));
     }
 
+    /**
+     * Deletes transient sync artifacts a crashed or killed client left behind:
+     * staging copies, extract directories, and partial download temps. Working
+     * copies, baselines, and baseline markers are never touched.
+     */
+    public void pruneTransientArtifacts() {
+        if (!Files.isDirectory(this.sharedWorldRoot)) {
+            return;
+        }
+        try (Stream<Path> worlds = Files.list(this.sharedWorldRoot)) {
+            for (Path worldContainer : worlds.filter(Files::isDirectory).toList()) {
+                pruneWorldTransientArtifacts(worldContainer);
+            }
+        } catch (IOException exception) {
+            // Best effort: pruning must never block startup.
+        }
+    }
+
+    private static void pruneWorldTransientArtifacts(Path worldContainer) {
+        deleteQuietly(worldContainer.resolve("staging"));
+        try (Stream<Path> entries = Files.list(worldContainer)) {
+            for (Path entry : entries.toList()) {
+                String name = entry.getFileName().toString();
+                if (name.startsWith("pack-extract-")
+                        || name.startsWith("region-bundle-extract-")
+                        || (name.startsWith("pack-artifact-") && name.endsWith(".part"))
+                        || (name.startsWith("pack-patched-") && name.endsWith(".pack"))) {
+                    deleteQuietly(entry);
+                }
+            }
+        } catch (IOException exception) {
+            // Best effort.
+        }
+        Path workingCopy = worldContainer.resolve(LEVEL_ID);
+        if (Files.isDirectory(workingCopy)) {
+            try (Stream<Path> stream = Files.walk(workingCopy)) {
+                for (Path path : stream.filter(Files::isRegularFile).toList()) {
+                    String name = path.getFileName().toString();
+                    if (name.contains(".artifact.") && name.endsWith(".part")) {
+                        deleteQuietly(path);
+                    }
+                }
+            } catch (IOException exception) {
+                // Best effort.
+            }
+        }
+    }
+
+    private static void deleteQuietly(Path root) {
+        try {
+            deleteRecursivelyIfExists(root);
+        } catch (IOException exception) {
+            // Best effort.
+        }
+    }
+
     public void resetWorkingCopy(String worldId) throws IOException {
         Path workingCopy = this.workingCopy(worldId);
         if (Files.exists(workingCopy)) {

@@ -7,22 +7,34 @@ import net.fabricmc.loader.api.FabricLoader;
 import java.io.IOException;
 import java.io.Reader;
 import java.io.Writer;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 
 public final class SharedWorldReleaseStore implements SharedWorldReleaseCoordinator.ReleasePersistence {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-    private static final Path FILE = FabricLoader.getInstance().getConfigDir().resolve("sharedworld-release.json");
+    private final Path file;
+
+    public SharedWorldReleaseStore() {
+        this(FabricLoader.getInstance().getConfigDir().resolve("sharedworld-release.json"));
+    }
+
+    SharedWorldReleaseStore(Path file) {
+        this.file = file;
+    }
 
     @Override
     public synchronized ReleaseRecord load() {
-        if (!Files.exists(FILE)) {
+        if (!Files.exists(this.file)) {
             return null;
         }
-
-        try (Reader reader = Files.newBufferedReader(FILE)) {
+        try (Reader reader = Files.newBufferedReader(this.file)) {
             return GSON.fromJson(reader, ReleaseRecord.class);
-        } catch (IOException exception) {
+        } catch (IOException | RuntimeException exception) {
+            // A crash mid-write can leave truncated JSON behind; a corrupt
+            // record must clear itself instead of crashing every startup.
+            clear();
             return null;
         }
     }
@@ -41,16 +53,27 @@ public final class SharedWorldReleaseStore implements SharedWorldReleaseCoordina
 
     @Override
     public synchronized void save(ReleaseRecord record) throws IOException {
-        Files.createDirectories(FILE.getParent());
-        try (Writer writer = Files.newBufferedWriter(FILE)) {
+        Files.createDirectories(this.file.getParent());
+        Path tempFile = this.file.resolveSibling(this.file.getFileName() + ".tmp");
+        try (Writer writer = Files.newBufferedWriter(tempFile)) {
             GSON.toJson(record, writer);
+        }
+        try {
+            Files.move(tempFile, this.file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (AtomicMoveNotSupportedException exception) {
+            Files.move(tempFile, this.file, StandardCopyOption.REPLACE_EXISTING);
+        } finally {
+            try {
+                Files.deleteIfExists(tempFile);
+            } catch (IOException ignored) {
+            }
         }
     }
 
     @Override
     public synchronized void clear() {
         try {
-            Files.deleteIfExists(FILE);
+            Files.deleteIfExists(this.file);
         } catch (IOException ignored) {
         }
     }

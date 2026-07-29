@@ -33,12 +33,24 @@ final class WorldSyncSupport {
 
     static List<LocalArtifact> buildRegionBundleArtifacts(List<PreparedWorldFile> regionFiles) throws IOException {
         List<LocalArtifact> bundles = new ArrayList<>();
-        for (SyncPathRules.RegionBundleGroup group : SyncPathRules.groupTerrainFiles(regionFiles)) {
-            Path artifactPath = Files.createTempFile("sharedworld-region-bundle-", ".bundle");
-            LocalPackDescriptorDto descriptor = SharedWorldPack.buildPack(group.bundleId(), group.files(), artifactPath);
-            bundles.add(new LocalArtifact(descriptor, artifactPath));
+        try {
+            for (SyncPathRules.RegionBundleGroup group : SyncPathRules.groupTerrainFiles(regionFiles)) {
+                Path artifactPath = Files.createTempFile("sharedworld-region-bundle-", ".bundle");
+                bundles.add(new LocalArtifact(null, artifactPath));
+                LocalPackDescriptorDto descriptor = SharedWorldPack.buildPack(group.bundleId(), group.files(), artifactPath);
+                bundles.set(bundles.size() - 1, new LocalArtifact(descriptor, artifactPath));
+            }
+            return bundles;
+        } catch (IOException | RuntimeException buildFailure) {
+            for (LocalArtifact bundle : bundles) {
+                try {
+                    Files.deleteIfExists(bundle.artifactPath());
+                } catch (IOException cleanupFailure) {
+                    buildFailure.addSuppressed(cleanupFailure);
+                }
+            }
+            throw buildFailure;
         }
-        return bundles;
     }
 
     static void report(WorldSyncProgressListener listener, String stage, double fraction, Long bytesDone, Long bytesTotal, String detailLine) {

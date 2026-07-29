@@ -137,6 +137,12 @@ public final class SharedWorldSessionCoordinator {
      * The backend enter-session response.
      */
     public void beginJoin(Screen parent, WorldSummaryDto world) {
+        // A double-activated Join button must not send a second enterSession:
+        // the backend would see two entries (a wasted waiter or host churn)
+        // even though the stale response is dropped client-side.
+        if (this.pendingJoinAttempt != null && this.pendingJoinAttempt.worldId.equals(world.id())) {
+            return;
+        }
         beginJoinAttempt(parent, world.id(), displayName(world), world.ownerUuid(), null, false, false, false, null, SharedWorldHostingManager.StartupMode.NORMAL);
     }
 
@@ -219,7 +225,7 @@ public final class SharedWorldSessionCoordinator {
             maybeResumePersistedRecovery();
         }
         WaitingFlowState state = this.waitingState;
-        if (state == null || state.requestInFlight || state.transitionStarted || state.cancelInFlight || state.discardInFlight) {
+        if (state == null || state.requestInFlight || state.cancelInFlight || state.discardInFlight) {
             return;
         }
         long now = this.clock.nowMillis();
@@ -249,18 +255,16 @@ public final class SharedWorldSessionCoordinator {
                         state.ownerUuid,
                         this.playerIdentity.currentPlayerUuid(),
                         state.lastRuntimeStatus,
-                        state.transitionStarted,
                         state.cancelInFlight || state.discardInFlight,
                         this.clock.nowMillis()
                 ),
-                state.transitionStarted,
                 state.parent
         );
     }
 
     public void cancelWaiting() {
         WaitingFlowState state = this.waitingState;
-        if (state == null || state.cancelInFlight || state.transitionStarted || state.discardInFlight) {
+        if (state == null || state.cancelInFlight || state.discardInFlight) {
             return;
         }
         state.cancelInFlight = true;
@@ -305,7 +309,6 @@ public final class SharedWorldSessionCoordinator {
         if (state == null) {
             return;
         }
-        state.transitionStarted = false;
         state.requestInFlight = false;
         state.statusMessage = Component.translatable("screen.sharedworld.waiting").getString();
         state.progressState = progress(state.hostChangeFlow, Component.translatable("screen.sharedworld.progress.waiting_for_host"), state.progressState);
@@ -334,12 +337,10 @@ public final class SharedWorldSessionCoordinator {
         if (state == null
                 || state.discardInFlight
                 || state.cancelInFlight
-                || state.transitionStarted
                 || !SharedWorldWaitingFlowLogic.canDiscardPendingFinalization(
                         state.ownerUuid,
                         this.playerIdentity.currentPlayerUuid(),
                         state.lastRuntimeStatus,
-                        state.transitionStarted,
                         state.cancelInFlight || state.discardInFlight,
                         this.clock.nowMillis()
                 )) {
@@ -696,7 +697,7 @@ public final class SharedWorldSessionCoordinator {
     }
 
     private void restartWaitingAttempt(WaitingFlowState state) {
-        if (this.waitingState != state || state.transitionStarted) {
+        if (this.waitingState != state) {
             return;
         }
         this.waitingState = null;
@@ -800,6 +801,10 @@ public final class SharedWorldSessionCoordinator {
         if (resumedRecoveryFingerprint != null && resumedRecoveryFingerprint.equals(this.pendingRecoveredConnectFingerprint)) {
             this.pendingRecoveredConnectFingerprint = null;
         }
+        // The connector armed a pending guest session before the connection
+        // attempt; left in place it would bind to whatever server the player
+        // joins next, including plain vanilla ones.
+        this.clientShell.clearPlaySession();
         if (parent != null) {
             link.sharedworld.versioned.GuiCompat.clearFocus(parent);
         }
@@ -832,7 +837,6 @@ public final class SharedWorldSessionCoordinator {
             boolean discardInFlight,
             String discardErrorMessage,
             boolean canDiscardPendingFinalization,
-            boolean transitionStarted,
             Screen parent
     ) {
     }
@@ -850,7 +854,6 @@ public final class SharedWorldSessionCoordinator {
         private long lastPollAt;
         private boolean requestInFlight;
         private int consecutivePollFailures;
-        private boolean transitionStarted;
         private boolean cancelInFlight;
         private boolean discardInFlight;
         private String discardErrorMessage;

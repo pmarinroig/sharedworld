@@ -191,6 +191,53 @@ final class WorldSyncCoordinatorDownloadTest {
             assertArrayEquals("stale".getBytes(), Files.readAllBytes(workingCopy.resolve("data").resolve("stale.txt")));
             assertFalse(Files.exists(workingCopy.resolve("data").resolve("new.txt")));
             assertEquals(null, worldStore.packBaselineSnapshotId(WORLD_ID));
+            assertNoSyncTempsInWorldContainer(worldStore);
+        }
+    }
+
+    @Test
+    void failedDownloadPlanRequestLeavesNoTempArtifactsBehind() throws Exception {
+        ManagedWorldStore worldStore = new ManagedWorldStore(this.tempDir.resolve("managed-plan-fail"));
+        Path workingCopy = worldStore.workingCopy(WORLD_ID);
+        writeFile(workingCopy, "data/stale.txt", "stale".getBytes());
+        writeFile(workingCopy, "region/r.0.0.mca", "region".getBytes());
+
+        java.util.Set<String> tempsBefore = sharedWorldTempNames();
+        try (SyncTestHttpServer server = new SyncTestHttpServer()) {
+            // No download plan configured: the guest cache warmer hits this
+            // failure every 30 seconds while the backend is unreachable.
+            WorldSyncCoordinator coordinator = new WorldSyncCoordinator(server.apiClient(), worldStore);
+            assertThrows(Exception.class, () -> coordinator.ensureSynchronizedWorkingCopy(WORLD_ID, HOST_UUID));
+        }
+        assertEquals(tempsBefore, sharedWorldTempNames());
+        assertNoSyncTempsInWorldContainer(worldStore);
+    }
+
+    private static java.util.Set<String> sharedWorldTempNames() throws Exception {
+        Path tmp = Path.of(System.getProperty("java.io.tmpdir"));
+        try (java.util.stream.Stream<Path> stream = Files.list(tmp)) {
+            return stream
+                    .map(path -> path.getFileName().toString())
+                    .filter(name -> name.startsWith("sharedworld-"))
+                    .collect(java.util.stream.Collectors.toSet());
+        }
+    }
+
+    private static void assertNoSyncTempsInWorldContainer(ManagedWorldStore worldStore) throws Exception {
+        Path container = worldStore.worldContainer(WORLD_ID);
+        if (!Files.isDirectory(container)) {
+            return;
+        }
+        try (java.util.stream.Stream<Path> stream = Files.walk(container)) {
+            java.util.List<String> temps = stream
+                    .map(path -> path.getFileName().toString())
+                    .filter(name -> name.startsWith("pack-artifact-")
+                            || name.startsWith("pack-patched-")
+                            || name.startsWith("pack-extract-")
+                            || name.startsWith("region-bundle-extract-")
+                            || (name.contains(".artifact.") && name.endsWith(".part")))
+                    .toList();
+            assertEquals(java.util.List.of(), temps);
         }
     }
 

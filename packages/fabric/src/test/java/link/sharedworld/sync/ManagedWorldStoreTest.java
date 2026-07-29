@@ -61,6 +61,47 @@ final class ManagedWorldStoreTest {
         assertTrue(Files.exists(stagingDirectory));
     }
 
+    @org.junit.jupiter.api.Test
+    void pruneTransientArtifactsRemovesLeftoversWithoutTouchingWorldData() throws IOException {
+        Path root = this.tempDir.resolve("prune-root");
+        ManagedWorldStore store = new ManagedWorldStore(root);
+        Path container = store.worldContainer("world-1");
+        Path workingCopy = store.workingCopy("world-1");
+        Files.createDirectories(workingCopy.resolve("region"));
+
+        // Real world data and baselines that must survive.
+        Files.writeString(workingCopy.resolve("level.dat"), "level");
+        Files.writeString(workingCopy.resolve("region").resolve("r.0.0.mca"), "region");
+        Files.createDirectories(store.regionBaselineRoot("world-1"));
+        Files.writeString(store.regionBaselineRoot("world-1").resolve("bundle.bundle"), "baseline");
+        Files.writeString(store.packBaselineFile("world-1"), "pack-baseline");
+        Files.writeString(store.regionBaselineSnapshotFile("world-1"), "snapshot-1");
+
+        // Leftovers from a killed client that must be reclaimed.
+        Files.createDirectories(store.stagingRoot("world-1").resolve("snapshot-123"));
+        Files.writeString(store.stagingRoot("world-1").resolve("snapshot-123").resolve("level.dat"), "staged");
+        Files.createDirectories(container.resolve("pack-extract-abc"));
+        Files.createDirectories(container.resolve("region-bundle-extract-def"));
+        Files.writeString(container.resolve("pack-artifact-123.part"), "partial");
+        Files.writeString(container.resolve("pack-patched-456.pack"), "patched");
+        Files.writeString(workingCopy.resolve("region").resolve("r.0.0.mca.artifact.789.part"), "partial-download");
+
+        store.pruneTransientArtifacts();
+
+        assertTrue(Files.exists(workingCopy.resolve("level.dat")));
+        assertTrue(Files.exists(workingCopy.resolve("region").resolve("r.0.0.mca")));
+        assertTrue(Files.exists(store.regionBaselineRoot("world-1").resolve("bundle.bundle")));
+        assertTrue(Files.exists(store.packBaselineFile("world-1")));
+        assertTrue(Files.exists(store.regionBaselineSnapshotFile("world-1")));
+
+        assertTrue(Files.notExists(store.stagingRoot("world-1")));
+        assertTrue(Files.notExists(container.resolve("pack-extract-abc")));
+        assertTrue(Files.notExists(container.resolve("region-bundle-extract-def")));
+        assertTrue(Files.notExists(container.resolve("pack-artifact-123.part")));
+        assertTrue(Files.notExists(container.resolve("pack-patched-456.pack")));
+        assertTrue(Files.notExists(workingCopy.resolve("region").resolve("r.0.0.mca.artifact.789.part")));
+    }
+
     private static void deleteIfExistsRecursively(Path root) throws IOException {
         if (!Files.exists(root)) {
             return;

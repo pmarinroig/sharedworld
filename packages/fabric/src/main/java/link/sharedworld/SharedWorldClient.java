@@ -62,6 +62,9 @@ public final class SharedWorldClient implements ClientModInitializer {
         guestRuntimeWatcher = new SharedWorldGuestRuntimeWatcher(apiClient);
         guestCacheWarmer = new SharedWorldGuestCacheWarmer(apiClient, hostPlayerIdentity);
         sessionCoordinator = new SharedWorldSessionCoordinator(apiClient);
+        // Reclaim staging copies and partial download temps a crashed or killed
+        // client left behind; off the render thread since it walks world dirs.
+        IO_EXECUTOR.execute(() -> new link.sharedworld.sync.ManagedWorldStore().pruneTransientArtifacts());
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             hostingManager.tick(client);
             releaseCoordinator.tick(client);

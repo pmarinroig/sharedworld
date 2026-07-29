@@ -65,7 +65,6 @@ final class SharedWorldWaitingFlowLogicTest {
                         new link.sharedworld.api.SharedWorldModels.StartupProgressDto("Uploading changed files", "determinate", 0.5D, "2026-01-01T00:00:20Z")
                 ),
                 false,
-                false,
                 java.time.Instant.parse("2026-01-01T00:00:34Z").toEpochMilli()
         );
 
@@ -91,7 +90,6 @@ final class SharedWorldWaitingFlowLogicTest {
                         "2026-01-01T00:00:05Z",
                         null
                 ),
-                false,
                 false,
                 java.time.Instant.parse("2026-01-01T00:00:21Z").toEpochMilli()
         );

@@ -63,6 +63,11 @@ public final class HandoffWaitingScreen extends link.sharedworld.versioned.Versi
                 ? view.progressState()
                 : SharedWorldProgressState.indeterminate(this.title, Component.translatable("screen.sharedworld.progress.waiting_for_host"), "handoff_wait", null);
         SharedWorldProgressRenderer.renderCentered(guiGraphics, this.font, this.width, this.height, progressState, partialTick);
+        // A failed cancel must not silently revert to "Waiting": show why the
+        // player is still here.
+        if (view != null && view.discardErrorMessage() != null && !view.discardErrorMessage().isBlank()) {
+            guiGraphics.drawCenteredString(this.font, Component.literal(view.discardErrorMessage()), this.width / 2, this.height - 44, 0xFF6666);
+        }
     }
 
     public void suspendWaitingUnregister() {

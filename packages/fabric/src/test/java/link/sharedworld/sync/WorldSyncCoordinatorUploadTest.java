@@ -189,6 +189,34 @@ final class WorldSyncCoordinatorUploadTest {
         Files.write(file, bytes);
     }
 
+    @Test
+    void failedUploadPlanRequestLeavesNoTempArtifactsBehind() throws Exception {
+        Path worldDirectory = Files.createDirectories(this.tempDir.resolve("world-plan-fail"));
+        writeFile(worldDirectory, "data/foo.dat", repeated('A', 8192));
+        writeFile(worldDirectory, "region/r.0.0.mca", repeated('R', 8192));
+        ManagedWorldStore worldStore = new ManagedWorldStore(this.tempDir.resolve("managed-plan-fail"));
+
+        java.util.Set<String> tempsBefore = sharedWorldTempNames();
+        try (SyncTestHttpServer server = new SyncTestHttpServer()) {
+            // No upload plan configured: the plan request fails like a dead
+            // backend does, which is exactly when autosaves retry every five
+            // minutes and temp leaks would compound.
+            WorldSyncCoordinator coordinator = new WorldSyncCoordinator(server.apiClient(), worldStore);
+            assertThrows(Exception.class, () -> coordinator.uploadSnapshot(WORLD_ID, worldDirectory, HOST_UUID, 7L, "token-7", (WorldSyncProgressListener) null));
+        }
+        assertEquals(tempsBefore, sharedWorldTempNames());
+    }
+
+    private static java.util.Set<String> sharedWorldTempNames() throws Exception {
+        Path tmp = Path.of(System.getProperty("java.io.tmpdir"));
+        try (var stream = Files.list(tmp)) {
+            return stream
+                    .map(path -> path.getFileName().toString())
+                    .filter(name -> name.startsWith("sharedworld-"))
+                    .collect(java.util.stream.Collectors.toSet());
+        }
+    }
+
     private static byte[] repeated(char value, int count) {
         byte[] bytes = new byte[count];
         for (int index = 0; index < count; index++) {

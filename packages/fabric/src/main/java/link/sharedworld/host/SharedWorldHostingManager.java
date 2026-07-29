@@ -30,6 +30,7 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 public final class SharedWorldHostingManager {
     private static final Logger LOGGER = LoggerFactory.getLogger("sharedworld-hosting");
@@ -51,10 +52,14 @@ public final class SharedWorldHostingManager {
     private final HostWorldBootstrap worldBootstrap;
     private final Executor backgroundExecutor;
     private final Executor mainThreadExecutor;
+    private final ClientWorldGate clientWorldGate;
     private final AtomicBoolean startupStarted = new AtomicBoolean();
-    private final AtomicBoolean saveInFlight = new AtomicBoolean();
+    // In-flight guards hold the hostSessionGeneration of the operation that
+    // claimed them (0 = idle). A completion can only release its own claim, so
+    // a stale completion can never wedge or free a newer attempt's slot.
+    private final AtomicLong saveInFlight = new AtomicLong();
     private final AtomicBoolean cancelDisconnectIssued = new AtomicBoolean();
-    private final AtomicBoolean heartbeatInFlight = new AtomicBoolean();
+    private final AtomicLong heartbeatInFlight = new AtomicLong();
     private volatile Phase phase = Phase.IDLE;
     private volatile String statusMessage = "";
     private volatile String errorMessage;
@@ -112,6 +117,21 @@ public final class SharedWorldHostingManager {
             Executor backgroundExecutor,
             Executor mainThreadExecutor
     ) {
+        this(apiClient, worldStore, syncAccess, worldOpenController, startupProgressRelay, hostRecoveryStore, events, backgroundExecutor, mainThreadExecutor, null);
+    }
+
+    SharedWorldHostingManager(
+            SharedWorldApiClient apiClient,
+            ManagedWorldStore worldStore,
+            SyncAccess syncAccess,
+            WorldOpenController worldOpenController,
+            HostStartupProgressRelayController startupProgressRelay,
+            HostRecoveryPersistence hostRecoveryStore,
+            HostingEvents events,
+            Executor backgroundExecutor,
+            Executor mainThreadExecutor,
+            ClientWorldGate clientWorldGate
+    ) {
         this.apiClient = Objects.requireNonNull(apiClient, "apiClient");
         this.startupProgressRelay = Objects.requireNonNull(startupProgressRelay, "startupProgressRelay");
         this.worldStore = Objects.requireNonNull(worldStore, "worldStore");
@@ -126,7 +146,34 @@ public final class SharedWorldHostingManager {
         this.worldOpenController = worldOpenController != null
                 ? worldOpenController
                 : new MinecraftWorldOpenController();
+        this.clientWorldGate = clientWorldGate != null
+                ? clientWorldGate
+                : new MinecraftClientWorldGate();
         this.worldBootstrap = new HostWorldBootstrap(this.syncAccess, this.worldStore, this.worldOpenController);
+    }
+
+    /**
+     * Seam over the client's "is any world or connection open" state and the
+     * forced-disconnect side effect, so cancellation logic stays unit-testable.
+     */
+    interface ClientWorldGate {
+        boolean isWorldOpen();
+
+        void requestDisconnect();
+    }
+
+    private static final class MinecraftClientWorldGate implements ClientWorldGate {
+        @Override
+        public boolean isWorldOpen() {
+            Minecraft minecraft = Minecraft.getInstance();
+            return minecraft.hasSingleplayerServer() || minecraft.level != null || minecraft.getConnection() != null;
+        }
+
+        @Override
+        public void requestDisconnect() {
+            Minecraft minecraft = Minecraft.getInstance();
+            minecraft.execute(() -> link.sharedworld.versioned.ClientCompat.disconnectFromWorld(minecraft));
+        }
     }
 
 
@@ -152,6 +199,20 @@ public final class SharedWorldHostingManager {
 
     public void beginHosting(Screen launchingScreen, WorldSummaryDto world, SnapshotManifestDto latestManifest, HostAssignmentDto assignment, StartupMode startupMode) {
         if (this.startupStarted.get() && this.world != null && this.world.id().equals(world.id())) {
+            // Re-entry into an attempt that is already running. If the backend
+            // just issued a fresh assignment (a new epoch), release it instead
+            // of leaking a lease no local attempt will ever heartbeat.
+            if (assignment != null
+                    && (assignment.runtimeEpoch() != this.runtimeEpoch || !Objects.equals(assignment.hostToken(), this.hostToken))) {
+                String staleWorldId = world.id();
+                CompletableFuture.runAsync(() -> {
+                    try {
+                        this.apiClient.releaseHost(staleWorldId, false, assignment.runtimeEpoch(), assignment.hostToken());
+                    } catch (Exception exception) {
+                        LOGGER.warn("SharedWorld failed to release a duplicate host assignment", exception);
+                    }
+                }, this.backgroundExecutor);
+            }
             return;
         }
         if (assignment == null) {
@@ -178,8 +239,8 @@ public final class SharedWorldHostingManager {
         this.lastAutosaveAt = 0L;
         this.startupProgressRelayActive = false;
         this.startupStarted.set(true);
-        this.saveInFlight.set(false);
-        this.heartbeatInFlight.set(false);
+        this.saveInFlight.set(0L);
+        this.heartbeatInFlight.set(0L);
         this.startupCancelRequested = false;
         this.cancelDisconnectIssued.set(false);
         this.startupProgressRelay.reset();
@@ -246,9 +307,17 @@ public final class SharedWorldHostingManager {
         if (!this.startupCancelRequested) {
             return false;
         }
-        if ((minecraft.hasSingleplayerServer() || minecraft.level != null || minecraft.getConnection() != null)
-                && this.cancelDisconnectIssued.compareAndSet(false, true)) {
-            link.sharedworld.versioned.ClientCompat.disconnectFromWorld(minecraft);
+        if (this.clientWorldGate.isWorldOpen()) {
+            if (this.cancelDisconnectIssued.compareAndSet(false, true)) {
+                this.clientWorldGate.requestDisconnect();
+            }
+            return true;
+        }
+        if (this.cancelDisconnectIssued.get()) {
+            // The forced disconnect finished; the world-open cancellation path
+            // completes here. (The no-world path resets when its lease release
+            // completes instead.)
+            resetState();
         }
         return true;
     }
@@ -331,7 +400,7 @@ public final class SharedWorldHostingManager {
         if (this.phase != Phase.RUNNING || this.coordinatedRelease != CoordinatedRelease.NONE) {
             return;
         }
-        if (now - this.lastAutosaveAt >= AUTOSAVE_INTERVAL_MS && this.saveInFlight.compareAndSet(false, true)) {
+        if (now - this.lastAutosaveAt >= AUTOSAVE_INTERVAL_MS && this.saveInFlight.compareAndSet(0L, this.hostSessionGeneration)) {
             uploadSnapshot(false);
         }
     }
@@ -385,6 +454,12 @@ public final class SharedWorldHostingManager {
         if (!this.startupStarted.get() || this.world == null || this.phase == Phase.IDLE || this.phase == Phase.ERROR) {
             return null;
         }
+        // A cancelled startup is no longer an active host session: the lease is
+        // already being released, so the cancellation's forced disconnect must
+        // not be classified as a graceful host release against it.
+        if (this.startupCancelRequested || this.phase == Phase.CANCELLING) {
+            return null;
+        }
         return new ActiveHostSession(
                 this.world.id(),
                 this.world.name(),
@@ -395,7 +470,7 @@ public final class SharedWorldHostingManager {
     }
 
     public boolean isBackgroundSaveInFlight() {
-        return this.saveInFlight.get();
+        return this.saveInFlight.get() != 0L;
     }
 
     public void beginCoordinatedRelease() {
@@ -480,15 +555,15 @@ public final class SharedWorldHostingManager {
         this.startupAttemptId += 1L;
         invalidateAsyncOperations();
         setPhase(Phase.CANCELLING, SharedWorldText.string("screen.sharedworld.hosting_canceling"));
-        releaseHostLeaseAfterStartupCancel(context, false);
 
-        Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.hasSingleplayerServer() || minecraft.level != null || minecraft.getConnection() != null) {
-            minecraft.execute(() -> link.sharedworld.versioned.ClientCompat.disconnectFromWorld(minecraft));
-            return;
+        // Exactly one lease release. When a world is open the tick loop drives a
+        // forced disconnect and resets once the world is gone; with no world
+        // open, the release completion drives the reset instead.
+        boolean worldOpen = this.clientWorldGate.isWorldOpen();
+        releaseHostLeaseAfterStartupCancel(context, !worldOpen);
+        if (worldOpen && this.cancelDisconnectIssued.compareAndSet(false, true)) {
+            this.clientWorldGate.requestDisconnect();
         }
-
-        releaseHostLeaseAfterStartupCancel(context, true);
     }
 
     public Phase phase() {
@@ -574,7 +649,7 @@ public final class SharedWorldHostingManager {
 
     private void heartbeat(String joinTarget, boolean duringSnapshotUpload) {
         HostAttemptContext context = currentAttemptContext();
-        if (context == null || !this.heartbeatInFlight.compareAndSet(false, true)) {
+        if (context == null || !this.heartbeatInFlight.compareAndSet(0L, context.generation())) {
             return;
         }
         this.lastHeartbeatAttemptAt = System.currentTimeMillis();
@@ -737,7 +812,7 @@ public final class SharedWorldHostingManager {
     private void uploadSnapshot(boolean initialSnapshot) {
         HostAttemptContext context = currentAttemptContext();
         if (context == null) {
-            this.saveInFlight.set(false);
+            this.saveInFlight.set(0L);
             return;
         }
         setPhase(Phase.SAVING, SharedWorldText.string("screen.sharedworld.hosting_saving_snapshot"));
@@ -764,7 +839,12 @@ public final class SharedWorldHostingManager {
                     }
                     this.latestManifest = uploadedManifest;
                     this.lastAutosaveAt = System.currentTimeMillis();
-                    setPhase(Phase.RUNNING, HostLifecyclePolicy.runningStatusMessage(this.publishedJoinTarget));
+                    // A release that began while this save was in flight owns the
+                    // phase now; stomping RELEASING back to RUNNING would tear
+                    // down the finalization progress guests are watching.
+                    if (this.coordinatedRelease == CoordinatedRelease.NONE) {
+                        setPhase(Phase.RUNNING, HostLifecyclePolicy.runningStatusMessage(this.publishedJoinTarget));
+                    }
                 });
             } catch (Exception exception) {
                 if (!isCurrentAttempt(context)) {
@@ -796,7 +876,7 @@ public final class SharedWorldHostingManager {
                 }
                 LOGGER.warn("SharedWorld autosave failed", exception);
                 dispatchToMainThread(() -> {
-                    if (isCurrentAttempt(context)) {
+                    if (isCurrentAttempt(context) && this.coordinatedRelease == CoordinatedRelease.NONE) {
                         setPhase(Phase.RUNNING, HostLifecyclePolicy.runningStatusMessage(this.publishedJoinTarget));
                     }
                 });
@@ -959,19 +1039,19 @@ public final class SharedWorldHostingManager {
 
     private void invalidateAsyncOperations() {
         this.hostSessionGeneration += 1L;
-        this.heartbeatInFlight.set(false);
-        this.saveInFlight.set(false);
+        this.heartbeatInFlight.set(0L);
+        this.saveInFlight.set(0L);
     }
 
     private void clearHeartbeatInFlight(HostAttemptContext context) {
-        if (isCurrentAttempt(context)) {
-            this.heartbeatInFlight.set(false);
+        if (context != null) {
+            this.heartbeatInFlight.compareAndSet(context.generation(), 0L);
         }
     }
 
     private void clearSaveInFlight(HostAttemptContext context) {
-        if (isCurrentAttempt(context)) {
-            this.saveInFlight.set(false);
+        if (context != null) {
+            this.saveInFlight.compareAndSet(context.generation(), 0L);
         }
     }
 
@@ -995,8 +1075,8 @@ public final class SharedWorldHostingManager {
         this.consecutiveHeartbeatFailures = 0;
         this.lastAutosaveAt = 0L;
         this.startupStarted.set(false);
-        this.saveInFlight.set(false);
-        this.heartbeatInFlight.set(false);
+        this.saveInFlight.set(0L);
+        this.heartbeatInFlight.set(0L);
         this.cancelDisconnectIssued.set(false);
         this.progressState = null;
         this.startupProgressRelayActive = false;

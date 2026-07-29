@@ -366,7 +366,7 @@ final class SharedWorldHostingManagerTest {
             long staleHeartbeatAt = System.currentTimeMillis() - 31_000L;
             setField(manager, "lastHeartbeatAt", staleHeartbeatAt);
             setField(manager, "lastHeartbeatAttemptAt", 0L);
-            ((AtomicBoolean) getField(manager, "saveInFlight")).set(true);
+            ((java.util.concurrent.atomic.AtomicLong) getField(manager, "saveInFlight")).set(1L);
 
             manager.beginCoordinatedRelease();
             manager.tick(null);
@@ -403,7 +403,7 @@ final class SharedWorldHostingManagerTest {
             setField(manager, "phase", SharedWorldHostingManager.Phase.SAVING);
             setField(manager, "lastHeartbeatAt", System.currentTimeMillis() - 31_000L);
             setField(manager, "lastHeartbeatAttemptAt", 0L);
-            ((AtomicBoolean) getField(manager, "saveInFlight")).set(true);
+            ((java.util.concurrent.atomic.AtomicLong) getField(manager, "saveInFlight")).set(1L);
 
             leaseState.advance(30_001L);
             manager.tick(null);
@@ -477,7 +477,7 @@ final class SharedWorldHostingManagerTest {
             setField(manager, "phase", SharedWorldHostingManager.Phase.SAVING);
             setField(manager, "lastHeartbeatAt", System.currentTimeMillis() - 31_000L);
             setField(manager, "lastHeartbeatAttemptAt", 0L);
-            ((AtomicBoolean) getField(manager, "saveInFlight")).set(true);
+            ((java.util.concurrent.atomic.AtomicLong) getField(manager, "saveInFlight")).set(1L);
 
             manager.tick(null);
             assertEquals(1, background.size());
@@ -534,7 +534,7 @@ final class SharedWorldHostingManagerTest {
             setField(manager, "hostSessionGeneration", 1L);
             setField(manager, "publishedJoinTarget", "join.example");
             setField(manager, "phase", SharedWorldHostingManager.Phase.SAVING);
-            ((AtomicBoolean) getField(manager, "saveInFlight")).set(true);
+            ((java.util.concurrent.atomic.AtomicLong) getField(manager, "saveInFlight")).set(1L);
 
             long staleHeartbeatAt = System.currentTimeMillis() - 31_000L;
             for (int attempt = 0; attempt < 4; attempt++) {
@@ -874,6 +874,7 @@ final class SharedWorldHostingManagerTest {
         private String phase = "host-live";
         private String joinTarget = "join.example";
         private int heartbeatCount;
+        private int releaseCount;
 
         private LeaseRuntimeState(String worldId, long runtimeEpoch, String hostToken, long leaseTimeoutMs) {
             this.worldId = worldId;
@@ -939,6 +940,11 @@ final class SharedWorldHostingManagerTest {
         synchronized void releaseHost(String worldId, long runtimeEpoch, String hostToken) {
             verifyWorldAndAuthority(worldId, runtimeEpoch, hostToken);
             this.phase = "idle";
+            this.releaseCount += 1;
+        }
+
+        synchronized int releaseCount() {
+            return this.releaseCount;
         }
 
         synchronized SharedWorldModels.WorldRuntimeStatusDto runtimeStatus(String worldId) {
@@ -1055,6 +1061,11 @@ final class SharedWorldHostingManagerTest {
                     handleHeartbeat(exchange);
                     return;
                 }
+                if ("POST".equalsIgnoreCase(exchange.getRequestMethod())
+                        && exchange.getRequestURI().getPath().equals("/worlds/" + this.leaseState.worldId + "/release-host")) {
+                    handleReleaseHost(exchange);
+                    return;
+                }
                 writeJson(exchange, 404, Map.of("error", "not_found", "message", "No test route matched.", "status", 404));
             } finally {
                 exchange.close();
@@ -1076,6 +1087,24 @@ final class SharedWorldHostingManagerTest {
                         "error", exception.error(),
                         "message", exception.getMessage(),
                         "status", exception.status()
+                ));
+            }
+        }
+
+        private void handleReleaseHost(HttpExchange exchange) throws IOException {
+            Map<String, Object> body = readJson(exchange);
+            try {
+                this.leaseState.releaseHost(
+                        this.leaseState.worldId,
+                        ((Number) body.get("runtimeEpoch")).longValue(),
+                        (String) body.get("hostToken")
+                );
+                writeJson(exchange, 200, Map.of("worldId", this.leaseState.worldId, "graceful", Boolean.TRUE.equals(body.get("graceful"))));
+            } catch (RuntimeException exception) {
+                writeJson(exchange, 409, Map.of(
+                        "error", "host_not_active",
+                        "message", "Release rejected by test lease state.",
+                        "status", 409
                 ));
             }
         }
@@ -1149,6 +1178,155 @@ final class SharedWorldHostingManagerTest {
         public void openExistingWorld(ManagedWorldStore worldStore, SharedWorldModels.WorldSummaryDto world, Path worldDirectory) {
             this.openExistingCalls += 1;
             this.openedWorldDirectory = worldDirectory;
+        }
+    }
+
+    @Test
+    void cancelStartupWithoutOpenWorldReleasesTheLeaseOnceAndResetsToIdle() throws Exception {
+        LeaseRuntimeState leaseState = new LeaseRuntimeState("world-1", 7L, "token-7", 90_000L);
+        try (HeartbeatTestServer server = new HeartbeatTestServer(leaseState)) {
+            ManualExecutor background = new ManualExecutor();
+            ManualExecutor mainThread = new ManualExecutor();
+            FakeClientWorldGate gate = new FakeClientWorldGate(false);
+            SharedWorldHostingManager manager = managerWithGate(
+                    apiClient(server.baseUrl()),
+                    new ManagedWorldStore(this.tempDir.resolve("managed-cancel-noworld")),
+                    background,
+                    mainThread,
+                    gate
+            );
+            primeStartup(manager, world("world-1", "Handoff World"), 7L, SharedWorldHostingManager.StartupMode.NORMAL);
+            setField(manager, "phase", SharedWorldHostingManager.Phase.WAITING_FOR_E4MC);
+
+            manager.cancelStartup();
+
+            assertEquals(SharedWorldHostingManager.Phase.CANCELLING, manager.phase());
+            assertNull(manager.activeHostSession());
+            assertEquals(0, gate.disconnectRequests);
+
+            background.runAll();
+            mainThread.runAll();
+
+            assertEquals(SharedWorldHostingManager.Phase.IDLE, manager.phase());
+            assertEquals(1, leaseState.releaseCount());
+            assertEquals("idle", leaseState.phase());
+        }
+    }
+
+    @Test
+    void cancelStartupWithOpenWorldDisconnectsOnceWithoutActingAsAHostSession() throws Exception {
+        LeaseRuntimeState leaseState = new LeaseRuntimeState("world-1", 7L, "token-7", 90_000L);
+        try (HeartbeatTestServer server = new HeartbeatTestServer(leaseState)) {
+            ManualExecutor background = new ManualExecutor();
+            ManualExecutor mainThread = new ManualExecutor();
+            FakeClientWorldGate gate = new FakeClientWorldGate(true);
+            SharedWorldHostingManager manager = managerWithGate(
+                    apiClient(server.baseUrl()),
+                    new ManagedWorldStore(this.tempDir.resolve("managed-cancel-world")),
+                    background,
+                    mainThread,
+                    gate
+            );
+            primeStartup(manager, world("world-1", "Handoff World"), 7L, SharedWorldHostingManager.StartupMode.NORMAL);
+            setField(manager, "phase", SharedWorldHostingManager.Phase.OPENING_WORLD);
+
+            manager.cancelStartup();
+
+            // The forced disconnect must never be classified as a graceful host
+            // release: while cancelling there is no active host session.
+            assertNull(manager.activeHostSession());
+            assertEquals(1, gate.disconnectRequests);
+            assertEquals(SharedWorldHostingManager.Phase.CANCELLING, manager.phase());
+
+            background.runAll();
+            mainThread.runAll();
+            assertEquals(1, leaseState.releaseCount());
+            // The lease release does not complete the cancellation while the
+            // world is still open.
+            assertEquals(SharedWorldHostingManager.Phase.CANCELLING, manager.phase());
+
+            // The disconnect finishes; the next tick completes the cancellation.
+            gate.worldOpen = false;
+            manager.tick(null);
+
+            assertEquals(SharedWorldHostingManager.Phase.IDLE, manager.phase());
+            assertEquals(1, leaseState.releaseCount());
+        }
+    }
+
+    @Test
+    void beginHostingReentryReleasesADuplicateAssignmentInsteadOfLeakingIt() throws Exception {
+        // The backend issued a fresh epoch-8 lease while the local attempt is
+        // still running with epoch 7: the duplicate must be released.
+        LeaseRuntimeState leaseState = new LeaseRuntimeState("world-1", 8L, "token-8", 90_000L);
+        try (HeartbeatTestServer server = new HeartbeatTestServer(leaseState)) {
+            SharedWorldHostingManager manager = manager(
+                    apiClient(server.baseUrl()),
+                    new ManagedWorldStore(this.tempDir.resolve("managed-reentry")),
+                    new RecordingSyncAccess(this.tempDir.resolve("prepared-world")),
+                    new RecordingWorldOpenController(),
+                    new InMemoryHostRecoveryStore(),
+                    worldId -> false
+            );
+            primeStartup(manager, world("world-1", "Handoff World"), 7L, SharedWorldHostingManager.StartupMode.NORMAL);
+            setField(manager, "phase", SharedWorldHostingManager.Phase.PREPARING);
+
+            manager.beginHosting(
+                    null,
+                    world("world-1", "Handoff World"),
+                    latestManifest("world-1"),
+                    new SharedWorldModels.HostAssignmentDto("world-1", HOST_UUID, "Host", 8L, "token-8", null)
+            );
+
+            assertEquals(1, leaseState.releaseCount());
+            // The running attempt itself is untouched.
+            assertEquals(SharedWorldHostingManager.Phase.PREPARING, manager.phase());
+            assertEquals(7L, ((Number) getField(manager, "runtimeEpoch")).longValue());
+        }
+    }
+
+    private SharedWorldHostingManager managerWithGate(
+            SharedWorldApiClient apiClient,
+            ManagedWorldStore worldStore,
+            Executor backgroundExecutor,
+            Executor mainThreadExecutor,
+            SharedWorldHostingManager.ClientWorldGate gate
+    ) {
+        return new SharedWorldHostingManager(
+                apiClient,
+                worldStore,
+                new RecordingSyncAccess(this.tempDir.resolve("prepared-world")),
+                new RecordingWorldOpenController(),
+                new HostStartupProgressRelayController(
+                        (worldId, runtimeEpoch, hostToken, progress) -> {
+                        },
+                        Runnable::run,
+                        () -> 0L
+                ),
+                new InMemoryHostRecoveryStore(),
+                events(worldId -> false),
+                backgroundExecutor,
+                mainThreadExecutor,
+                gate
+        );
+    }
+
+    private static final class FakeClientWorldGate implements SharedWorldHostingManager.ClientWorldGate {
+        private boolean worldOpen;
+        private int disconnectRequests;
+
+        private FakeClientWorldGate(boolean worldOpen) {
+            this.worldOpen = worldOpen;
+        }
+
+        @Override
+        public boolean isWorldOpen() {
+            return this.worldOpen;
+        }
+
+        @Override
+        public void requestDisconnect() {
+            this.disconnectRequests += 1;
         }
     }
 
