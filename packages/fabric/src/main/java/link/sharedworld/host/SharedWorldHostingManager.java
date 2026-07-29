@@ -67,6 +67,7 @@ public final class SharedWorldHostingManager {
     private volatile SnapshotManifestDto latestManifest;
     private volatile String hostPlayerUuid;
     private volatile boolean startupCancelRequested;
+    private volatile boolean cancelLeaseReleaseSettled;
     private volatile String publishedJoinTarget;
     private volatile CoordinatedRelease coordinatedRelease = CoordinatedRelease.NONE;
     private volatile long phaseStartedAt;
@@ -159,6 +160,13 @@ public final class SharedWorldHostingManager {
     interface ClientWorldGate {
         boolean isWorldOpen();
 
+        /**
+         * Disconnecting while the integrated server is still starting (spawn
+         * preparation, level not yet attached) can deadlock the client; the
+         * cancel tick waits for this before issuing the forced disconnect.
+         */
+        boolean isSafeToDisconnect();
+
         void requestDisconnect();
     }
 
@@ -167,6 +175,11 @@ public final class SharedWorldHostingManager {
         public boolean isWorldOpen() {
             Minecraft minecraft = Minecraft.getInstance();
             return minecraft.hasSingleplayerServer() || minecraft.level != null || minecraft.getConnection() != null;
+        }
+
+        @Override
+        public boolean isSafeToDisconnect() {
+            return Minecraft.getInstance().level != null;
         }
 
         @Override
@@ -308,15 +321,17 @@ public final class SharedWorldHostingManager {
             return false;
         }
         if (this.clientWorldGate.isWorldOpen()) {
-            if (this.cancelDisconnectIssued.compareAndSet(false, true)) {
+            // Disconnecting mid-world-open deadlocks the client; wait for the
+            // level to attach before forcing the disconnect.
+            if (this.clientWorldGate.isSafeToDisconnect() && this.cancelDisconnectIssued.compareAndSet(false, true)) {
                 this.clientWorldGate.requestDisconnect();
             }
             return true;
         }
-        if (this.cancelDisconnectIssued.get()) {
-            // The forced disconnect finished; the world-open cancellation path
-            // completes here. (The no-world path resets when its lease release
-            // completes instead.)
+        if (this.cancelLeaseReleaseSettled) {
+            // No world remains and the lease release settled: cancellation is
+            // complete. Waiting for the release also stops an immediate re-host
+            // from reusing a lease whose release is still in flight.
             resetState();
         }
         return true;
@@ -556,14 +571,11 @@ public final class SharedWorldHostingManager {
         invalidateAsyncOperations();
         setPhase(Phase.CANCELLING, SharedWorldText.string("screen.sharedworld.hosting_canceling"));
 
-        // Exactly one lease release. When a world is open the tick loop drives a
-        // forced disconnect and resets once the world is gone; with no world
-        // open, the release completion drives the reset instead.
-        boolean worldOpen = this.clientWorldGate.isWorldOpen();
-        releaseHostLeaseAfterStartupCancel(context, !worldOpen);
-        if (worldOpen && this.cancelDisconnectIssued.compareAndSet(false, true)) {
-            this.clientWorldGate.requestDisconnect();
-        }
+        // Exactly one lease release. The tick loop finishes the cancellation:
+        // it forces the disconnect once that is safe and resets to IDLE only
+        // after the world is gone and the release settled.
+        this.cancelLeaseReleaseSettled = false;
+        releaseHostLeaseAfterStartupCancel(context);
     }
 
     public Phase phase() {
@@ -992,12 +1004,10 @@ public final class SharedWorldHostingManager {
         relayStartupProgressIfNeeded();
     }
 
-    private void releaseHostLeaseAfterStartupCancel(HostAttemptContext context, boolean resetAfterRelease) {
+    private void releaseHostLeaseAfterStartupCancel(HostAttemptContext context) {
         String worldId = context == null ? null : context.worldId();
         if (worldId == null) {
-            if (resetAfterRelease) {
-                dispatchToMainThread(this::resetState);
-            }
+            this.cancelLeaseReleaseSettled = true;
             return;
         }
         CompletableFuture.runAsync(() -> {
@@ -1006,11 +1016,8 @@ public final class SharedWorldHostingManager {
             } catch (Exception exception) {
                 LOGGER.warn("SharedWorld failed to release host after startup cancel", exception);
             }
-        }, this.backgroundExecutor).whenComplete((unused, error) -> {
-            if (resetAfterRelease) {
-                dispatchToMainThread(this::resetState);
-            }
-        });
+        }, this.backgroundExecutor).whenComplete((unused, error) ->
+                dispatchToMainThread(() -> this.cancelLeaseReleaseSettled = true));
     }
 
     private HostAttemptContext currentAttemptContext() {
@@ -1069,6 +1076,7 @@ public final class SharedWorldHostingManager {
         this.hostPlayerUuid = null;
         this.coordinatedRelease = CoordinatedRelease.NONE;
         this.startupCancelRequested = false;
+        this.cancelLeaseReleaseSettled = false;
         this.publishedJoinTarget = null;
         this.lastHeartbeatAt = 0L;
         this.lastHeartbeatAttemptAt = 0L;

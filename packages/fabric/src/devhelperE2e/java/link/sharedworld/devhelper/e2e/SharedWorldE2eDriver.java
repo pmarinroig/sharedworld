@@ -48,6 +48,8 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
         CREATE_SUBMIT,
         AWAIT_WORLD_LISTED,
         BEGIN_HOSTING,
+        CANCEL_FIRST_HOSTING,
+        AWAIT_CANCEL_COMPLETE,
         AWAIT_PUBLISH,
         AWAIT_HOST_LIVE,
         AWAIT_SHUTDOWN_COMMAND,
@@ -83,6 +85,7 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
     private boolean driveLinkPressed;
     private boolean driveLinkFetched;
     private boolean joinTargetInjected;
+    private boolean cancelDrillDone;
     private boolean sawErrorScreen;
     private int ticksInStep;
 
@@ -203,7 +206,32 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
                 if (minecraft.screen instanceof SharedWorldScreen screen && world != null) {
                     SharedWorldClient.sessionCoordinator().beginJoin(screen, world);
                     this.markers.emit("hosting-requested", world.id());
-                    this.hostStep = HostStep.AWAIT_PUBLISH;
+                    // First pass exercises the cancel drill (cancel mid-startup,
+                    // then re-host); the second pass hosts for real.
+                    this.hostStep = this.cancelDrillDone ? HostStep.AWAIT_PUBLISH : HostStep.CANCEL_FIRST_HOSTING;
+                }
+            }
+            case CANCEL_FIRST_HOSTING -> {
+                // The impatient-player drill: cancel the startup mid-flight. The
+                // tiny fixture world usually opens before the next driver tick,
+                // so this exercises the world-open cancellation branch (forced
+                // disconnect + reset) that historically wedged in CANCELLING.
+                if (SharedWorldClient.hostingManager().isStartupCancelable()) {
+                    SharedWorldClient.hostingManager().cancelStartup();
+                    this.markers.emit("hosting-cancel-requested", null);
+                    this.hostStep = HostStep.AWAIT_CANCEL_COMPLETE;
+                }
+            }
+            case AWAIT_CANCEL_COMPLETE -> {
+                if (SharedWorldHostingManager.Phase.IDLE == SharedWorldClient.hostingManager().phase()
+                        && minecraft.level == null
+                        && !minecraft.hasSingleplayerServer()) {
+                    this.markers.emit("hosting-cancelled", null);
+                    this.cancelDrillDone = true;
+                    // The forced disconnect landed on a vanilla screen; reopen
+                    // the SharedWorld screen and host again.
+                    SharedWorldClient.openMainScreen(minecraft.screen);
+                    this.hostStep = HostStep.BEGIN_HOSTING;
                 }
             }
             case AWAIT_PUBLISH -> {

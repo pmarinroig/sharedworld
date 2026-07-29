@@ -1204,8 +1204,14 @@ final class SharedWorldHostingManagerTest {
             assertNull(manager.activeHostSession());
             assertEquals(0, gate.disconnectRequests);
 
+            // The reset waits for the lease release to settle, so a fast
+            // re-host can never reuse a lease whose release is in flight.
+            manager.tick(null);
+            assertEquals(SharedWorldHostingManager.Phase.CANCELLING, manager.phase());
+
             background.runAll();
             mainThread.runAll();
+            manager.tick(null);
 
             assertEquals(SharedWorldHostingManager.Phase.IDLE, manager.phase());
             assertEquals(1, leaseState.releaseCount());
@@ -1235,8 +1241,19 @@ final class SharedWorldHostingManagerTest {
             // The forced disconnect must never be classified as a graceful host
             // release: while cancelling there is no active host session.
             assertNull(manager.activeHostSession());
-            assertEquals(1, gate.disconnectRequests);
             assertEquals(SharedWorldHostingManager.Phase.CANCELLING, manager.phase());
+
+            // While the world is still starting up, disconnecting would
+            // deadlock the client: the tick waits for a safe state.
+            gate.safeToDisconnect = false;
+            manager.tick(null);
+            assertEquals(0, gate.disconnectRequests);
+
+            gate.safeToDisconnect = true;
+            manager.tick(null);
+            assertEquals(1, gate.disconnectRequests);
+            manager.tick(null);
+            assertEquals(1, gate.disconnectRequests);
 
             background.runAll();
             mainThread.runAll();
@@ -1313,6 +1330,7 @@ final class SharedWorldHostingManagerTest {
 
     private static final class FakeClientWorldGate implements SharedWorldHostingManager.ClientWorldGate {
         private boolean worldOpen;
+        private boolean safeToDisconnect = true;
         private int disconnectRequests;
 
         private FakeClientWorldGate(boolean worldOpen) {
@@ -1322,6 +1340,11 @@ final class SharedWorldHostingManagerTest {
         @Override
         public boolean isWorldOpen() {
             return this.worldOpen;
+        }
+
+        @Override
+        public boolean isSafeToDisconnect() {
+            return this.safeToDisconnect;
         }
 
         @Override
