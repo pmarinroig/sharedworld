@@ -71,7 +71,7 @@ final class BackendModCreateFlowIntegrationTest {
                         }
                     },
                     path -> null,
-                    new SharedWorldCreateFlow.WorkingCopyStore() {
+                    new InitialSnapshotUploadPipeline.WorkingCopyStore() {
                         @Override
                         public void resetWorkingCopy(String worldId) throws java.io.IOException {
                             managedWorldStore.resetWorkingCopy(worldId);
@@ -101,7 +101,7 @@ final class BackendModCreateFlowIntegrationTest {
                             null,
                             false
                     ),
-                    new SharedWorldCreateFlow.ProgressSink() {
+                    new InitialSnapshotUploadPipeline.ProgressSink() {
                         @Override
                         public void updateDeterminate(Component label, String phase, double targetFraction, Long bytesDone, Long bytesTotal) {
                             progressEvents.add("determinate:" + phase);

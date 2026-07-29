@@ -260,5 +260,20 @@
   "screen.sharedworld.export_progress_copying": "Copiant el món a la teva carpeta de partides...",
   "screen.sharedworld.export_done": "Exportat als teus mons d'un jugador com a \"%s\".",
   "screen.sharedworld.export_blocked_hosting": "Deixa d'allotjar aquest món abans d'exportar-lo.",
-  "screen.sharedworld.export_blocked_playing": "Surt d'aquest món abans d'exportar-lo."
+  "screen.sharedworld.export_blocked_playing": "Surt d'aquest món abans d'exportar-lo.",
+  "screen.sharedworld.select_folder": "Seleccionar carpeta...",
+  "screen.sharedworld.select_folder_title": "Tria una carpeta de món de Minecraft",
+  "screen.sharedworld.folder_not_a_world": "Aquesta carpeta no conté cap món de Minecraft (falta level.dat).",
+  "screen.sharedworld.folder_is_managed": "Aquesta carpeta està gestionada per SharedWorld i no es pot importar en si mateixa.",
+  "screen.sharedworld.folder_newer_minecraft": "Aquest món es va desar amb una versió de Minecraft més nova que la que estàs fent servir.",
+  "screen.sharedworld.replace_world": "Reemplaçar món...",
+  "screen.sharedworld.replace_title": "Reemplaçar món",
+  "screen.sharedworld.replace_progress_title": "Reemplaçant el món",
+  "screen.sharedworld.replace_action": "Reemplaçar món",
+  "screen.sharedworld.confirm_replace": "Confirmar reemplaçament",
+  "screen.sharedworld.replace_hint": "El món seleccionat reemplaçarà \"%s\" per a tots els membres.",
+  "screen.sharedworld.replace_done": "S'ha reemplaçat el contingut de \"%s\".",
+  "screen.sharedworld.replace_blocked_busy": "Aquest món s'està allotjant ara mateix. Demana a l'amfitrió que pari abans de reemplaçar-lo.",
+  "screen.sharedworld.replace_blocked_hosting": "Deixa d'allotjar aquest món abans de reemplaçar-lo.",
+  "screen.sharedworld.replace_blocked_playing": "Surt d'aquest món abans de reemplaçar-lo."
 }

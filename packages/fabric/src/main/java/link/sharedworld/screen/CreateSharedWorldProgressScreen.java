@@ -50,7 +50,7 @@ public final class CreateSharedWorldProgressScreen extends link.sharedworld.vers
                 }
             },
             path -> SharedWorldClient.customIconStore().encodePngBase64(path),
-            new SharedWorldCreateFlow.WorkingCopyStore() {
+            new InitialSnapshotUploadPipeline.WorkingCopyStore() {
                 @Override
                 public void resetWorkingCopy(String worldId) throws java.io.IOException {
                     CreateSharedWorldProgressScreen.this.worldStore.resetWorkingCopy(worldId);
@@ -61,7 +61,7 @@ public final class CreateSharedWorldProgressScreen extends link.sharedworld.vers
                     return CreateSharedWorldProgressScreen.this.worldStore.workingCopy(worldId);
                 }
             },
-            new SharedWorldCreateFlow.SnapshotUploader() {
+            new InitialSnapshotUploadPipeline.SnapshotUploader() {
                 private final WorldSyncCoordinator syncCoordinator = new WorldSyncCoordinator(SharedWorldClient.apiClient(), CreateSharedWorldProgressScreen.this.worldStore);
 
                 @Override
@@ -127,7 +127,7 @@ public final class CreateSharedWorldProgressScreen extends link.sharedworld.vers
         CompletableFuture
                 .supplyAsync(() -> {
                     try {
-                        return this.createFlow.create(this.request, new SharedWorldCreateFlow.ProgressSink() {
+                        return this.createFlow.create(this.request, new InitialSnapshotUploadPipeline.ProgressSink() {
                             @Override
                             public void updateDeterminate(Component label, String phase, double targetFraction, Long bytesDone, Long bytesTotal) {
                                 CreateSharedWorldProgressScreen.this.updateDeterminate(label, phase, targetFraction, bytesDone, bytesTotal);

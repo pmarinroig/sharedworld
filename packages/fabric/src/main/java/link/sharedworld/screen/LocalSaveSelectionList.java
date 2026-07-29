@@ -24,9 +24,18 @@ import java.util.Locale;
 final class LocalSaveSelectionList extends link.sharedworld.versioned.VersionedSelectionList<LocalSaveSelectionList.Entry> {
     private static final DateTimeFormatter DATE_FORMAT =
             DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT).withLocale(Locale.getDefault());
-    private final CreateSharedWorldScreen owner;
 
-    LocalSaveSelectionList(Minecraft minecraft, int width, int height, int y, int itemHeight, CreateSharedWorldScreen owner) {
+    /** Owner screen callbacks; activation is a double-click on an entry. */
+    interface Host {
+        void onSaveSelected(LocalSaveCatalog.LocalSaveOption save);
+
+        default void onSaveActivated(LocalSaveCatalog.LocalSaveOption save) {
+        }
+    }
+
+    private final Host owner;
+
+    LocalSaveSelectionList(Minecraft minecraft, int width, int height, int y, int itemHeight, Host owner) {
         super(minecraft, width, height, y, itemHeight);
         this.owner = owner;
     }
@@ -86,7 +95,7 @@ final class LocalSaveSelectionList extends link.sharedworld.versioned.VersionedS
             LocalSaveSelectionList.this.setSelected(this);
             LocalSaveSelectionList.this.owner.onSaveSelected(this.save);
             if (doubleClick) {
-                LocalSaveSelectionList.this.owner.openDetailsTab();
+                LocalSaveSelectionList.this.owner.onSaveActivated(this.save);
             }
             return true;
         }

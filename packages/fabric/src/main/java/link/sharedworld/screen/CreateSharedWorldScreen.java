@@ -38,7 +38,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
-public final class CreateSharedWorldScreen extends VersionedScreen {
+public final class CreateSharedWorldScreen extends VersionedScreen implements LocalSaveSelectionList.Host {
     private static final int FOOTER_HEIGHT = 36;
     private static final int CONTENT_MARGIN = 12;
     private static final String EDIT_ICON_SPRITE = "sharedworld:edit_icon";
@@ -57,7 +57,7 @@ public final class CreateSharedWorldScreen extends VersionedScreen {
     private final CreateDraft restoredDraft;
     private final RestoreState restoreState;
     private final HeaderAndFooterLayout layout = new HeaderAndFooterLayout(this, 33, FOOTER_HEIGHT);
-    private final List<LocalSaveCatalog.LocalSaveOption> localSaves = LocalSaveCatalog.discover();
+    private final List<LocalSaveCatalog.LocalSaveOption> localSaves = new java.util.ArrayList<>(LocalSaveCatalog.discover());
     private final TabManager tabManager = new TabManager(this::addRenderableWidget, this::removeWidget);
 
     private final WorldTab worldTab = new WorldTab();
@@ -72,6 +72,8 @@ public final class CreateSharedWorldScreen extends VersionedScreen {
     private ScreenRectangle contentArea;
 
     private LocalSaveSelectionList saveList;
+    private Button selectFolderButton;
+    private String worldTabMessage = "";
     private EditBox nameBox;
     private EditBox motdBox;
     private Button chooseIconButton;
@@ -127,6 +129,11 @@ public final class CreateSharedWorldScreen extends VersionedScreen {
         this.saveList = link.sharedworld.versioned.LayoutCompat.registerTabList(
                 new LocalSaveSelectionList(this.minecraft, 0, 0, 0, 36, this), this::addRenderableWidget);
         this.saveList.setSaves(this.localSaves, this.selectedSave == null ? null : this.selectedSave.id());
+        this.selectFolderButton = Button.builder(
+                Component.translatable("screen.sharedworld.select_folder"),
+                ignored -> this.selectWorldFolder()
+        ).width(FOOTER_BUTTON_WIDTH).build();
+        this.addRenderableWidget(this.selectFolderButton);
 
         this.nameBox = new EditBox(this.font, 0, 0, 220, 20, Component.translatable("screen.sharedworld.world_name"));
         this.nameBox.setMaxLength(128);
@@ -248,6 +255,10 @@ public final class CreateSharedWorldScreen extends VersionedScreen {
         if (this.saveList != null) {
             this.saveList.sharedworldSetVisibleForTab(this.tabManager.getCurrentTab() == this.worldTab);
         }
+        if (this.selectFolderButton != null) {
+            this.selectFolderButton.visible = this.tabManager.getCurrentTab() == this.worldTab;
+            this.selectFolderButton.active = !this.submitting;
+        }
         this.iconHovered = this.isIconHovered(mouseX, mouseY);
         this.updateButtons();
         this.sharedworldRenderMenuBackground(guiGraphics);
@@ -262,6 +273,15 @@ public final class CreateSharedWorldScreen extends VersionedScreen {
                     0xFFFFFFFF
             );
         }
+        if (this.tabManager.getCurrentTab() == this.worldTab && !this.worldTabMessage.isBlank() && this.selectFolderButton != null) {
+            guiGraphics.drawCenteredString(
+                    this.font,
+                    Component.literal(this.worldTabMessage),
+                    this.width / 2,
+                    this.selectFolderButton.getY() - 12,
+                    0xFFFF6B6B
+            );
+        }
 
         if (this.tabManager.getCurrentTab() == this.detailsTab) {
             this.renderDetailsDecorations(guiGraphics);
@@ -272,7 +292,36 @@ public final class CreateSharedWorldScreen extends VersionedScreen {
         GuiBlit.footerSeparator(guiGraphics, this.height - this.layout.getFooterHeight() - 2, this.width);
     }
 
-    void onSaveSelected(LocalSaveCatalog.LocalSaveOption save) {
+    @Override
+    public void onSaveActivated(LocalSaveCatalog.LocalSaveOption save) {
+        this.openDetailsTab();
+    }
+
+    private void selectWorldFolder() {
+        java.nio.file.Path chosen = SharedWorldFolderPicker.chooseFolder(
+                SharedWorldText.string("screen.sharedworld.select_folder_title"));
+        if (chosen == null) {
+            return;
+        }
+        LocalSaveCatalog.LocalSaveOption option;
+        try {
+            option = LocalSaveFolderValidator.validate(
+                    chosen,
+                    this.minecraft.gameDirectory.toPath().resolve("sharedworld").resolve("worlds"),
+                    link.sharedworld.versioned.ClientCompat.currentDataVersion()
+            );
+        } catch (LocalSaveFolderValidator.InvalidSaveFolderException exception) {
+            this.worldTabMessage = exception.getMessage();
+            return;
+        }
+        this.worldTabMessage = "";
+        this.localSaves.removeIf(save -> save.directory().equals(option.directory()));
+        this.localSaves.add(0, option);
+        this.onSaveSelected(option);
+    }
+
+    @Override
+    public void onSaveSelected(LocalSaveCatalog.LocalSaveOption save) {
         String previousDefault = this.selectedSave == null ? "" : blankOr(this.selectedSave.displayName(), "");
         String currentName = this.nameBox.getValue();
         this.selectedSave = save;
@@ -948,13 +997,20 @@ public final class CreateSharedWorldScreen extends VersionedScreen {
         @Override
         public void visitChildren(Consumer<AbstractWidget> consumer) {
             this.sharedworldVisitListChild(consumer, CreateSharedWorldScreen.this.saveList);
+            consumer.accept(CreateSharedWorldScreen.this.selectFolderButton);
         }
 
         @Override
         public void doLayout(ScreenRectangle area) {
+            int folderButtonHeight = 20;
+            int folderButtonGap = 22;
             CreateSharedWorldScreen.this.saveList.setPosition(area.left() + CONTENT_MARGIN, area.top() + CONTENT_MARGIN);
             CreateSharedWorldScreen.this.saveList.setWidth(area.width() - CONTENT_MARGIN * 2);
-            CreateSharedWorldScreen.this.saveList.setHeight(area.height() - CONTENT_MARGIN * 2);
+            CreateSharedWorldScreen.this.saveList.setHeight(area.height() - CONTENT_MARGIN * 2 - folderButtonHeight - folderButtonGap);
+            CreateSharedWorldScreen.this.selectFolderButton.setPosition(
+                    area.left() + (area.width() - CreateSharedWorldScreen.this.selectFolderButton.getWidth()) / 2,
+                    area.top() + area.height() - CONTENT_MARGIN - folderButtonHeight
+            );
         }
     }
 

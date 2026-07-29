@@ -25,6 +25,7 @@ final class SharedWorldCreateFlowTest {
             Path source = root.resolve("source");
             Files.createDirectories(source);
             Files.writeString(source.resolve("level.dat"), "data");
+            Files.writeString(source.resolve("session.lock"), "lock");
 
             FakeBackend backend = new FakeBackend();
             FakeWorkingCopyStore workingCopyStore = new FakeWorkingCopyStore(root.resolve("working"));
@@ -48,7 +49,7 @@ final class SharedWorldCreateFlowTest {
                             null,
                             false
                     ),
-                    new SharedWorldCreateFlow.ProgressSink() {
+                    new InitialSnapshotUploadPipeline.ProgressSink() {
                         @Override
                         public void updateDeterminate(Component label, String phase, double targetFraction, Long bytesDone, Long bytesTotal) {
                             progressEvents.add("determinate:" + phase);
@@ -73,6 +74,9 @@ final class SharedWorldCreateFlowTest {
             assertEquals(1, keepAlive.started);
             assertEquals(1, keepAlive.closed);
             assertTrue(progressEvents.contains("indeterminate:create_upload_prepare"));
+            // Local-only files never enter the working copy that seeds the snapshot.
+            assertTrue(Files.exists(workingCopyStore.workingCopy("world-1").resolve("level.dat")));
+            assertEquals(false, Files.exists(workingCopyStore.workingCopy("world-1").resolve("session.lock")));
         } finally {
             try (var walk = Files.walk(root)) {
                 walk.sorted(java.util.Comparator.reverseOrder()).forEach(path -> {
@@ -114,7 +118,7 @@ final class SharedWorldCreateFlowTest {
                             null,
                             false
                     ),
-                    new SharedWorldCreateFlow.ProgressSink() {
+                    new InitialSnapshotUploadPipeline.ProgressSink() {
                         @Override
                         public void updateDeterminate(Component label, String phase, double targetFraction, Long bytesDone, Long bytesTotal) {
                             progressEvents.add("determinate:" + phase + ":" + label.getString());
@@ -255,8 +259,8 @@ final class SharedWorldCreateFlowTest {
         );
     }
 
-    private static SharedWorldCreateFlow.ProgressSink silentProgressSink() {
-        return new SharedWorldCreateFlow.ProgressSink() {
+    private static InitialSnapshotUploadPipeline.ProgressSink silentProgressSink() {
+        return new InitialSnapshotUploadPipeline.ProgressSink() {
             @Override
             public void updateDeterminate(Component label, String phase, double targetFraction, Long bytesDone, Long bytesTotal) {
             }
@@ -360,7 +364,7 @@ final class SharedWorldCreateFlowTest {
      * Fires the heartbeat synchronously a couple of times on start (simulating keep-alive ticks
      * across the copy/upload) and records that the handle was closed.
      */
-    private static final class FakeLeaseKeepAlive implements SharedWorldCreateFlow.LeaseKeepAlive {
+    private static final class FakeLeaseKeepAlive implements InitialSnapshotUploadPipeline.LeaseKeepAlive {
         private int started;
         private int closed;
 
@@ -373,7 +377,7 @@ final class SharedWorldCreateFlowTest {
         }
     }
 
-    private static final class FakeWorkingCopyStore implements SharedWorldCreateFlow.WorkingCopyStore {
+    private static final class FakeWorkingCopyStore implements InitialSnapshotUploadPipeline.WorkingCopyStore {
         private final Path root;
 
         private FakeWorkingCopyStore(Path root) {
@@ -391,7 +395,7 @@ final class SharedWorldCreateFlowTest {
         }
     }
 
-    private static final class FakeSnapshotUploader implements SharedWorldCreateFlow.SnapshotUploader {
+    private static final class FakeSnapshotUploader implements InitialSnapshotUploadPipeline.SnapshotUploader {
         private long runtimeEpoch;
         private String hostToken;
         private java.io.IOException failWith;

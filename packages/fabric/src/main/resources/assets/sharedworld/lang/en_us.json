@@ -260,5 +260,20 @@
   "screen.sharedworld.export_progress_copying": "Copying the world into your saves folder...",
   "screen.sharedworld.export_done": "Exported to your singleplayer saves as \"%s\".",
   "screen.sharedworld.export_blocked_hosting": "Stop hosting this world before exporting it.",
-  "screen.sharedworld.export_blocked_playing": "Leave this world before exporting it."
+  "screen.sharedworld.export_blocked_playing": "Leave this world before exporting it.",
+  "screen.sharedworld.select_folder": "Select Folder...",
+  "screen.sharedworld.select_folder_title": "Choose a Minecraft world folder",
+  "screen.sharedworld.folder_not_a_world": "That folder doesn't contain a Minecraft world (no level.dat).",
+  "screen.sharedworld.folder_is_managed": "That folder is managed by SharedWorld and can't be imported into itself.",
+  "screen.sharedworld.folder_newer_minecraft": "That world was saved by a newer Minecraft version than you are running.",
+  "screen.sharedworld.replace_world": "Replace World...",
+  "screen.sharedworld.replace_title": "Replace World",
+  "screen.sharedworld.replace_progress_title": "Replacing World",
+  "screen.sharedworld.replace_action": "Replace World",
+  "screen.sharedworld.confirm_replace": "Confirm Replace",
+  "screen.sharedworld.replace_hint": "The selected save will replace \"%s\" for every member.",
+  "screen.sharedworld.replace_done": "Replaced the content of \"%s\".",
+  "screen.sharedworld.replace_blocked_busy": "This world is currently being hosted. Ask the host to stop before replacing it.",
+  "screen.sharedworld.replace_blocked_hosting": "Stop hosting this world before replacing it.",
+  "screen.sharedworld.replace_blocked_playing": "Leave this world before replacing it."
 }

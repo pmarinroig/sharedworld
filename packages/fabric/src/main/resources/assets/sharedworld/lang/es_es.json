@@ -260,5 +260,20 @@
   "screen.sharedworld.export_progress_copying": "Copiando el mundo a tu carpeta de guardados...",
   "screen.sharedworld.export_done": "Exportado a tus mundos de un jugador como \"%s\".",
   "screen.sharedworld.export_blocked_hosting": "Deja de alojar este mundo antes de exportarlo.",
-  "screen.sharedworld.export_blocked_playing": "Sal de este mundo antes de exportarlo."
+  "screen.sharedworld.export_blocked_playing": "Sal de este mundo antes de exportarlo.",
+  "screen.sharedworld.select_folder": "Seleccionar carpeta...",
+  "screen.sharedworld.select_folder_title": "Elige una carpeta de mundo de Minecraft",
+  "screen.sharedworld.folder_not_a_world": "Esa carpeta no contiene un mundo de Minecraft (falta level.dat).",
+  "screen.sharedworld.folder_is_managed": "Esa carpeta está gestionada por SharedWorld y no puede importarse en sí misma.",
+  "screen.sharedworld.folder_newer_minecraft": "Ese mundo fue guardado por una versión de Minecraft más reciente que la que estás usando.",
+  "screen.sharedworld.replace_world": "Reemplazar mundo...",
+  "screen.sharedworld.replace_title": "Reemplazar mundo",
+  "screen.sharedworld.replace_progress_title": "Reemplazando el mundo",
+  "screen.sharedworld.replace_action": "Reemplazar mundo",
+  "screen.sharedworld.confirm_replace": "Confirmar reemplazo",
+  "screen.sharedworld.replace_hint": "El mundo seleccionado reemplazará \"%s\" para todos los miembros.",
+  "screen.sharedworld.replace_done": "Se reemplazó el contenido de \"%s\".",
+  "screen.sharedworld.replace_blocked_busy": "Este mundo se está alojando ahora mismo. Pide al anfitrión que pare antes de reemplazarlo.",
+  "screen.sharedworld.replace_blocked_hosting": "Deja de alojar este mundo antes de reemplazarlo.",
+  "screen.sharedworld.replace_blocked_playing": "Sal de este mundo antes de reemplazarlo."
 }

@@ -28,6 +28,11 @@ public final class NbtCompat {
         return tag.getStringOr(key, defaultValue);
     }
 
+
+    public static int getIntOr(CompoundTag tag, String key, int defaultValue) {
+        return tag.getIntOr(key, defaultValue);
+    }
+
     public static long getLongOr(CompoundTag tag, String key, long defaultValue) {
         return tag.getLongOr(key, defaultValue);
     }

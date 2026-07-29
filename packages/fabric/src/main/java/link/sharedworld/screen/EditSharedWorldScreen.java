@@ -74,6 +74,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
     private MemberBrowserList memberList;
     private Button backButton;
     private Button secondaryButton;
+    private Button replaceWorldButton;
     private Button primaryButton;
     private SelectedIcon selectedIcon;
     private boolean clearCustomIcon;
@@ -123,6 +124,12 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         this.motdBox = new EditBox(this.font, 0, 0, 240, 20, SharedWorldText.component("screen.sharedworld.motd_hint", SharedWorldApiClient.currentPlayerName()));
         this.motdBox.setMaxLength(256);
         this.motdBox.setHint(SharedWorldText.component("screen.sharedworld.motd_hint", SharedWorldApiClient.currentPlayerName()));
+
+        this.replaceWorldButton = Button.builder(
+                Component.translatable("screen.sharedworld.replace_world"),
+                ignored -> this.openReplaceWorldScreen()
+        ).width(190).build();
+        this.addRenderableWidget(this.replaceWorldButton);
 
         this.snapshotList = link.sharedworld.versioned.LayoutCompat.registerTabList(
                 new SnapshotBrowserList(this.minecraft, 120, 100, 0, 36, this), this::addRenderableWidget);
@@ -366,6 +373,10 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         this.backButton.setMessage(Component.translatable("gui.back"));
         this.backButton.active = !this.actionInFlight;
 
+        if (this.replaceWorldButton != null) {
+            this.replaceWorldButton.visible = currentTab == this.detailsTab && this.isOwner();
+            this.replaceWorldButton.active = !this.loading && !this.actionInFlight && this.isOwner() && this.details != null;
+        }
         if (currentTab == this.detailsTab) {
             this.primaryButton.visible = true;
             this.secondaryButton.visible = this.isOwner();
@@ -626,6 +637,19 @@ public final class EditSharedWorldScreen extends VersionedScreen {
             this.setStatusError(AbstractSharedWorldMetadataScreen.friendlyMessage(error));
             this.updateButtons();
         });
+    }
+
+    private void openReplaceWorldScreen() {
+        if (this.isOwner() && !this.loading && !this.actionInFlight && this.details != null) {
+            this.minecraft.setScreen(new ReplaceSharedWorldScreen(this, this.details));
+        }
+    }
+
+    void onReplaceFinished(String message) {
+        this.setStatusSuccess(message);
+        link.sharedworld.versioned.GuiCompat.clearFocus(this);
+        this.minecraft.setScreen(this);
+        this.reloadData();
     }
 
     void onExportFinished(String message) {
@@ -1035,6 +1059,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         public void visitChildren(Consumer<AbstractWidget> consumer) {
             consumer.accept(EditSharedWorldScreen.this.nameBox);
             consumer.accept(EditSharedWorldScreen.this.motdBox);
+            consumer.accept(EditSharedWorldScreen.this.replaceWorldButton);
         }
 
         @Override
@@ -1044,6 +1069,8 @@ public final class EditSharedWorldScreen extends VersionedScreen {
             EditSharedWorldScreen.this.nameBox.setWidth(Math.min(190, area.width() - 140));
             EditSharedWorldScreen.this.motdBox.setPosition(left, area.top() + 98);
             EditSharedWorldScreen.this.motdBox.setWidth(Math.min(190, area.width() - 140));
+            EditSharedWorldScreen.this.replaceWorldButton.setPosition(left, area.top() + 132);
+            EditSharedWorldScreen.this.replaceWorldButton.setWidth(Math.min(190, area.width() - 140));
         }
     }
 
