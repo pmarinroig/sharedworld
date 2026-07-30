@@ -14,6 +14,7 @@ import java.util.concurrent.CompletableFuture;
 public final class SharedWorldInviteScreen extends link.sharedworld.versioned.VersionedScreen {
     private final SharedWorldScreen parent;
     private final WorldSummaryDto world;
+    private boolean justCreated;
     private boolean started;
     private boolean actionInFlight;
     private boolean confirmCreateNewCode;
@@ -22,9 +23,15 @@ public final class SharedWorldInviteScreen extends link.sharedworld.versioned.Ve
     private Button createNewCodeButton;
 
     public SharedWorldInviteScreen(SharedWorldScreen parent, WorldSummaryDto world) {
-        super(Component.translatable("screen.sharedworld.invite_title"));
+        this(parent, world, false);
+    }
+
+    /** {@code justCreated} switches the framing to the post-create celebration. */
+    public SharedWorldInviteScreen(SharedWorldScreen parent, WorldSummaryDto world, boolean justCreated) {
+        super(Component.translatable(justCreated ? "screen.sharedworld.invite_title_created" : "screen.sharedworld.invite_title"));
         this.parent = parent;
         this.world = world;
+        this.justCreated = justCreated;
     }
 
     @Override

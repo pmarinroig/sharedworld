@@ -46,8 +46,8 @@ final class BackendModCreateFlowIntegrationTest {
             SharedWorldCreateFlow flow = new SharedWorldCreateFlow(
                     new SharedWorldCreateFlow.CreateBackend() {
                         @Override
-                        public SharedWorldModels.CreateWorldResultDto createWorld(String name, String motdLine1, String customIconPngBase64, SharedWorldModels.ImportedWorldSourceDto importSource, String storageLinkSessionId) throws java.io.IOException, InterruptedException {
-                            return hostClient.createWorld(name, motdLine1, null, customIconPngBase64, importSource, storageLinkSessionId);
+                        public SharedWorldModels.CreateWorldResultDto createWorld(String name, String motdLine1, String customIconPngBase64, SharedWorldModels.ImportedWorldSourceDto importSource, String storageLinkSessionId, boolean useLinkedStorageAccount) throws java.io.IOException, InterruptedException {
+                            return hostClient.createWorld(name, motdLine1, null, customIconPngBase64, importSource, storageLinkSessionId, useLinkedStorageAccount);
                         }
 
                         @Override
@@ -125,6 +125,23 @@ final class BackendModCreateFlowIntegrationTest {
             assertTrue(createdWorld.lastSnapshotId() != null && !createdWorld.lastSnapshotId().isBlank());
             assertEquals("google-drive", storage.provider());
             assertTrue(storage.objects().length > 0);
+
+            // Returning-player path: after the first link the account is
+            // reusable, so a second world binds without any new link session.
+            SharedWorldModels.StorageAccountSummaryDto account = hostClient.getStorageAccount();
+            assertTrue(account.linked());
+            assertTrue(account.healthy());
+            SharedWorldModels.CreateWorldResultDto second = hostClient.createWorld(
+                    SharedWorldIntegrationBackend.uniqueName("Integration Create Reuse"),
+                    null,
+                    null,
+                    null,
+                    new SharedWorldModels.ImportedWorldSourceDto("local-save", "save-1", "Save"),
+                    null,
+                    true
+            );
+            assertTrue(second.world().storageLinked());
+            assertEquals(createdWorld.storageAccountEmail(), second.world().storageAccountEmail());
         } finally {
             try (var walk = Files.walk(root)) {
                 walk.sorted(java.util.Comparator.reverseOrder()).forEach(path -> {

@@ -57,6 +57,12 @@ final class WidgetAutomation {
         return button != null && button.active && button.visible;
     }
 
+    /** Visible regardless of enabled state — step detection on wizard screens whose widgets toggle visibility. */
+    static boolean hasVisibleButton(Screen screen, String translationKey) {
+        AbstractButton button = findButton(screen, translationKey);
+        return button != null && button.visible;
+    }
+
     private static List<AbstractButton> collectButtons(ContainerEventHandler container) {
         List<AbstractButton> buttons = new ArrayList<>();
         collectButtons(container, buttons);

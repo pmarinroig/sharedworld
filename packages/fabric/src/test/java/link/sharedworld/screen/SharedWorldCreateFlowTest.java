@@ -295,7 +295,7 @@ final class SharedWorldCreateFlowTest {
         private boolean releaseThrows;
 
         @Override
-        public CreateWorldResultDto createWorld(String name, String motdLine1, String customIconPngBase64, SharedWorldModels.ImportedWorldSourceDto importSource, String storageLinkSessionId) {
+        public CreateWorldResultDto createWorld(String name, String motdLine1, String customIconPngBase64, SharedWorldModels.ImportedWorldSourceDto importSource, String storageLinkSessionId, boolean useLinkedStorageAccount) {
             return new CreateWorldResultDto(
                     new WorldDetailsDto(
                             "world-1",

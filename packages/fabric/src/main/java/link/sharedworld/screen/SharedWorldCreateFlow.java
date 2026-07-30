@@ -43,8 +43,12 @@ final class SharedWorldCreateFlow {
      * Authority source:
      * Backend world creation + temporary host assignment for the initial snapshot upload.
      */
-    /** What the hub needs to confirm a create: the message to show and the world to select. */
-    record Outcome(String worldId, String message) {}
+    /** What the hub needs after a create: the world (to select and invite for) and the message to show. */
+    record Outcome(link.sharedworld.api.SharedWorldModels.WorldSummaryDto world, String message) {
+        String worldId() {
+            return this.world.id();
+        }
+    }
 
     Outcome create(CreateSharedWorldScreen.CreateRequest request, InitialSnapshotUploadPipeline.ProgressSink progressSink) throws Exception {
         progressSink.updateIndeterminate(Component.translatable("screen.sharedworld.create_progress_preparing"), "create_prepare");
@@ -56,7 +60,8 @@ final class SharedWorldCreateFlow {
                 request.motd(),
                 customIconBase64,
                 request.importSource(),
-                request.storageLink().id()
+                request.storageLink() == null ? null : request.storageLink().id(),
+                request.storageLink() == null
         );
         WorldDetailsDto createdWorld = result.world();
         InitialSnapshotUploadPipeline.UploadLease uploadLease =
@@ -74,7 +79,7 @@ final class SharedWorldCreateFlow {
 
         progressSink.updateIndeterminate(Component.translatable("screen.sharedworld.create_progress_finishing"), "create_finish");
         return new Outcome(
-                createdWorld.id(),
+                link.sharedworld.api.SharedWorldModels.summaryOf(createdWorld),
                 SharedWorldText.string("screen.sharedworld.operation_created_world", SharedWorldText.displayWorldName(createdWorld.name()))
         );
     }
@@ -98,7 +103,8 @@ final class SharedWorldCreateFlow {
                 String motdLine1,
                 String customIconPngBase64,
                 link.sharedworld.api.SharedWorldModels.ImportedWorldSourceDto importSource,
-                String storageLinkSessionId
+                String storageLinkSessionId,
+                boolean useLinkedStorageAccount
         ) throws IOException, InterruptedException;
 
         void deleteWorld(String worldId) throws IOException, InterruptedException;

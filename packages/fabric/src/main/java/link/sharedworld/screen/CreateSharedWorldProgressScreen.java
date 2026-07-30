@@ -25,8 +25,8 @@ public final class CreateSharedWorldProgressScreen extends link.sharedworld.vers
     private final SharedWorldCreateFlow createFlow = new SharedWorldCreateFlow(
             new SharedWorldCreateFlow.CreateBackend() {
                 @Override
-                public link.sharedworld.api.SharedWorldModels.CreateWorldResultDto createWorld(String name, String motdLine1, String customIconPngBase64, link.sharedworld.api.SharedWorldModels.ImportedWorldSourceDto importSource, String storageLinkSessionId) throws java.io.IOException, InterruptedException {
-                    return SharedWorldClient.apiClient().createWorld(name, motdLine1, null, customIconPngBase64, importSource, storageLinkSessionId);
+                public link.sharedworld.api.SharedWorldModels.CreateWorldResultDto createWorld(String name, String motdLine1, String customIconPngBase64, link.sharedworld.api.SharedWorldModels.ImportedWorldSourceDto importSource, String storageLinkSessionId, boolean useLinkedStorageAccount) throws java.io.IOException, InterruptedException {
+                    return SharedWorldClient.apiClient().createWorld(name, motdLine1, null, customIconPngBase64, importSource, storageLinkSessionId, useLinkedStorageAccount);
                 }
 
                 @Override
@@ -153,7 +153,13 @@ public final class CreateSharedWorldProgressScreen extends link.sharedworld.vers
                         return;
                     }
                     this.parent.onChildOperationFinished(outcome.message(), outcome.worldId());
-                    link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, this.parent);
+                    // Land on the share-code screen: the natural next step after
+                    // creating a world is inviting someone to it. Its Back button
+                    // returns to the hub with the new world selected.
+                    link.sharedworld.versioned.ClientCompat.setScreen(
+                            this.minecraft,
+                            new SharedWorldInviteScreen(this.parent, outcome.world(), true)
+                    );
                 }));
     }
 

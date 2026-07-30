@@ -121,6 +121,18 @@ public final class SharedWorldApiClient {
             ImportedWorldSourceDto importSource,
             String storageLinkSessionId
     ) throws IOException, InterruptedException {
+        return createWorld(name, motdLine1, motdLine2, customIconPngBase64, importSource, storageLinkSessionId, false);
+    }
+
+    public CreateWorldResultDto createWorld(
+            String name,
+            String motdLine1,
+            String motdLine2,
+            String customIconPngBase64,
+            ImportedWorldSourceDto importSource,
+            String storageLinkSessionId,
+            boolean useLinkedStorageAccount
+    ) throws IOException, InterruptedException {
         ensureSession();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("name", name);
@@ -129,6 +141,9 @@ public final class SharedWorldApiClient {
         body.put("customIconPngBase64", blankToNull(customIconPngBase64));
         body.put("importSource", importSource);
         body.put("storageLinkSessionId", storageLinkSessionId);
+        if (useLinkedStorageAccount) {
+            body.put("useLinkedStorageAccount", true);
+        }
         return request("POST", "/worlds", body, CreateWorldResultDto.class, true);
     }
 
@@ -151,14 +166,23 @@ public final class SharedWorldApiClient {
     }
 
     public StorageLinkSessionDto createStorageLink() throws IOException, InterruptedException {
+        return createStorageLink(false);
+    }
+
+    public StorageLinkSessionDto createStorageLink(boolean forceConsent) throws IOException, InterruptedException {
         ensureSession();
         return request(
                 "POST",
                 "/storage/link-sessions",
-                Map.of(),
+                forceConsent ? Map.of("forceConsent", true) : Map.of(),
                 StorageLinkSessionDto.class,
                 true
         );
+    }
+
+    public SharedWorldModels.StorageAccountSummaryDto getStorageAccount() throws IOException, InterruptedException {
+        ensureSession();
+        return request("GET", "/storage/account", null, SharedWorldModels.StorageAccountSummaryDto.class, true);
     }
 
     public StorageLinkSessionDto getStorageLink(String sessionId) throws IOException, InterruptedException {

@@ -135,6 +135,13 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
         }
     }
 
+    /** The connect-Drive button (any of its labels) is only visible on the wizard's connect step. */
+    private static boolean onConnectDriveStep(Screen screen) {
+        return WidgetAutomation.hasVisibleButton(screen, "screen.sharedworld.storage_link_google_drive")
+                || WidgetAutomation.hasVisibleButton(screen, "screen.sharedworld.storage_get_new_link")
+                || WidgetAutomation.hasVisibleButton(screen, "screen.sharedworld.storage_try_again");
+    }
+
     private void reportErrorScreens(Minecraft minecraft) {
         boolean isErrorScreen = minecraft.screen instanceof SharedWorldErrorScreen;
         if (isErrorScreen && !this.sawErrorScreen) {
@@ -169,8 +176,13 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
                 if (screen == null) {
                     return;
                 }
-                if (WidgetAutomation.findButton(screen, "screen.sharedworld.storage_link_google_drive") != null
-                        || WidgetAutomation.findButton(screen, "screen.sharedworld.storage_relink") != null) {
+                if (WidgetAutomation.hasActiveButton(screen, "screen.sharedworld.create_world")) {
+                    this.hostStep = HostStep.CREATE_SUBMIT;
+                    return;
+                }
+                // The wizard's connect step comes first now; its button is only
+                // visible while that step is showing.
+                if (onConnectDriveStep(screen)) {
                     this.hostStep = HostStep.CREATE_LINK_DRIVE;
                     return;
                 }
@@ -183,6 +195,12 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
                 }
                 if (WidgetAutomation.hasActiveButton(screen, "screen.sharedworld.create_world")) {
                     this.hostStep = HostStep.CREATE_SUBMIT;
+                    return;
+                }
+                if (!onConnectDriveStep(screen)) {
+                    // Link completed and the wizard auto-advanced past the
+                    // connect step; walk the remaining steps with Next.
+                    this.hostStep = HostStep.CREATE_NAVIGATE;
                     return;
                 }
                 if (!this.driveLinkPressed && WidgetAutomation.pressButton(screen, "screen.sharedworld.storage_link_google_drive")) {
@@ -200,6 +218,13 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
                 }
             }
             case AWAIT_WORLD_LISTED -> {
+                // A successful create lands on the share-code screen first.
+                if (minecraft.screen instanceof link.sharedworld.screen.SharedWorldInviteScreen inviteScreen) {
+                    if (WidgetAutomation.pressButton(inviteScreen, "screen.sharedworld.done")) {
+                        this.markers.emit("post-create-invite-shown", null);
+                    }
+                    return;
+                }
                 if (minecraft.screen instanceof SharedWorldScreen) {
                     this.lookUpWorldByName(world -> this.markers.emit("world-created", world.id()));
                     if (this.targetWorld.get() != null) {

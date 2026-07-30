@@ -5,24 +5,19 @@ import link.sharedworld.SharedWorldCustomIconStore.SelectedIcon;
 import link.sharedworld.SharedWorldText;
 import link.sharedworld.api.SharedWorldApiClient;
 import link.sharedworld.api.SharedWorldModels.ImportedWorldSourceDto;
+import link.sharedworld.api.SharedWorldModels.StorageAccountSummaryDto;
 import link.sharedworld.api.SharedWorldModels.StorageLinkSessionDto;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
-import net.minecraft.client.gui.components.tabs.Tab;
-import net.minecraft.client.gui.components.tabs.TabManager;
-import net.minecraft.client.gui.components.tabs.TabNavigationBar;
 import net.minecraft.client.gui.layouts.HeaderAndFooterLayout;
 import net.minecraft.client.gui.layouts.LinearLayout;
 import net.minecraft.client.gui.navigation.ScreenRectangle;
 import net.minecraft.client.gui.screens.FaviconTexture;
-import net.minecraft.client.gui.screens.Screen;
 import link.sharedworld.versioned.GuiBlit;
 import link.sharedworld.versioned.VersionedScreen;
 import net.minecraft.network.chat.Component;
-import net.minecraft.util.FormattedCharSequence;
 
 import java.awt.Desktop;
 import java.io.IOException;
@@ -38,46 +33,46 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
+/**
+ * The create wizard: a linear flow (Connect Google Drive → Choose a world →
+ * Name it and create) driven by {@link CreateWizardModel}. Players with a
+ * healthy linked account never see the connect step; a fresh link advances
+ * automatically the moment authorization completes.
+ */
 public final class CreateSharedWorldScreen extends VersionedScreen implements LocalSaveSelectionList.Host {
+    private static final int HEADER_HEIGHT = 33;
     private static final int FOOTER_HEIGHT = 36;
     private static final int CONTENT_MARGIN = 12;
-    private static final String EDIT_ICON_SPRITE = "sharedworld:edit_icon";
     private static final String EDIT_ICON_HIGHLIGHTED_SPRITE = "sharedworld:edit_icon_highlighted";
-    private static final String DELETE_ICON_SPRITE = "sharedworld:delete_icon";
     private static final String DELETE_ICON_HIGHLIGHTED_SPRITE = "sharedworld:delete_icon_highlighted";
-    private static final String UNREACHABLE_SPRITE = "minecraft:server_list/unreachable";
     private static final String PING_5_SPRITE = "minecraft:server_list/ping_5";
     private static final int FOOTER_BUTTON_WIDTH = 150;
     private static final int STORAGE_LEFT_PADDING = 36;
     private static final int STORAGE_COPY_TOP = 56;
-    private static final int STORAGE_BUTTON_TOP = 94;
-    private static final int STORAGE_MESSAGE_TOP = 126;
+    private static final int STORAGE_BUTTON_TOP = 104;
+    private static final long SUCCESS_BANNER_TTL_MS = 7_000L;
+    private static final long ICON_ERROR_TTL_MS = 4_000L;
 
     private final SharedWorldScreen parent;
     private final CreateDraft restoredDraft;
     private final RestoreState restoreState;
-    private final HeaderAndFooterLayout layout = new HeaderAndFooterLayout(this, 33, FOOTER_HEIGHT);
+    private final HeaderAndFooterLayout layout = new HeaderAndFooterLayout(this, HEADER_HEIGHT, FOOTER_HEIGHT);
     private final List<LocalSaveCatalog.LocalSaveOption> localSaves = new java.util.ArrayList<>(LocalSaveCatalog.discover());
-    private final TabManager tabManager = new TabManager(this::addRenderableWidget, this::removeWidget);
-
-    private final WorldTab worldTab = new WorldTab();
-    private final DetailsTab detailsTab = new DetailsTab();
-    private final StorageTab storageTab = new StorageTab();
+    private final CreateWizardModel wizard = new CreateWizardModel();
     private final DriveLinkAttemptController driveLinkController = new DriveLinkAttemptController();
+    private final SharedWorldStatusBanner banner = new SharedWorldStatusBanner();
 
     private LocalSaveCatalog.LocalSaveOption selectedSave;
     private StorageLinkSessionDto storageLink;
+    private StorageAccountSummaryDto storageAccount;
+    private boolean accountCheckStarted;
     private FaviconTexture previewTexture;
-    private TabNavigationBar tabNavigationBar;
     private ScreenRectangle contentArea;
 
     private LocalSaveSelectionList saveList;
     private Button selectFolderButton;
-    private String worldTabMessage = "";
     private EditBox nameBox;
     private EditBox motdBox;
-    private Button chooseIconButton;
-    private Button clearIconButton;
     private Button linkDriveButton;
     private Button backButton;
     private Button primaryButton;
@@ -85,10 +80,6 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
     private SelectedIcon selectedIcon;
     private boolean clearCustomIcon;
     private boolean submitting;
-    private String storageMessage = "";
-    private int storageMessageColor = 0xFFB8C5D6;
-    private String iconMessage = "";
-    private long iconMessageExpiresAtMs;
     private boolean iconHovered;
 
     public CreateSharedWorldScreen(SharedWorldScreen parent) {
@@ -109,6 +100,12 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         if (this.selectedSave == null && !this.localSaves.isEmpty()) {
             this.selectedSave = this.localSaves.get(0);
         }
+        if (restoredDraft != null) {
+            if (restoredDraft.storageLink() != null && "linked".equalsIgnoreCase(restoredDraft.storageLink().status())) {
+                this.wizard.onLinkCompleted();
+            }
+            this.wizard.restoreToDetails();
+        }
     }
 
     @Override
@@ -123,7 +120,6 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         this.primaryButton = footer.addChild(Button.builder(Component.translatable("screen.sharedworld.next"), ignored -> this.onPrimaryAction())
                 .width(FOOTER_BUTTON_WIDTH)
                 .build());
-
         this.layout.visitWidgets(this::addRenderableWidget);
 
         this.saveList = link.sharedworld.versioned.LayoutCompat.registerTabList(
@@ -140,6 +136,7 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         this.nameBox.setValue(this.restoredDraft != null
                 ? blankOr(this.restoredDraft.name(), this.selectedSave == null ? "" : this.selectedSave.displayName())
                 : (this.selectedSave == null ? "" : this.selectedSave.displayName()));
+        this.addRenderableWidget(this.nameBox);
 
         this.motdBox = new EditBox(this.font, 0, 0, 240, 20, SharedWorldText.component("screen.sharedworld.motd_hint", SharedWorldApiClient.currentPlayerName()));
         this.motdBox.setMaxLength(256);
@@ -147,79 +144,143 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         if (this.restoredDraft != null && this.restoredDraft.motd() != null) {
             this.motdBox.setValue(this.restoredDraft.motd());
         }
+        this.addRenderableWidget(this.motdBox);
 
-        this.chooseIconButton = Button.builder(Component.literal("+"), ignored -> this.chooseIcon())
-                .width(20)
+        this.linkDriveButton = Button.builder(Component.translatable("screen.sharedworld.storage_link_google_drive"), ignored -> this.onConnectDrivePressed())
+                .width(190)
                 .build();
-        this.clearIconButton = Button.builder(Component.literal("x"), ignored -> {
-                    this.selectedIcon = null;
-                    this.clearCustomIcon = true;
-                    this.refreshPreview();
-                })
-                .width(20)
-                .build();
-
-        this.linkDriveButton = Button.builder(Component.translatable("screen.sharedworld.storage_link_google_drive"), ignored -> this.beginDriveLink())
-                .width(150)
-                .build();
-
-        this.tabNavigationBar = link.sharedworld.versioned.TabBarCompat.create(this.tabManager, this.width, this.worldTab, this.detailsTab, this.storageTab);
-        this.addRenderableWidget(this.tabNavigationBar);
+        this.addRenderableWidget(this.linkDriveButton);
 
         if (this.restoredDraft != null) {
             this.selectedIcon = this.restoredDraft.selectedIcon();
             this.clearCustomIcon = this.restoredDraft.clearCustomIcon();
             this.storageLink = this.restoredDraft.storageLink();
         }
-        this.refreshPreview();
-        this.refreshStorageState();
         if (this.restoreState != null && this.restoreState.message() != null && !this.restoreState.message().isBlank()) {
-            this.storageMessage = this.restoreState.message();
-            this.storageMessageColor = this.restoreState.messageColor();
+            this.banner.set(SharedWorldStatusBanner.Kind.ERROR, Component.literal(this.restoreState.message()));
         }
+
+        this.beginStorageAccountCheckOnce();
+        this.refreshPreview();
+        this.updateStorageBanner();
+        this.applyStepVisibility();
         this.updateButtons();
-        this.tabNavigationBar.selectTab(this.restoreState == null ? 0 : this.restoreState.tabIndex(), false);
         this.repositionElements();
+    }
+
+    private void beginStorageAccountCheckOnce() {
+        if (this.accountCheckStarted) {
+            return;
+        }
+        this.accountCheckStarted = true;
+        CompletableFuture
+                .supplyAsync(() -> {
+                    try {
+                        return SharedWorldClient.apiClient().getStorageAccount();
+                    } catch (Exception exception) {
+                        throw new RuntimeException(exception);
+                    }
+                }, SharedWorldClient.ioExecutor())
+                .whenComplete((account, error) -> Minecraft.getInstance().execute(() -> {
+                    if (error != null) {
+                        this.wizard.onStorageAccountCheckFailed();
+                        this.updateStorageBanner();
+                        this.updateButtons();
+                        return;
+                    }
+                    this.storageAccount = account;
+                    boolean advanced = this.wizard.onStorageAccountChecked(account.linked() && account.healthy());
+                    if (advanced) {
+                        this.onStepChanged();
+                    } else {
+                        this.updateStorageBanner();
+                        this.updateButtons();
+                    }
+                }));
     }
 
     @Override
     protected void repositionElements() {
-        if (this.tabNavigationBar == null) {
-            return;
-        }
-
-        link.sharedworld.versioned.TabBarCompat.arrange(this.tabNavigationBar, this.width);
-        int headerBottom = this.tabNavigationBar.getRectangle().bottom();
         this.contentArea = new ScreenRectangle(
                 0,
-                headerBottom,
+                HEADER_HEIGHT,
                 this.width,
-                this.height - this.layout.getFooterHeight() - headerBottom
+                this.height - FOOTER_HEIGHT - HEADER_HEIGHT
         );
-        this.tabManager.setTabArea(this.contentArea);
-        this.layout.setHeaderHeight(headerBottom);
         this.layout.arrangeElements();
+        this.layoutStepWidgets();
+    }
+
+    private void layoutStepWidgets() {
+        if (this.contentArea == null || this.saveList == null) {
+            return;
+        }
+        ScreenRectangle area = this.contentArea;
+
+        // Pick-world step widgets.
+        int folderButtonHeight = 20;
+        int folderButtonGap = 22;
+        this.saveList.setPosition(area.left() + CONTENT_MARGIN, area.top() + CONTENT_MARGIN);
+        this.saveList.setWidth(area.width() - CONTENT_MARGIN * 2);
+        this.saveList.setHeight(area.height() - CONTENT_MARGIN * 2 - folderButtonHeight - folderButtonGap);
+        this.selectFolderButton.setPosition(
+                area.left() + (area.width() - this.selectFolderButton.getWidth()) / 2,
+                area.top() + area.height() - CONTENT_MARGIN - folderButtonHeight
+        );
+
+        // Details step widgets.
+        int left = area.left() + 38;
+        this.nameBox.setPosition(left, area.top() + 34);
+        this.nameBox.setWidth(Math.min(190, area.width() - 140));
+        this.motdBox.setPosition(left, area.top() + 88);
+        this.motdBox.setWidth(Math.min(190, area.width() - 140));
+
+        // Connect step widget.
+        this.linkDriveButton.setPosition(
+                area.left() + (area.width() - this.linkDriveButton.getWidth()) / 2,
+                area.top() + STORAGE_BUTTON_TOP
+        );
+    }
+
+    private void applyStepVisibility() {
+        CreateWizardModel.Step step = this.wizard.step();
+        if (this.saveList != null) {
+            this.saveList.sharedworldSetVisibleForTab(step == CreateWizardModel.Step.PICK_WORLD);
+        }
+        if (this.selectFolderButton != null) {
+            this.selectFolderButton.visible = step == CreateWizardModel.Step.PICK_WORLD;
+            this.selectFolderButton.active = !this.submitting;
+        }
+        if (this.nameBox != null) {
+            this.nameBox.visible = step == CreateWizardModel.Step.DETAILS;
+        }
+        if (this.motdBox != null) {
+            this.motdBox.visible = step == CreateWizardModel.Step.DETAILS;
+        }
+        if (this.linkDriveButton != null) {
+            this.linkDriveButton.visible = step == CreateWizardModel.Step.CONNECT_DRIVE;
+        }
+    }
+
+    private void onStepChanged() {
+        this.applyStepVisibility();
+        this.updateStorageBanner();
+        this.updateButtons();
+        this.sharedworldSetInitialFocus();
     }
 
     @Override
     protected void sharedworldSetInitialFocus() {
-        if (this.tabManager.getCurrentTab() == this.detailsTab) {
-            this.setInitialFocus(this.nameBox);
-            return;
+        switch (this.wizard.step()) {
+            case DETAILS -> this.setInitialFocus(this.nameBox);
+            case PICK_WORLD -> this.setInitialFocus(this.saveList);
+            case CONNECT_DRIVE -> this.setInitialFocus(this.linkDriveButton);
         }
-        if (this.tabManager.getCurrentTab() == this.worldTab) {
-            this.setInitialFocus(this.saveList);
-        }
-    }
-
-    @Override
-    protected TabNavigationBar sharedworldTabNavigationBar() {
-        return this.tabNavigationBar;
     }
 
     @Override
     protected boolean sharedworldMouseClicked(double mouseX, double mouseY) {
-        if (this.tabManager.getCurrentTab() == this.detailsTab && this.isIconHovered((int) mouseX, (int) mouseY)) {
+        if (this.wizard.step() == CreateWizardModel.Step.DETAILS && this.isIconHovered((int) mouseX, (int) mouseY)) {
             if (this.selectedIcon != null) {
                 this.selectedIcon = null;
                 this.clearCustomIcon = true;
@@ -249,49 +310,65 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        if (this.saveList != null) {
-            this.saveList.sharedworldSetVisibleForTab(this.tabManager.getCurrentTab() == this.worldTab);
-        }
-        if (this.selectFolderButton != null) {
-            this.selectFolderButton.visible = this.tabManager.getCurrentTab() == this.worldTab;
-            this.selectFolderButton.active = !this.submitting;
-        }
+        this.applyStepVisibility();
         this.iconHovered = this.isIconHovered(mouseX, mouseY);
         this.updateButtons();
         this.sharedworldRenderMenuBackground(guiGraphics);
         super.render(guiGraphics, mouseX, mouseY, partialTick);
 
-        if (this.tabManager.getCurrentTab() == this.worldTab && this.localSaves.isEmpty() && this.contentArea != null) {
-            guiGraphics.drawCenteredString(
-                    this.font,
-                    Component.translatable("screen.sharedworld.no_local_worlds"),
-                    this.width / 2,
-                    this.contentArea.top() + this.contentArea.height() / 2 - 4,
-                    0xFFFFFFFF
-            );
-        }
-        if (this.tabManager.getCurrentTab() == this.worldTab && !this.worldTabMessage.isBlank() && this.selectFolderButton != null) {
-            guiGraphics.drawCenteredString(
-                    this.font,
-                    Component.literal(this.worldTabMessage),
-                    this.width / 2,
-                    this.selectFolderButton.getY() - 12,
-                    0xFFFF6B6B
-            );
+        guiGraphics.drawCenteredString(this.font, this.stepTitle(), this.width / 2, 12, 0xFFFFFFFF);
+
+        switch (this.wizard.step()) {
+            case CONNECT_DRIVE -> this.renderConnectDecorations(guiGraphics);
+            case PICK_WORLD -> this.renderPickWorldDecorations(guiGraphics);
+            case DETAILS -> this.renderDetailsDecorations(guiGraphics);
         }
 
-        if (this.tabManager.getCurrentTab() == this.detailsTab) {
-            this.renderDetailsDecorations(guiGraphics);
-        } else if (this.tabManager.getCurrentTab() == this.storageTab) {
-            this.renderStorageDecorations(guiGraphics);
-        }
-
+        this.banner.renderBottomCentered(guiGraphics, this.font, this.width / 2, this.height - FOOTER_HEIGHT - 6, Math.min(this.width - 40, 420));
         GuiBlit.footerSeparator(guiGraphics, this.height - this.layout.getFooterHeight() - 2, this.width);
+    }
+
+    private Component stepTitle() {
+        return switch (this.wizard.step()) {
+            case CONNECT_DRIVE -> Component.translatable("screen.sharedworld.create_step_connect_title");
+            case PICK_WORLD -> Component.translatable("screen.sharedworld.create_step_world_title");
+            case DETAILS -> Component.translatable("screen.sharedworld.create_step_details_title");
+        };
+    }
+
+    private void renderConnectDecorations(GuiGraphics guiGraphics) {
+        if (this.contentArea == null) {
+            return;
+        }
+        int left = this.contentArea.left() + STORAGE_LEFT_PADDING;
+        this.drawWrappedText(
+                guiGraphics,
+                Component.translatable("screen.sharedworld.storage_google_drive_detail"),
+                left,
+                this.contentArea.top() + STORAGE_COPY_TOP,
+                this.contentArea.width() - STORAGE_LEFT_PADDING * 2,
+                0xFFB8C5D6
+        );
+    }
+
+    private void renderPickWorldDecorations(GuiGraphics guiGraphics) {
+        if (this.contentArea == null || !this.localSaves.isEmpty()) {
+            return;
+        }
+        guiGraphics.drawCenteredString(
+                this.font,
+                Component.translatable("screen.sharedworld.no_local_worlds"),
+                this.width / 2,
+                this.contentArea.top() + this.contentArea.height() / 2 - 4,
+                0xFFFFFFFF
+        );
     }
 
     @Override
     public void onSaveActivated(LocalSaveCatalog.LocalSaveOption save) {
-        this.openDetailsTab();
+        if (this.wizard.step() == CreateWizardModel.Step.PICK_WORLD && this.wizard.advance(this.selectedSave != null, this.nameValid())) {
+            this.onStepChanged();
+        }
     }
 
     private void selectWorldFolder() {
@@ -308,10 +385,10 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
                     link.sharedworld.versioned.ClientCompat.currentDataVersion()
             );
         } catch (LocalSaveFolderValidator.InvalidSaveFolderException exception) {
-            this.worldTabMessage = exception.getMessage();
+            this.banner.set(SharedWorldStatusBanner.Kind.ERROR, Component.literal(exception.getMessage()));
             return;
         }
-        this.worldTabMessage = "";
+        this.banner.clearSticky();
         this.localSaves.removeIf(save -> save.directory().equals(option.directory()));
         this.localSaves.add(0, option);
         this.onSaveSelected(option);
@@ -330,12 +407,6 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         this.updateButtons();
     }
 
-    void openDetailsTab() {
-        if (this.tabNavigationBar != null && this.selectedSave != null) {
-            this.tabNavigationBar.selectTab(1, true);
-        }
-    }
-
     private void renderDetailsDecorations(GuiGraphics guiGraphics) {
         if (this.contentArea == null) {
             return;
@@ -350,6 +421,9 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         guiGraphics.drawString(this.font, Component.translatable("screen.sharedworld.motd"), left, top + 78, 0xFFA0A0A0);
         GuiBlit.favicon(guiGraphics, this.previewTexture, iconX, iconY, 48);
 
+        Component iconLabel = Component.translatable("screen.sharedworld.icon_label");
+        guiGraphics.drawCenteredString(this.font, iconLabel, iconX + 24, iconY + 48 + 6, 0xFFA0A0A0);
+
         if (this.iconHovered) {
             guiGraphics.fill(iconX, iconY, iconX + 48, iconY + 48, 0x80000000);
             String actionSprite = this.selectedIcon != null
@@ -358,7 +432,14 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
             GuiBlit.sprite(guiGraphics, actionSprite, iconX + 12, iconY + 12, 24, 24);
         }
 
-        this.renderServerCardPreview(guiGraphics, left, top + 134);
+        this.renderServerCardPreview(guiGraphics);
+        guiGraphics.drawCenteredString(
+                this.font,
+                this.storageDestinationLabel(),
+                this.width / 2,
+                this.previewCardY() + SharedWorldServerList.ROW_HEIGHT + 10,
+                0xFF8EA3BC
+        );
 
         if (!this.nameValid()) {
             guiGraphics.drawString(
@@ -369,47 +450,21 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
                     0xFFFF5555
             );
         }
-
-        if (this.shouldShowIconMessage()) {
-            guiGraphics.drawCenteredString(
-                    this.font,
-                    Component.literal(this.iconMessage),
-                    iconX + 24,
-                    iconY + 48 + 6,
-                    0xFFFF5555
-            );
-        }
     }
 
-    private void renderStorageDecorations(GuiGraphics guiGraphics) {
-        if (this.contentArea == null) {
-            return;
+    private Component storageDestinationLabel() {
+        String email = null;
+        if (this.wizard.storageState() == CreateWizardModel.StorageState.LINKED_THIS_RUN && this.storageLink != null) {
+            email = this.storageLink.linkedAccountEmail();
+        } else if (this.storageAccount != null && this.storageAccount.linked()) {
+            email = this.storageAccount.email();
         }
-
-        int left = this.contentArea.left() + STORAGE_LEFT_PADDING;
-        int y = this.contentArea.top() + STORAGE_COPY_TOP;
-        this.drawWrappedText(
-                guiGraphics,
-                Component.translatable("screen.sharedworld.storage_google_drive_detail"),
-                left,
-                y,
-                this.contentArea.width() - 72,
-                0xFFB8C5D6
-        );
-
-        if (!this.storageMessage.isBlank()) {
-            this.drawWrappedText(
-                    guiGraphics,
-                    Component.literal(this.storageMessage),
-                    left,
-                    this.contentArea.top() + STORAGE_MESSAGE_TOP,
-                    this.contentArea.width() - 72,
-                    this.storageMessageColor
-            );
-        }
+        return email == null || email.isBlank()
+                ? Component.translatable("screen.sharedworld.storage_saving_to_drive")
+                : SharedWorldText.component("screen.sharedworld.storage_saving_to", email);
     }
 
-    private void renderServerCardPreview(GuiGraphics guiGraphics, int x, int y) {
+    private void renderServerCardPreview(GuiGraphics guiGraphics) {
         int rowX = this.previewCardX();
         int rowY = this.previewCardY();
         int contentX = rowX + SharedWorldServerList.CONTENT_PADDING;
@@ -429,49 +484,35 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
     }
 
     private void updateButtons() {
-        Tab currentTab = this.tabManager.getCurrentTab();
-        boolean detailsAllowed = this.selectedSave != null;
-        boolean storageAllowed = this.selectedSave != null && this.nameValid();
-
-        if (this.tabNavigationBar != null) {
-            link.sharedworld.versioned.TabBarCompat.setTabActive(this.tabNavigationBar, 0, true);
-            link.sharedworld.versioned.TabBarCompat.setTabActive(this.tabNavigationBar, 1, detailsAllowed);
-            link.sharedworld.versioned.TabBarCompat.setTabActive(this.tabNavigationBar, 2, storageAllowed);
-        }
-
-        this.backButton.setMessage(currentTab == this.worldTab ? Component.translatable("screen.sharedworld.cancel") : Component.translatable("gui.back"));
+        CreateWizardModel.Step step = this.wizard.step();
+        boolean firstStep = step == CreateWizardModel.Step.CONNECT_DRIVE
+                || (step == CreateWizardModel.Step.PICK_WORLD && !this.wizard.connectStepRequired());
+        this.backButton.setMessage(firstStep ? Component.translatable("screen.sharedworld.cancel") : Component.translatable("gui.back"));
         this.backButton.active = !this.submitting;
 
-        if (currentTab == this.storageTab) {
+        if (this.wizard.advanceIsCreate()) {
             this.primaryButton.setMessage(Component.translatable(this.submitting
                     ? "screen.sharedworld.creating"
                     : "screen.sharedworld.create_world"));
-            this.primaryButton.active = !this.submitting && this.selectedSave != null && this.nameValid() && this.storageLinked();
         } else {
             this.primaryButton.setMessage(Component.translatable("screen.sharedworld.next"));
-            this.primaryButton.active = !this.submitting && ((currentTab == this.worldTab && this.selectedSave != null) || (currentTab == this.detailsTab && this.nameValid()));
         }
+        this.primaryButton.active = !this.submitting && this.wizard.canAdvance(this.selectedSave != null, this.nameValid());
 
         this.linkDriveButton.setMessage(Component.translatable(this.driveLinkButtonTranslationKey()));
-        this.linkDriveButton.active = !this.submitting && !this.driveLinkOpeningBrowser();
-        this.chooseIconButton.visible = false;
-        this.chooseIconButton.active = false;
-        this.clearIconButton.visible = false;
-        this.clearIconButton.active = false;
+        this.linkDriveButton.active = !this.submitting
+                && !this.driveLinkOpeningBrowser()
+                && this.wizard.storageState() != CreateWizardModel.StorageState.CHECKING;
     }
 
     private void onBack() {
         if (this.submitting) {
             return;
         }
-
-        Tab currentTab = this.tabManager.getCurrentTab();
-        if (currentTab == this.worldTab) {
+        if (this.wizard.back()) {
+            this.onStepChanged();
+        } else {
             this.onClose();
-        } else if (currentTab == this.detailsTab) {
-            this.tabNavigationBar.selectTab(0, true);
-        } else if (currentTab == this.storageTab) {
-            this.tabNavigationBar.selectTab(1, true);
         }
     }
 
@@ -479,14 +520,15 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         if (this.submitting) {
             return;
         }
-
-        Tab currentTab = this.tabManager.getCurrentTab();
-        if (currentTab == this.worldTab && this.selectedSave != null) {
-            this.tabNavigationBar.selectTab(1, true);
-        } else if (currentTab == this.detailsTab && this.nameValid()) {
-            this.tabNavigationBar.selectTab(2, true);
-        } else if (currentTab == this.storageTab && this.storageLinked()) {
-            this.submitCreate();
+        boolean saveSelected = this.selectedSave != null;
+        if (this.wizard.advanceIsCreate()) {
+            if (this.wizard.canAdvance(saveSelected, this.nameValid())) {
+                this.submitCreate();
+            }
+            return;
+        }
+        if (this.wizard.advance(saveSelected, this.nameValid())) {
+            this.onStepChanged();
         }
     }
 
@@ -495,11 +537,14 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
             this.selectedIcon = SharedWorldClient.customIconStore().chooseIcon();
             if (this.selectedIcon != null) {
                 this.clearCustomIcon = false;
-                this.clearIconMessage();
                 this.refreshPreview();
             }
         } catch (Exception exception) {
-            this.showIconMessage(SharedWorldText.string("screen.sharedworld.icon_error_invalid_png"));
+            this.banner.setTransient(
+                    SharedWorldStatusBanner.Kind.ERROR,
+                    Component.translatable("screen.sharedworld.icon_error_invalid_png"),
+                    ICON_ERROR_TTL_MS
+            );
         }
     }
 
@@ -512,50 +557,48 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         );
     }
 
-    private void showIconMessage(String message) {
-        this.iconMessage = message;
-        this.iconMessageExpiresAtMs = System.currentTimeMillis() + 4_000L;
+    private void onConnectDrivePressed() {
+        this.beginDriveLink(this.shouldRetryWithConsent());
     }
 
-    private void clearIconMessage() {
-        this.iconMessage = "";
-        this.iconMessageExpiresAtMs = 0L;
+    /** A failed or expired link attempt retries through the full consent screen. */
+    private boolean shouldRetryWithConsent() {
+        return this.storageLink != null
+                && ("failed".equalsIgnoreCase(this.storageLink.status()) || "expired".equalsIgnoreCase(this.storageLink.status()));
     }
 
-    private boolean shouldShowIconMessage() {
-        return this.selectedIcon == null
-                && this.iconMessage != null
-                && !this.iconMessage.isBlank()
-                && System.currentTimeMillis() < this.iconMessageExpiresAtMs;
-    }
-
-    private void beginDriveLink() {
+    private void beginDriveLink(boolean forceConsent) {
         this.cancelDriveLinkAttempt(false);
         this.storageLink = null;
-        this.storageMessage = "";
         DriveLinkAttempt attempt = this.driveLinkController.beginAttempt();
-        this.refreshStorageState();
-        CompletableFuture.runAsync(() -> this.runDriveLinkAttempt(attempt), SharedWorldClient.ioExecutor());
+        this.updateStorageBanner();
+        CompletableFuture.runAsync(() -> this.runDriveLinkAttempt(attempt, forceConsent), SharedWorldClient.ioExecutor());
     }
 
-    private void runDriveLinkAttempt(DriveLinkAttempt attempt) {
+    private void runDriveLinkAttempt(DriveLinkAttempt attempt, boolean forceConsent) {
         try {
-            StorageLinkSessionDto session = SharedWorldClient.apiClient().createStorageLink();
+            StorageLinkSessionDto session = SharedWorldClient.apiClient().createStorageLink(forceConsent);
             attempt.setSession(session);
             this.scheduleCurrentAttemptUiUpdate(attempt, () -> {
                 this.storageLink = session;
-                this.refreshStorageState();
+                this.updateStorageBanner();
+                this.updateButtons();
             });
             this.openDriveLink(attempt);
             attempt.setPhase(DriveLinkUiPhase.WAITING_FOR_AUTH);
-            this.scheduleCurrentAttemptUiUpdate(attempt, this::refreshStorageState);
+            this.scheduleCurrentAttemptUiUpdate(attempt, () -> {
+                this.updateStorageBanner();
+                this.updateButtons();
+            });
             this.pollDriveLink(attempt);
         } catch (Exception exception) {
             attempt.setPhase(DriveLinkUiPhase.ERROR);
             this.scheduleCurrentAttemptUiUpdate(attempt, () -> {
                 this.driveLinkController.clearIfCurrent(attempt);
-                this.storageMessage = AbstractSharedWorldMetadataScreen.friendlyMessage(exception);
-                this.storageMessageColor = 0xFFFF5555;
+                this.banner.set(
+                        SharedWorldStatusBanner.Kind.ERROR,
+                        Component.literal(AbstractSharedWorldMetadataScreen.friendlyMessage(exception))
+                );
                 this.updateButtons();
             });
         }
@@ -568,14 +611,33 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
                     this.storageLink = updated;
                     attempt.setPhase(DriveLinkUiPhase.forTerminalStatus(updated.status()));
                     this.driveLinkController.clearIfCurrent(attempt);
-                    this.refreshStorageState();
+                    this.onDriveLinkTerminal(updated);
                 })
         );
     }
 
+    private void onDriveLinkTerminal(StorageLinkSessionDto session) {
+        if ("linked".equalsIgnoreCase(session.status())) {
+            String email = session.linkedAccountEmail();
+            this.banner.setTransient(
+                    SharedWorldStatusBanner.Kind.SUCCESS,
+                    email == null || email.isBlank()
+                            ? Component.translatable("screen.sharedworld.storage_connected")
+                            : SharedWorldText.component("screen.sharedworld.storage_connected_as", email),
+                    SUCCESS_BANNER_TTL_MS
+            );
+            if (this.wizard.onLinkCompleted()) {
+                this.onStepChanged();
+                return;
+            }
+        }
+        this.updateStorageBanner();
+        this.updateButtons();
+    }
+
     private void openDriveLink(DriveLinkAttempt attempt) throws IOException {
         if (attempt.authUrl() == null) {
-            throw new IOException("SharedWorld did not receive a Google Drive auth URL.");
+            throw new IOException(SharedWorldText.string("screen.sharedworld.storage_missing_auth_url"));
         }
         this.minecraft.keyboardHandler.setClipboard(attempt.authUrl());
         if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
@@ -602,11 +664,11 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
     }
 
     private String driveLinkButtonTranslationKey() {
-        if (this.storageLinked()) {
-            return "screen.sharedworld.storage_relink";
-        }
         if (this.driveLinkWaitingForAuthorization()) {
             return "screen.sharedworld.storage_get_new_link";
+        }
+        if (this.shouldRetryWithConsent()) {
+            return "screen.sharedworld.storage_try_again";
         }
         return "screen.sharedworld.storage_link_google_drive";
     }
@@ -630,28 +692,35 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         });
     }
 
-    private void refreshStorageState() {
+    /** Storage progress/error messaging on the connect step, via the shared banner. */
+    private void updateStorageBanner() {
+        if (this.wizard.step() != CreateWizardModel.Step.CONNECT_DRIVE) {
+            return;
+        }
         DriveLinkAttempt attempt = this.driveLinkController.currentAttempt();
-        this.storageMessage = "";
-        this.storageMessageColor = 0xFFB8C5D6;
         if (attempt != null && attempt.phase() == DriveLinkUiPhase.OPENING_BROWSER) {
-            this.storageMessage = SharedWorldText.string("screen.sharedworld.storage_waiting_for_browser");
-            this.storageMessageColor = 0xFFFFD37A;
-        } else if (attempt != null && attempt.phase() == DriveLinkUiPhase.WAITING_FOR_AUTH) {
-            this.storageMessage = SharedWorldText.string(attempt.copiedFallback()
+            this.banner.set(SharedWorldStatusBanner.Kind.WARNING, Component.translatable("screen.sharedworld.storage_waiting_for_browser"));
+            return;
+        }
+        if (attempt != null && attempt.phase() == DriveLinkUiPhase.WAITING_FOR_AUTH) {
+            this.banner.set(SharedWorldStatusBanner.Kind.WARNING, Component.translatable(attempt.copiedFallback()
                     ? "screen.sharedworld.storage_link_copied"
-                    : "screen.sharedworld.storage_waiting_authorization");
-            this.storageMessageColor = 0xFFFFD37A;
-        } else if (this.storageLinked()) {
-            this.storageMessage = "";
-        } else if (this.storageLink != null
+                    : "screen.sharedworld.storage_waiting_authorization"));
+            return;
+        }
+        if (this.wizard.storageState() == CreateWizardModel.StorageState.CHECKING) {
+            this.banner.set(SharedWorldStatusBanner.Kind.INFO, Component.translatable("screen.sharedworld.storage_checking_account"));
+            return;
+        }
+        if (this.storageLink != null
                 && !"cancelled".equalsIgnoreCase(this.storageLink.status())
+                && !"linked".equalsIgnoreCase(this.storageLink.status())
                 && this.storageLink.errorMessage() != null
                 && !this.storageLink.errorMessage().isBlank()) {
-            this.storageMessage = this.storageLink.errorMessage();
-            this.storageMessageColor = 0xFFFF5555;
+            this.banner.set(SharedWorldStatusBanner.Kind.ERROR, Component.literal(this.storageLink.errorMessage()));
+            return;
         }
-        this.updateButtons();
+        this.banner.clearSticky();
     }
 
     private void submitCreate() {
@@ -666,13 +735,6 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
                 this.buildDraft(),
                 this.buildRequest(save)
         ));
-    }
-
-    private StorageLinkSessionDto requireLinkedSession() throws IOException {
-        if (!this.storageLinked()) {
-            throw new IOException(SharedWorldText.string("screen.sharedworld.storage_link_required"));
-        }
-        return this.storageLink;
     }
 
     static void importSaveIntoManagedWorld(Path source, Path workingCopy) throws IOException {
@@ -697,18 +759,17 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
     }
 
     private CreateRequest buildRequest(LocalSaveCatalog.LocalSaveOption save) {
-        try {
-            return new CreateRequest(
-                    save,
-                    this.requireLinkedSession(),
-                    this.worldName(),
-                    AbstractSharedWorldMetadataScreen.effectiveMotd(this.motdBox.getValue()),
-                    this.selectedIcon,
-                    this.clearCustomIcon
-            );
-        } catch (IOException exception) {
-            throw new IllegalStateException(exception);
-        }
+        StorageLinkSessionDto freshLink = this.wizard.storageState() == CreateWizardModel.StorageState.LINKED_THIS_RUN
+                ? this.storageLink
+                : null;
+        return new CreateRequest(
+                save,
+                freshLink,
+                this.worldName(),
+                AbstractSharedWorldMetadataScreen.effectiveMotd(this.motdBox.getValue()),
+                this.selectedIcon,
+                this.clearCustomIcon
+        );
     }
 
     private CreateDraft buildDraft() {
@@ -718,12 +779,8 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
                 this.motdBox.getValue(),
                 this.selectedIcon,
                 this.clearCustomIcon,
-                this.storageLink
+                this.wizard.storageState() == CreateWizardModel.StorageState.LINKED_THIS_RUN ? this.storageLink : null
         );
-    }
-
-    private boolean storageLinked() {
-        return this.storageLink != null && "linked".equalsIgnoreCase(this.storageLink.status());
     }
 
     private boolean nameValid() {
@@ -734,19 +791,6 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         return this.nameBox == null ? "" : this.nameBox.getValue().trim();
     }
 
-    private int storageStatusColor() {
-        if (this.storageLinked()) {
-            return 0xFF55FF55;
-        }
-        if (this.driveLinkOpeningBrowser() || this.driveLinkWaitingForAuthorization()) {
-            return 0xFFFFFFFF;
-        }
-        if (this.storageLink != null && ("failed".equalsIgnoreCase(this.storageLink.status()) || "expired".equalsIgnoreCase(this.storageLink.status()))) {
-            return 0xFFFF5555;
-        }
-        return 0xFFFFD37A;
-    }
-
     private void drawWrappedText(GuiGraphics guiGraphics, Component text, int x, int y, int width, int color) {
         List<net.minecraft.util.FormattedCharSequence> lines = this.font.split(text, width);
         for (int index = 0; index < lines.size(); index++) {
@@ -755,7 +799,7 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
     }
 
     private boolean isIconHovered(int mouseX, int mouseY) {
-        if (this.contentArea == null || this.tabManager.getCurrentTab() != this.detailsTab) {
+        if (this.contentArea == null || this.wizard.step() != CreateWizardModel.Step.DETAILS) {
             return false;
         }
         int iconX = this.iconAreaX();
@@ -803,7 +847,7 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
     }
 
     static CreateSharedWorldScreen restored(SharedWorldScreen parent, CreateDraft draft, String errorMessage) {
-        return new CreateSharedWorldScreen(parent, draft, new RestoreState(2, errorMessage, 0xFFFF5555));
+        return new CreateSharedWorldScreen(parent, draft, new RestoreState(errorMessage));
     }
 
     record CreateDraft(
@@ -816,6 +860,11 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
     ) {
     }
 
+    /**
+     * A create request either carries the link session completed during this
+     * wizard run, or a null {@code storageLink} meaning "use the player's
+     * already-linked storage account".
+     */
     record CreateRequest(
             LocalSaveCatalog.LocalSaveOption save,
             StorageLinkSessionDto storageLink,
@@ -829,7 +878,7 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         }
     }
 
-    private record RestoreState(int tabIndex, String message, int messageColor) {
+    private record RestoreState(String message) {
     }
 
     enum DriveLinkUiPhase {
@@ -977,86 +1026,6 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         @FunctionalInterface
         interface PollDelay {
             void sleep(long millis) throws InterruptedException;
-        }
-    }
-
-    private final class WorldTab extends link.sharedworld.versioned.VersionedTab {
-        @Override
-        public Component getTabTitle() {
-            return Component.translatable("screen.sharedworld.tab_world");
-        }
-
-        @Override
-        protected Component sharedworldTabExtraNarration() {
-            return this.getTabTitle();
-        }
-
-        @Override
-        public void visitChildren(Consumer<AbstractWidget> consumer) {
-            this.sharedworldVisitListChild(consumer, CreateSharedWorldScreen.this.saveList);
-            consumer.accept(CreateSharedWorldScreen.this.selectFolderButton);
-        }
-
-        @Override
-        public void doLayout(ScreenRectangle area) {
-            int folderButtonHeight = 20;
-            int folderButtonGap = 22;
-            CreateSharedWorldScreen.this.saveList.setPosition(area.left() + CONTENT_MARGIN, area.top() + CONTENT_MARGIN);
-            CreateSharedWorldScreen.this.saveList.setWidth(area.width() - CONTENT_MARGIN * 2);
-            CreateSharedWorldScreen.this.saveList.setHeight(area.height() - CONTENT_MARGIN * 2 - folderButtonHeight - folderButtonGap);
-            CreateSharedWorldScreen.this.selectFolderButton.setPosition(
-                    area.left() + (area.width() - CreateSharedWorldScreen.this.selectFolderButton.getWidth()) / 2,
-                    area.top() + area.height() - CONTENT_MARGIN - folderButtonHeight
-            );
-        }
-    }
-
-    private final class DetailsTab extends link.sharedworld.versioned.VersionedTab {
-        @Override
-        public Component getTabTitle() {
-            return Component.translatable("screen.sharedworld.tab_details");
-        }
-
-        @Override
-        protected Component sharedworldTabExtraNarration() {
-            return this.getTabTitle();
-        }
-
-        @Override
-        public void visitChildren(Consumer<AbstractWidget> consumer) {
-            consumer.accept(CreateSharedWorldScreen.this.nameBox);
-            consumer.accept(CreateSharedWorldScreen.this.motdBox);
-        }
-
-        @Override
-        public void doLayout(ScreenRectangle area) {
-            int left = area.left() + 38;
-            CreateSharedWorldScreen.this.nameBox.setPosition(left, area.top() + 34);
-            CreateSharedWorldScreen.this.nameBox.setWidth(Math.min(190, area.width() - 140));
-            CreateSharedWorldScreen.this.motdBox.setPosition(left, area.top() + 88);
-            CreateSharedWorldScreen.this.motdBox.setWidth(Math.min(190, area.width() - 140));
-        }
-    }
-
-    private final class StorageTab extends link.sharedworld.versioned.VersionedTab {
-        @Override
-        public Component getTabTitle() {
-            return Component.translatable("screen.sharedworld.tab_storage");
-        }
-
-        @Override
-        protected Component sharedworldTabExtraNarration() {
-            return this.getTabTitle();
-        }
-
-        @Override
-        public void visitChildren(Consumer<AbstractWidget> consumer) {
-            consumer.accept(CreateSharedWorldScreen.this.linkDriveButton);
-        }
-
-        @Override
-        public void doLayout(ScreenRectangle area) {
-            CreateSharedWorldScreen.this.linkDriveButton.setPosition(area.left() + STORAGE_LEFT_PADDING, area.top() + STORAGE_BUTTON_TOP);
         }
     }
 }

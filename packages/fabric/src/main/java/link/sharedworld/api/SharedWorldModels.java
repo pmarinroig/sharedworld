@@ -130,6 +130,33 @@ public final class SharedWorldModels {
     ) {
     }
 
+    /** Summary view of freshly fetched details, for screens that take the list row shape. */
+    public static WorldSummaryDto summaryOf(WorldDetailsDto details) {
+        return new WorldSummaryDto(
+                details.id(),
+                details.slug(),
+                details.name(),
+                details.ownerUuid(),
+                details.motd(),
+                details.customIconStorageKey(),
+                details.customIconDownload(),
+                details.memberCount(),
+                details.status(),
+                details.lastSnapshotId(),
+                details.lastSnapshotAt(),
+                details.activeHostUuid(),
+                details.activeHostPlayerName(),
+                details.activeJoinTarget(),
+                details.onlinePlayerCount(),
+                details.onlinePlayerNames(),
+                details.storageProvider(),
+                details.storageLinked(),
+                details.storageAccountEmail(),
+                null,
+                null
+        );
+    }
+
     public record ImportedWorldSourceDto(
             String type,
             String id,
@@ -146,6 +173,16 @@ public final class SharedWorldModels {
             String linkedAccountEmail,
             String accountDisplayName,
             String errorMessage
+    ) {
+    }
+
+    /** The caller's reusable linked storage account (GET /storage/account). */
+    public record StorageAccountSummaryDto(
+            boolean linked,
+            String provider,
+            String email,
+            String displayName,
+            boolean healthy
     ) {
     }
 
