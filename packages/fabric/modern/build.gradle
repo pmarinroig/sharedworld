@@ -81,6 +81,24 @@ def prepareSharedSources = tasks.register("prepareSharedSources", Sync) {
     }
 }
 
+// The dev helper (login bypass) also builds per modern bucket so the manual
+// two-client playtest works on 26.x with the fake HostA/GuestB accounts, same
+// as on the classic buckets. Today's dev-helper sources contain no GUI tokens,
+// so the rename filter is a no-op kept for symmetry with the main tree.
+def skipDevHelperRuntime = providers.gradleProperty("sharedworldSkipDevHelperRuntime")
+        .map { it.toBoolean() }.orElse(false)
+
+def prepareSharedDevHelperSources = tasks.register("prepareSharedDevHelperSources", Sync) {
+    inputs.property "modernRenames", modernRenames.collect { it.join(" -> ") }.join("\n")
+    from "../src/devhelper/java"
+    into layout.buildDirectory.dir("generated/sharedDevHelper")
+    filter { String line ->
+        String result = line
+        modernRenames.each { rule -> result = result.replaceAll(rule[0], rule[1]) }
+        result
+    }
+}
+
 sourceSets {
     main {
         java.srcDirs = [prepareSharedSources, "../src/versioned/${mcBucketName}/java"]
@@ -90,6 +108,20 @@ sourceSets {
         java.srcDirs = ["../src/test/java", "../src/versionedTest/${mcBucketName}/java"]
         resources.srcDirs = ["../src/test/resources"]
     }
+    devHelper {
+        java.srcDirs = [prepareSharedDevHelperSources, "../src/devhelperVersioned/${mcBucketName}/java"]
+        resources.srcDirs = ["../src/devhelper/resources"]
+        compileClasspath += sourceSets.main.compileClasspath + sourceSets.main.output
+        runtimeClasspath += output + compileClasspath + sourceSets.main.runtimeClasspath
+    }
+}
+
+def devHelperJarTask = tasks.register("devHelperJar", Jar) {
+    archiveClassifier = "dev-helper"
+    // Per-bucket file name, matching the classic project: a stale jar from
+    // another bucket must never end up in a run's mod set.
+    archiveVersion = "${project.mod_version}+mc${mcBucketName}"
+    from sourceSets.devHelper.output
 }
 
 repositories {
@@ -110,6 +142,12 @@ dependencies {
             include "*.jar"
             exclude "fabric-api-*.jar"
         })
+    }
+    // The loader discovers classpath jars carrying a fabric.mod.json in dev runs
+    // (same mechanism as the local e4mc jar above), so the login bypass mixin is
+    // present when HostA/GuestB connect through e4mc.
+    if (!skipDevHelperRuntime.get()) {
+        runtimeOnly(files(devHelperJarTask))
     }
     testImplementation "org.junit.jupiter:junit-jupiter:5.10.2"
     testRuntimeOnly "org.junit.platform:junit-platform-launcher"
@@ -176,6 +214,19 @@ processResources {
     // Keep the level the 26.1 jar has always shipped with (mixin treats it as
     // a minimum; newer class versions are tolerated).
     filesMatching("sharedworld.mixins.json") {
+        expand "mixinCompatibilityLevel": "JAVA_21"
+    }
+}
+
+tasks.named("processDevHelperResources").configure {
+    inputs.property "version", project.version
+    inputs.property "minecraftRange", mcBucket.minecraftRange
+    inputs.property "javaVersion", "25"
+
+    filesMatching("fabric.mod.json") {
+        expand "version": inputs.properties.version, "minecraftRange": inputs.properties.minecraftRange, "javaVersion": inputs.properties.javaVersion
+    }
+    filesMatching("sharedworld-dev-helper.mixins.json") {
         expand "mixinCompatibilityLevel": "JAVA_21"
     }
 }
