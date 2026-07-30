@@ -181,6 +181,18 @@ public final class SharedWorldSessionCoordinator {
                         return;
                     }
                     this.pendingJoinAttempt = null;
+                    if (this.clientShell.hasLevel() || this.clientShell.hasSingleplayerServer()) {
+                        // The menu state this attempt was started from is gone: the player entered a
+                        // world (e.g. vanilla world creation) while the enter-session request was in
+                        // flight. Acting now would open screens or worlds over theirs. Drop the
+                        // completion; a recovery-flavored attempt re-arms the menu auto-resume so the
+                        // persisted record retries at the next genuine menu tick.
+                        if (attempt.recoveryFingerprint() != null) {
+                            this.autoResumeChecked = false;
+                            this.suppressedRecoveryFingerprint = null;
+                        }
+                        return;
+                    }
                     if (error != null) {
                         if (SharedWorldApiClient.isDeletedWorldError(error)) {
                             clearPersistedRecoveryIfMatches(attempt.recoveryFingerprint());
@@ -671,6 +683,12 @@ public final class SharedWorldSessionCoordinator {
     }
 
     private void applyPollDecision(WaitingFlowState state, SharedWorldWaitingFlowLogic.PollDecision decision) {
+        if (this.clientShell.hasLevel() || this.clientShell.hasSingleplayerServer()) {
+            // A world is open even though the waiting flow assumes the client sits on the waiting
+            // screen: never connect, restart, or swap screens over the player's world. Keep the
+            // flow as-is; the next poll re-evaluates once the client is back at a menu.
+            return;
+        }
         switch (decision.outcome()) {
             case CONNECT -> {
                 this.waitingState = null;

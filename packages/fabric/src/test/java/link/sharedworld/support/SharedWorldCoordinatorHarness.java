@@ -84,7 +84,7 @@ public final class SharedWorldCoordinatorHarness {
         this.releaseBackend = releaseBackend;
         this.snapshotDriver = snapshotDriver;
         this.clientShell = clientShell;
-        this.hostControl = new FakeHostControl(snapshotDriver);
+        this.hostControl = new FakeHostControl(snapshotDriver, this.clientShell);
         this.sessionCoordinator = new SharedWorldSessionCoordinator(
                 sessionBackend,
                 recoveryStore,
@@ -343,9 +343,11 @@ public final class SharedWorldCoordinatorHarness {
     }
 
     public static final class FakeClientShell implements SharedWorldCoordinatorSupport.ClientShell {
-        private boolean hasSingleplayerServer = true;
-        private boolean hasLevel = true;
-        private boolean localServer = true;
+        // Defaults model the SharedWorld menu (no world open) - the state every join/resume
+        // flow starts from. Tests that model an in-world client set the state explicitly.
+        private boolean hasSingleplayerServer;
+        private boolean hasLevel;
+        private boolean localServer;
         private boolean renderThread = true;
         private Screen currentScreen;
         private final List<String> actions = new ArrayList<>();
@@ -689,6 +691,7 @@ public final class SharedWorldCoordinatorHarness {
 
     public static final class FakeHostControl implements SharedWorldReleaseCoordinator.HostControl {
         private final TempdirSnapshotDriver snapshotDriver;
+        private final FakeClientShell clientShell;
         private final ScriptedFailures failures = new ScriptedFailures();
         private SharedWorldHostingManager.ActiveHostSession activeHostSession;
         private boolean backgroundSaveInFlight;
@@ -698,8 +701,9 @@ public final class SharedWorldCoordinatorHarness {
         private int clearCalls;
         private final List<SharedWorldProgressState> relayedProgress = new ArrayList<>();
 
-        private FakeHostControl(TempdirSnapshotDriver snapshotDriver) {
+        private FakeHostControl(TempdirSnapshotDriver snapshotDriver, FakeClientShell clientShell) {
             this.snapshotDriver = snapshotDriver;
+            this.clientShell = clientShell;
         }
 
         @Override
@@ -766,6 +770,8 @@ public final class SharedWorldCoordinatorHarness {
             this.activeHostSession = new SharedWorldHostingManager.ActiveHostSession(worldId, worldName, runtimeEpoch, hostToken, joinTarget);
             this.snapshotDriver.setAcceptedHost(runtimeEpoch, hostToken);
             this.snapshotDriver.ensureWorkingCopy(worldId);
+            // An active host session implies the hosted world is open locally.
+            this.clientShell.setLocalServerState(true, true, true);
         }
 
         public void setBackgroundSaveInFlight(boolean backgroundSaveInFlight) {

@@ -29,6 +29,80 @@ final class SharedWorldSessionCoordinatorTest {
     }
 
     @Test
+    void autoResumeResponseArrivingAfterAWorldOpenedIsDroppedAndRetriesAtMenu() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            var world = SharedWorldCoordinatorHarness.world("world-1", "World", "player-owner");
+            harness.recoveryStore.save(new SharedWorldRecoveryStore.RecoveryRecord("world-1", "World", 7L, "disconnect-recovery", "join.old", null));
+            harness.sessionBackend.enqueueEnterResponse(SharedWorldCoordinatorHarness.connectResponse(world, 8L, "join.example"));
+
+            // The menu tick arms auto-resume and sends enterSession; before the response lands
+            // the player opens a world (e.g. vanilla world creation finishes).
+            harness.tickSession();
+            harness.clientShell.setLocalServerState(true, true, true);
+            harness.runUntilIdle();
+
+            // The completion is dropped whole: no connect, no screen swap, no disconnect.
+            assertTrue(harness.clientShell.actions().isEmpty());
+            assertEquals(0, harness.clientShell.disconnectCalls());
+            assertNotNull(harness.recoveryStore.load());
+
+            // Back at a menu, the re-armed auto-resume retries the persisted record.
+            harness.clientShell.setLocalServerState(false, false, false);
+            harness.sessionBackend.enqueueEnterResponse(SharedWorldCoordinatorHarness.connectResponse(world, 8L, "join.example"));
+            harness.tickSession();
+            harness.runUntilIdle();
+
+            assertTrue(harness.clientShell.actions().contains("connect:join.example"));
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
+    void userJoinResponseArrivingAfterAWorldOpenedIsDropped() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            var world = SharedWorldCoordinatorHarness.world("world-1", "World", "player-owner");
+            harness.sessionBackend.enqueueEnterResponse(SharedWorldCoordinatorHarness.connectResponse(world, 7L, "join.example"));
+
+            harness.sessionCoordinator.beginJoin(harness.parentScreen(), world);
+            harness.clientShell.setLocalServerState(true, true, true);
+            harness.runUntilIdle();
+
+            assertTrue(harness.clientShell.actions().isEmpty());
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
+    void waitingPollTransitionIsDroppedWhileAWorldIsOpen() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            var world = SharedWorldCoordinatorHarness.world("world-1", "World", "player-owner");
+            harness.sessionBackend.enqueueEnterResponse(SharedWorldCoordinatorHarness.waitResponse(world));
+
+            harness.sessionCoordinator.beginJoin(harness.parentScreen(), world);
+            harness.runUntilIdle();
+            assertNotNull(harness.sessionCoordinator.waitingView());
+
+            // A world is open by the time the poll resolves to "connect": the flow must not
+            // connect (or swap screens) over it, and the wait itself stays alive.
+            harness.clientShell.setLocalServerState(true, true, true);
+            harness.sessionBackend.setCurrentObserve(SharedWorldCoordinatorHarness.observeConnect("world-1", 8L, "join.example"));
+            harness.advanceTime(10_000L);
+            harness.tickSession();
+            harness.runUntilIdle();
+
+            assertFalse(harness.clientShell.actions().contains("connect:join.example"));
+            assertNotNull(harness.sessionCoordinator.waitingView());
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
     void freshJoinLetsBackendMintTheWaiterSessionId() throws Exception {
         SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
         try {

@@ -571,6 +571,8 @@ final class SharedWorldReleaseCoordinatorTest {
     void guestMembershipRevokedUsesForcedExitOwner() throws Exception {
         SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
         try {
+            // A guest is connected to the host's world (level open, no local server).
+            harness.clientShell.setLocalServerState(false, true, false);
             harness.releaseCoordinator.beginForcedGuestExit(
                     "world-1",
                     "World",
