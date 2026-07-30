@@ -43,7 +43,10 @@ final class SharedWorldCreateFlow {
      * Authority source:
      * Backend world creation + temporary host assignment for the initial snapshot upload.
      */
-    String create(CreateSharedWorldScreen.CreateRequest request, InitialSnapshotUploadPipeline.ProgressSink progressSink) throws Exception {
+    /** What the hub needs to confirm a create: the message to show and the world to select. */
+    record Outcome(String worldId, String message) {}
+
+    Outcome create(CreateSharedWorldScreen.CreateRequest request, InitialSnapshotUploadPipeline.ProgressSink progressSink) throws Exception {
         progressSink.updateIndeterminate(Component.translatable("screen.sharedworld.create_progress_preparing"), "create_prepare");
         String customIconBase64 = request.selectedIcon() == null
                 ? null
@@ -70,7 +73,10 @@ final class SharedWorldCreateFlow {
         }
 
         progressSink.updateIndeterminate(Component.translatable("screen.sharedworld.create_progress_finishing"), "create_finish");
-        return SharedWorldText.string("screen.sharedworld.operation_created_world", SharedWorldText.displayWorldName(createdWorld.name()));
+        return new Outcome(
+                createdWorld.id(),
+                SharedWorldText.string("screen.sharedworld.operation_created_world", SharedWorldText.displayWorldName(createdWorld.name()))
+        );
     }
 
     private void deleteCreatedWorldQuietly(String worldId, Throwable uploadFailure) {

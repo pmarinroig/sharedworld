@@ -92,7 +92,7 @@ final class BackendModCreateFlowIntegrationTest {
             );
 
             String worldName = SharedWorldIntegrationBackend.uniqueName("Integration Create");
-            String message = flow.create(
+            SharedWorldCreateFlow.Outcome outcome = flow.create(
                     new CreateSharedWorldScreen.CreateRequest(
                             new LocalSaveCatalog.LocalSaveOption("save-1", "Save", source, 0L, null, Component.empty()),
                             storageLink,
@@ -117,7 +117,8 @@ final class BackendModCreateFlowIntegrationTest {
             SharedWorldModels.WorldSummaryDto createdWorld = hostClient.listWorlds().get(0);
             SharedWorldIntegrationBackend.StorageSnapshot storage = SharedWorldIntegrationBackend.storageSnapshot();
 
-            assertEquals("screen.sharedworld.operation_created_world", message);
+            assertEquals("screen.sharedworld.operation_created_world", outcome.message());
+            assertEquals(createdWorld.id(), outcome.worldId());
             assertTrue(progressEvents.contains("indeterminate:create_upload_prepare"));
             assertEquals("google-drive", createdWorld.storageProvider());
             assertTrue(createdWorld.storageLinked());

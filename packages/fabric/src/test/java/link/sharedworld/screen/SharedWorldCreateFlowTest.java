@@ -40,7 +40,7 @@ final class SharedWorldCreateFlowTest {
                     keepAlive
             );
 
-            String message = flow.create(
+            SharedWorldCreateFlow.Outcome outcome = flow.create(
                     new CreateSharedWorldScreen.CreateRequest(
                             new LocalSaveCatalog.LocalSaveOption("save-1", "Save", source, 0L, null, Component.empty()),
                             new StorageLinkSessionDto("storage-1", "google-drive", "linked", null, Instant.EPOCH.toString(), null, null, null),
@@ -62,7 +62,7 @@ final class SharedWorldCreateFlowTest {
                     }
             );
 
-            assertEquals("screen.sharedworld.operation_created_world", message);
+            assertEquals("screen.sharedworld.operation_created_world", outcome.message());
             assertEquals(7L, uploader.runtimeEpoch);
             assertEquals("token-7", uploader.hostToken);
             assertEquals(1, backend.releaseCalls);
@@ -206,11 +206,11 @@ final class SharedWorldCreateFlowTest {
                     new FakeLeaseKeepAlive()
             );
 
-            String message = flow.create(request(source), silentProgressSink());
+            SharedWorldCreateFlow.Outcome outcome = flow.create(request(source), silentProgressSink());
 
             // The snapshot is committed, so a failed lease release must not turn a good create into
             // an error, and it must not delete the freshly created world.
-            assertEquals("screen.sharedworld.operation_created_world", message);
+            assertEquals("screen.sharedworld.operation_created_world", outcome.message());
             assertEquals(1, backend.releaseCalls);
             assertEquals(0, backend.deleteCalls);
         } finally {
@@ -238,9 +238,9 @@ final class SharedWorldCreateFlowTest {
                     new FakeLeaseKeepAlive()
             );
 
-            String message = flow.create(request(source), silentProgressSink());
+            SharedWorldCreateFlow.Outcome outcome = flow.create(request(source), silentProgressSink());
 
-            assertEquals("screen.sharedworld.operation_created_world", message);
+            assertEquals("screen.sharedworld.operation_created_world", outcome.message());
             assertEquals(0, backend.deleteCalls);
             assertEquals(1, backend.releaseCalls);
         } finally {

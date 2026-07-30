@@ -142,7 +142,7 @@ public final class CreateSharedWorldProgressScreen extends link.sharedworld.vers
                         throw new RuntimeException(exception);
                     }
                 }, SharedWorldClient.ioExecutor())
-                .whenComplete((message, error) -> Minecraft.getInstance().execute(() -> {
+                .whenComplete((outcome, error) -> Minecraft.getInstance().execute(() -> {
                     if (error != null) {
                         Throwable cause = error.getCause() == null ? error : error.getCause();
                         link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, CreateSharedWorldScreen.restored(
@@ -152,7 +152,7 @@ public final class CreateSharedWorldProgressScreen extends link.sharedworld.vers
                         ));
                         return;
                     }
-                    this.parent.onChildOperationFinished(message);
+                    this.parent.onChildOperationFinished(outcome.message(), outcome.worldId());
                     link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, this.parent);
                 }));
     }

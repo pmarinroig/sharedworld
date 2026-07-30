@@ -106,7 +106,7 @@ public final class SharedWorldInviteScreen extends link.sharedworld.versioned.Ve
                     } else {
                         this.inviteCode = result.code();
                         this.minecraft.keyboardHandler.setClipboard(result.code());
-                        this.parent.onChildOperationFinished(SharedWorldText.string("screen.sharedworld.operation_copied_share_code", displayName(this.world)));
+                        this.parent.onChildOperationFinished(SharedWorldText.string("screen.sharedworld.operation_copied_share_code", displayName(this.world)), this.world.id());
                         this.updateButtons();
                     }
                 }));
@@ -136,7 +136,7 @@ public final class SharedWorldInviteScreen extends link.sharedworld.versioned.Ve
                     } else {
                         this.inviteCode = result.invite().code();
                         this.minecraft.keyboardHandler.setClipboard(result.invite().code());
-                        this.parent.onChildOperationFinished(SharedWorldText.string("screen.sharedworld.operation_created_share_code", displayName(this.world)));
+                        this.parent.onChildOperationFinished(SharedWorldText.string("screen.sharedworld.operation_created_share_code", displayName(this.world)), this.world.id());
                         this.updateButtons();
                     }
                 }));

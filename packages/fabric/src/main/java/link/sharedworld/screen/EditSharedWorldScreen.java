@@ -44,6 +44,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
     private static final String DELETE_ICON_HIGHLIGHTED_SPRITE = "sharedworld:delete_icon_highlighted";
     private static final String PING_5_SPRITE = "minecraft:server_list/ping_5";
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+    private static final long SUCCESS_STATUS_TTL_MS = 7_000;
 
     private final SharedWorldScreen parent;
     private final WorldSummaryDto world;
@@ -85,8 +86,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
     private boolean confirmDelete;
     private boolean confirmKick;
     private boolean iconHovered;
-    private String statusMessage = "";
-    private int statusColor = 0xFFB8C5D6;
+    private final SharedWorldStatusBanner statusBanner = new SharedWorldStatusBanner();
     private Tab lastTab;
 
     public EditSharedWorldScreen(SharedWorldScreen parent, WorldSummaryDto world) {
@@ -236,6 +236,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         if (this.contentArea != null) {
             this.renderActiveTabDecorations(guiGraphics);
         }
+        this.statusBanner.renderBottomCentered(guiGraphics, this.font, this.width / 2, this.height - 40, Math.min(this.width - 40, 420));
     }
 
     void onSnapshotSelected(WorldSnapshotSummaryDto snapshot) {
@@ -776,14 +777,14 @@ public final class EditSharedWorldScreen extends VersionedScreen {
             if (this.isDetailsDirty()) {
                 this.setStatusInfoKey("screen.sharedworld.edit_status_ready_to_save");
             } else {
-                this.statusMessage = "";
+                this.statusBanner.clearSticky();
             }
         } else if (currentTab == this.backupsTab) {
-            this.statusMessage = "";
+            this.statusBanner.clearSticky();
         } else if (currentTab == this.membersTab) {
-            this.statusMessage = "";
+            this.statusBanner.clearSticky();
         } else {
-            this.statusMessage = "";
+            this.statusBanner.clearSticky();
         }
     }
 
@@ -911,8 +912,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
     }
 
     private void setStatusInfo(String message) {
-        this.statusMessage = message;
-        this.statusColor = 0xFFB8C5D6;
+        this.statusBanner.set(SharedWorldStatusBanner.Kind.INFO, Component.literal(message));
     }
 
     private void setStatusInfoKey(String key, Object... args) {
@@ -920,8 +920,8 @@ public final class EditSharedWorldScreen extends VersionedScreen {
     }
 
     private void setStatusSuccess(String message) {
-        this.statusMessage = message;
-        this.statusColor = 0xFF9FE3A5;
+        // Confirmations clear themselves; prompts and errors stay until acted on.
+        this.statusBanner.setTransient(SharedWorldStatusBanner.Kind.SUCCESS, Component.literal(message), SUCCESS_STATUS_TTL_MS);
     }
 
     private void setStatusSuccessKey(String key, Object... args) {
@@ -929,8 +929,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
     }
 
     private void setStatusWarning(String message) {
-        this.statusMessage = message;
-        this.statusColor = 0xFFFFD37A;
+        this.statusBanner.set(SharedWorldStatusBanner.Kind.WARNING, Component.literal(message));
     }
 
     private void setStatusWarningKey(String key, Object... args) {
@@ -938,8 +937,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
     }
 
     private void setStatusError(String message) {
-        this.statusMessage = message;
-        this.statusColor = 0xFFFF8D8D;
+        this.statusBanner.set(SharedWorldStatusBanner.Kind.ERROR, Component.literal(message));
     }
 
     private void drawPanel(GuiGraphics guiGraphics, int x, int y, int width, int height, int fill, int border) {

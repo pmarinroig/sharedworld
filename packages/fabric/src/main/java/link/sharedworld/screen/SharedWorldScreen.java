@@ -23,7 +23,9 @@ import java.util.concurrent.CompletableFuture;
 public final class SharedWorldScreen extends link.sharedworld.versioned.VersionedScreen {
     private static final long AUTO_REFRESH_IDLE_MS = 15_000L;
     private static final long AUTO_REFRESH_ACTIVE_MS = 2_500L;
+    private static final long SUCCESS_STATUS_TTL_MS = 7_000L;
 
+    private final SharedWorldStatusBanner statusBanner = new SharedWorldStatusBanner();
     private final Screen parent;
     private final HeaderAndFooterLayout layout = new HeaderAndFooterLayout(this, 33, 60);
     private final List<WorldSummaryDto> worlds = new ArrayList<>();
@@ -181,6 +183,24 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
     }
 
     public void onChildOperationFinished(String message) {
+        this.onChildOperationFinished(message, null);
+    }
+
+    /**
+     * A child screen finished an operation: confirm it visibly and, when the
+     * operation produced or targeted a world, land with that world selected so
+     * the action buttons are live instead of greyed out.
+     */
+    public void onChildOperationFinished(String message, String selectWorldId) {
+        if (message != null && !message.isBlank()) {
+            this.statusBanner.setTransient(SharedWorldStatusBanner.Kind.SUCCESS, Component.literal(message), SUCCESS_STATUS_TTL_MS);
+        }
+        if (selectWorldId != null) {
+            SharedWorldClient.rememberSelectedWorld(selectWorldId);
+            if (this.serverList != null) {
+                this.serverList.setWorlds(this.worlds, selectWorldId);
+            }
+        }
         this.refreshWorlds();
     }
 
@@ -245,6 +265,8 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
                     0xFFFF5555
             );
         }
+        int bannerBottom = SharedWorldClient.isE4mcInstalled() ? this.height - 64 : this.height - 78;
+        this.statusBanner.renderBottomCentered(guiGraphics, this.font, this.width / 2, bannerBottom, Math.min(this.width - 40, 420));
     }
 
     public void onEntrySelected(WorldSummaryDto world) {
