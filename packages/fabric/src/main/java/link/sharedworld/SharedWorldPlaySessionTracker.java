@@ -1,14 +1,28 @@
 package link.sharedworld;
 
+import java.util.function.LongSupplier;
+
 public final class SharedWorldPlaySessionTracker {
+    /** A pending guest connect that has not reached PLAY within this window is considered abandoned. */
+    static final long PENDING_GUEST_SESSION_TTL_MS = 90_000L;
+
+    private final LongSupplier clock;
     private PendingGuestSession pendingGuestSession;
     private ActiveSession activeSession;
     private RecoverySession pendingRecoverySession;
     private Object currentConnectionKey;
     private boolean currentConnectionKeyBound;
 
+    public SharedWorldPlaySessionTracker() {
+        this(System::currentTimeMillis);
+    }
+
+    SharedWorldPlaySessionTracker(LongSupplier clock) {
+        this.clock = clock;
+    }
+
     public synchronized void beginGuestConnect(String worldId, String worldName, String joinTarget, long runtimeEpoch) {
-        this.pendingGuestSession = new PendingGuestSession(worldId, worldName, joinTarget, runtimeEpoch);
+        this.pendingGuestSession = new PendingGuestSession(worldId, worldName, joinTarget, runtimeEpoch, this.clock.getAsLong());
         this.activeSession = null;
         this.pendingRecoverySession = null;
     }
@@ -34,8 +48,19 @@ public final class SharedWorldPlaySessionTracker {
     }
 
     public synchronized void onPlayJoin(Object connectionKey) {
+        onPlayJoin(connectionKey, false);
+    }
+
+    public synchronized void onPlayJoin(Object connectionKey, boolean localServer) {
         this.currentConnectionKey = connectionKey;
         this.currentConnectionKeyBound = true;
+        if (this.pendingGuestSession != null
+                && (localServer || this.clock.getAsLong() - this.pendingGuestSession.armedAtMillis() > PENDING_GUEST_SESSION_TTL_MS)) {
+            // A guest connect that never reached PLAY (cancelled ConnectScreen, dead target) leaves its
+            // pending session armed; adopting it for a local/integrated or long-stale join would bind
+            // SharedWorld guest state to a plain vanilla world.
+            this.pendingGuestSession = null;
+        }
         if (this.pendingGuestSession == null) {
             if (this.activeSession != null
                     && this.activeSession.role() == SessionRole.HOST
@@ -144,6 +169,17 @@ public final class SharedWorldPlaySessionTracker {
         return this.activeSession != null || this.pendingRecoverySession != null;
     }
 
+    /**
+     * Whether the disconnect that is being shown (or is about to be shown) belongs to a SharedWorld
+     * guest session. Non-consuming; used to gate the DisconnectedScreen recovery hijack so a vanilla
+     * disconnect with a stale persisted recovery record on disk is left alone. Checks the active
+     * session too because the screen can be initialized before or after the disconnect event runs.
+     */
+    public synchronized boolean hasPendingRecovery() {
+        return this.pendingRecoverySession != null
+                || (this.activeSession != null && this.activeSession.role() == SessionRole.GUEST);
+    }
+
     private boolean matchesCurrentConnectionKey(Object connectionKey) {
         return this.currentConnectionKeyBound && this.currentConnectionKey == connectionKey;
     }
@@ -167,7 +203,7 @@ public final class SharedWorldPlaySessionTracker {
     public record ActiveWorldSession(String worldId, String worldName, SessionRole role, String joinTarget, long runtimeEpoch) {
     }
 
-    private record PendingGuestSession(String worldId, String worldName, String joinTarget, long runtimeEpoch) {
+    private record PendingGuestSession(String worldId, String worldName, String joinTarget, long runtimeEpoch, long armedAtMillis) {
     }
 
     private record ActiveSession(

@@ -21,6 +21,12 @@ public abstract class DisconnectedScreenMixin {
 
     @Inject(method = "init", at = @At("HEAD"), cancellable = true)
     private void sharedworld$redirectSharedWorldRecovery(CallbackInfo callbackInfo) {
+        if (!SharedWorldClient.playSessionTracker().hasPendingRecovery()) {
+            // A disconnect unrelated to a SharedWorld guest session (vanilla servers included) must
+            // keep its vanilla screen even when a persisted recovery record exists on disk; that
+            // record resumes through the menu auto-resume path instead.
+            return;
+        }
         Minecraft minecraft = Minecraft.getInstance();
         Screen fallbackParent = this.parent == null ? new JoinMultiplayerScreen(new TitleScreen()) : this.parent;
         if (!SharedWorldClient.sessionCoordinator().openRecoveryScreenIfPresent(fallbackParent)) {

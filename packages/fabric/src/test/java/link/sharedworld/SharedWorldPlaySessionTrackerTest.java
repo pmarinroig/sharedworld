@@ -1,10 +1,14 @@
 package link.sharedworld;
 
+import java.util.concurrent.atomic.AtomicLong;
+
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class SharedWorldPlaySessionTrackerTest {
     @Test
@@ -65,6 +69,85 @@ final class SharedWorldPlaySessionTrackerTest {
         assertNotNull(hostSession);
         assertEquals("world-new", hostSession.worldId());
         assertEquals(SharedWorldPlaySessionTracker.SessionRole.HOST, hostSession.role());
+    }
+
+    @Test
+    void pendingGuestSessionIsNotAdoptedForLocalServerJoin() {
+        SharedWorldPlaySessionTracker tracker = new SharedWorldPlaySessionTracker();
+        Object handler = new Object();
+
+        tracker.beginGuestConnect("world-1", "World", "join.example", 7L);
+        tracker.onPlayJoin(handler, true);
+
+        assertNull(tracker.currentSession(handler));
+        // The abandoned pending session must be fully gone: a later remote join adopts nothing.
+        Object laterHandler = new Object();
+        tracker.onPlayJoin(laterHandler, false);
+        assertNull(tracker.currentSession(laterHandler));
+    }
+
+    @Test
+    void pendingGuestSessionExpiresAfterTtl() {
+        AtomicLong now = new AtomicLong(1_000L);
+        SharedWorldPlaySessionTracker tracker = new SharedWorldPlaySessionTracker(now::get);
+        Object handler = new Object();
+
+        tracker.beginGuestConnect("world-1", "World", "join.example", 7L);
+        now.addAndGet(SharedWorldPlaySessionTracker.PENDING_GUEST_SESSION_TTL_MS + 1);
+        tracker.onPlayJoin(handler, false);
+
+        assertNull(tracker.currentSession(handler));
+    }
+
+    @Test
+    void pendingGuestSessionInsideTtlIsAdoptedForRemoteJoin() {
+        AtomicLong now = new AtomicLong(1_000L);
+        SharedWorldPlaySessionTracker tracker = new SharedWorldPlaySessionTracker(now::get);
+        Object handler = new Object();
+
+        tracker.beginGuestConnect("world-1", "World", "join.example", 7L);
+        now.addAndGet(SharedWorldPlaySessionTracker.PENDING_GUEST_SESSION_TTL_MS - 1);
+        tracker.onPlayJoin(handler, false);
+
+        SharedWorldPlaySessionTracker.ActiveWorldSession session = tracker.currentSession(handler);
+        assertNotNull(session);
+        assertEquals("world-1", session.worldId());
+        assertEquals(SharedWorldPlaySessionTracker.SessionRole.GUEST, session.role());
+    }
+
+    @Test
+    void hasPendingRecoveryReflectsGuestSessionLifecycle() {
+        SharedWorldPlaySessionTracker tracker = new SharedWorldPlaySessionTracker();
+        Object handler = new Object();
+
+        assertFalse(tracker.hasPendingRecovery());
+
+        tracker.beginGuestConnect("world-1", "World", "join.example", 7L);
+        assertFalse(tracker.hasPendingRecovery());
+        tracker.onPlayJoin(handler, false);
+        // Active guest session counts: the disconnect screen can be initialized before the
+        // disconnect event has produced the recovery session.
+        assertTrue(tracker.hasPendingRecovery());
+
+        assertNotNull(tracker.onDisconnect(handler));
+        assertTrue(tracker.hasPendingRecovery());
+        assertNotNull(tracker.consumePendingRecovery());
+        assertFalse(tracker.hasPendingRecovery());
+    }
+
+    @Test
+    void hasPendingRecoveryFalseForHostSessionAndVanillaDisconnect() {
+        SharedWorldPlaySessionTracker tracker = new SharedWorldPlaySessionTracker();
+        Object handler = new Object();
+
+        tracker.onPlayJoin(handler, false);
+        assertFalse(tracker.hasPendingRecovery());
+
+        tracker.beginHostSession("world-host", "Host World");
+        assertFalse(tracker.hasPendingRecovery());
+
+        assertNull(tracker.onDisconnect(handler));
+        assertFalse(tracker.hasPendingRecovery());
     }
 
     @Test
