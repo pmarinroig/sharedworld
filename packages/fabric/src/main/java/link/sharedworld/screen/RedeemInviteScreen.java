@@ -96,10 +96,7 @@ public final class RedeemInviteScreen extends link.sharedworld.versioned.Version
                                 inviteRedeemErrorMessage(error)
                         ));
                     } else {
-                        this.parent.onChildOperationFinished(
-                                SharedWorldText.string("screen.sharedworld.operation_added_world", SharedWorldText.displayWorldName(result.name())),
-                                result.id()
-                        );
+                        this.parent.onChildOperationFinished(null, result.id());
                         this.parent.clearTransientFocus();
                         link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, this.parent);
                     }

@@ -289,21 +289,24 @@ public final class EditSharedWorldScreen extends VersionedScreen {
     }
 
     private void renderSettingsDecorations(GuiGraphics guiGraphics) {
-        int left = this.contentArea.left() + 38;
         int top = this.contentArea.top();
+        // Under the two-button left column, wrapped to that column's width so
+        // it can never run into the gamerule toggles on the right.
+        int columnWidth = Math.min(170, this.contentArea.width() / 2 - 24);
+        int leftColumn = this.contentArea.left() + (this.contentArea.width() / 2 - columnWidth) / 2;
         this.drawWrappedText(
                 guiGraphics,
                 Component.translatable("screen.sharedworld.settings_hint"),
-                left,
-                top + this.contentArea.height() - 34,
-                this.contentArea.width() - 76,
+                leftColumn,
+                top + 34 + 2 * 24 + 8,
+                columnWidth,
                 0xFF8EA3BC
         );
         if (!this.isOwner()) {
             this.drawWrappedText(
                     guiGraphics,
                     Component.translatable("screen.sharedworld.settings_owner_only"),
-                    left,
+                    leftColumn,
                     top + 14,
                     this.contentArea.width() - 76,
                     0xFFFFD37A
@@ -798,7 +801,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
                     this.actionInFlight = false;
                     this.setStatusSuccessKey("screen.sharedworld.edit_status_saved");
                     this.reloadData();
-                    this.parent.onChildOperationFinished(SharedWorldText.string("screen.sharedworld.operation_updated", SharedWorldText.displayWorldName(updated.name())));
+                    this.parent.onChildOperationFinished(null, this.world.id());
                 },
                 error -> {
                     this.savingDetails = false;
@@ -1136,6 +1139,13 @@ public final class EditSharedWorldScreen extends VersionedScreen {
             }
         }
         return this.memberships.get(0);
+    }
+
+    /** Automation hook for the dev-helper drivers: select a tab by index. */
+    public void sharedworldSelectTab(int index) {
+        if (this.tabNavigationBar != null) {
+            this.tabNavigationBar.selectTab(index, true);
+        }
     }
 
     /** A child screen aborted an operation on the player's request. */

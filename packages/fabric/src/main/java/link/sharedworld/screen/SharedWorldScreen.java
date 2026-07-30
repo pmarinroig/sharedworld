@@ -192,14 +192,12 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
     }
 
     /**
-     * A child screen finished an operation: confirm it visibly and, when the
-     * operation produced or targeted a world, land with that world selected so
-     * the action buttons are live instead of greyed out.
+     * A child screen finished an operation. The outcome is already visible in
+     * the list itself (a row appears, disappears, or gets selected), so no
+     * textual confirmation is shown — just land with the affected world
+     * selected so the action buttons are live instead of greyed out.
      */
     public void onChildOperationFinished(String message, String selectWorldId) {
-        if (message != null && !message.isBlank()) {
-            this.statusBanner.setTransient(SharedWorldStatusBanner.Kind.SUCCESS, Component.literal(message), SUCCESS_STATUS_TTL_MS);
-        }
         if (selectWorldId != null) {
             SharedWorldClient.rememberSelectedWorld(selectWorldId);
             if (this.serverList != null) {

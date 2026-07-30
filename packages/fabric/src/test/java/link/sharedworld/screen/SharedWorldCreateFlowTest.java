@@ -62,7 +62,7 @@ final class SharedWorldCreateFlowTest {
                     }
             );
 
-            assertEquals("screen.sharedworld.operation_created_world", outcome.message());
+            assertEquals("world-1", outcome.worldId());
             assertEquals(7L, uploader.runtimeEpoch);
             assertEquals("token-7", uploader.hostToken);
             assertEquals(1, backend.releaseCalls);
@@ -207,10 +207,10 @@ final class SharedWorldCreateFlowTest {
             );
 
             SharedWorldCreateFlow.Outcome outcome = flow.create(request(source), silentProgressSink());
+            assertEquals("world-1", outcome.worldId());
 
             // The snapshot is committed, so a failed lease release must not turn a good create into
             // an error, and it must not delete the freshly created world.
-            assertEquals("screen.sharedworld.operation_created_world", outcome.message());
             assertEquals(1, backend.releaseCalls);
             assertEquals(0, backend.deleteCalls);
         } finally {
@@ -240,7 +240,7 @@ final class SharedWorldCreateFlowTest {
 
             SharedWorldCreateFlow.Outcome outcome = flow.create(request(source), silentProgressSink());
 
-            assertEquals("screen.sharedworld.operation_created_world", outcome.message());
+            assertEquals("world-1", outcome.worldId());
             assertEquals(0, backend.deleteCalls);
             assertEquals(1, backend.releaseCalls);
         } finally {

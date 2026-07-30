@@ -52,6 +52,8 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
     private static final int STORAGE_BUTTON_TOP = 104;
     private static final long SUCCESS_BANNER_TTL_MS = 7_000L;
     private static final long ICON_ERROR_TTL_MS = 4_000L;
+    /** Vertical slot above the footer reserved for the status banner, so it never overlaps widgets. */
+    private static final int BANNER_BAND = 16;
 
     private final SharedWorldScreen parent;
     private final CreateDraft restoredDraft;
@@ -122,8 +124,9 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
                 .build());
         this.layout.visitWidgets(this::addRenderableWidget);
 
-        this.saveList = link.sharedworld.versioned.LayoutCompat.registerTabList(
-                new LocalSaveSelectionList(this.minecraft, 0, 0, 0, 36, this), this::addRenderableWidget);
+        // No tabs on this screen: the list is a plain widget (registerTabList
+        // is only for TabManager-owned lists and would never render here).
+        this.saveList = this.addRenderableWidget(new LocalSaveSelectionList(this.minecraft, 0, 0, 0, 36, this));
         this.saveList.setSaves(this.localSaves, this.selectedSave == null ? null : this.selectedSave.id());
         this.selectFolderButton = Button.builder(
                 Component.translatable("screen.sharedworld.select_folder"),
@@ -217,15 +220,19 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         }
         ScreenRectangle area = this.contentArea;
 
-        // Pick-world step widgets.
+        // Pick-world step widgets: the folder button sits above the reserved
+        // banner band, the list ends above the button.
         int folderButtonHeight = 20;
-        int folderButtonGap = 22;
-        this.saveList.setPosition(area.left() + CONTENT_MARGIN, area.top() + CONTENT_MARGIN);
-        this.saveList.setWidth(area.width() - CONTENT_MARGIN * 2);
-        this.saveList.setHeight(area.height() - CONTENT_MARGIN * 2 - folderButtonHeight - folderButtonGap);
+        int folderButtonY = this.height - FOOTER_HEIGHT - BANNER_BAND - folderButtonHeight - 4;
+        this.saveList.sharedworldSetBounds(
+                area.left() + CONTENT_MARGIN,
+                area.top() + CONTENT_MARGIN,
+                area.width() - CONTENT_MARGIN * 2,
+                Math.max(36, folderButtonY - 8 - (area.top() + CONTENT_MARGIN))
+        );
         this.selectFolderButton.setPosition(
                 area.left() + (area.width() - this.selectFolderButton.getWidth()) / 2,
-                area.top() + area.height() - CONTENT_MARGIN - folderButtonHeight
+                folderButtonY
         );
 
         // Details step widgets.
@@ -316,7 +323,11 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         this.sharedworldRenderMenuBackground(guiGraphics);
         super.render(guiGraphics, mouseX, mouseY, partialTick);
 
-        guiGraphics.drawCenteredString(this.font, this.stepTitle(), this.width / 2, 12, 0xFFFFFFFF);
+        guiGraphics.drawCenteredString(this.font, this.stepTitle(), this.width / 2, 8, 0xFFFFFFFF);
+        if (this.wizard.step() == CreateWizardModel.Step.DETAILS) {
+            // Destination context lives in the header where nothing collides.
+            guiGraphics.drawCenteredString(this.font, this.storageDestinationLabel(), this.width / 2, 20, 0xFF8EA3BC);
+        }
 
         switch (this.wizard.step()) {
             case CONNECT_DRIVE -> this.renderConnectDecorations(guiGraphics);
@@ -422,7 +433,11 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         GuiBlit.favicon(guiGraphics, this.previewTexture, iconX, iconY, 48);
 
         Component iconLabel = Component.translatable("screen.sharedworld.icon_label");
-        guiGraphics.drawCenteredString(this.font, iconLabel, iconX + 24, iconY + 48 + 6, 0xFFA0A0A0);
+        // Centered under the icon well, but never crossing into the input
+        // column on its left.
+        int fieldsRight = this.contentArea.left() + 38 + Math.min(190, this.contentArea.width() - 140);
+        int labelX = Math.max(iconX + 24, fieldsRight + this.font.width(iconLabel) / 2 + 8);
+        guiGraphics.drawCenteredString(this.font, iconLabel, labelX, iconY + 48 + 6, 0xFFA0A0A0);
 
         if (this.iconHovered) {
             guiGraphics.fill(iconX, iconY, iconX + 48, iconY + 48, 0x80000000);
@@ -433,13 +448,6 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         }
 
         this.renderServerCardPreview(guiGraphics);
-        guiGraphics.drawCenteredString(
-                this.font,
-                this.storageDestinationLabel(),
-                this.width / 2,
-                this.previewCardY() + SharedWorldServerList.ROW_HEIGHT + 10,
-                0xFF8EA3BC
-        );
 
         if (!this.nameValid()) {
             guiGraphics.drawString(
@@ -695,6 +703,10 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
     /** Storage progress/error messaging on the connect step, via the shared banner. */
     private void updateStorageBanner() {
         if (this.wizard.step() != CreateWizardModel.Step.CONNECT_DRIVE) {
+            // Leaving the connect step must not strand its sticky messages
+            // (e.g. "Checking your Google Drive connection..."); transient
+            // successes keep their own expiry.
+            this.banner.clearSticky();
             return;
         }
         DriveLinkAttempt attempt = this.driveLinkController.currentAttempt();
@@ -830,7 +842,9 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
     }
 
     private int previewCardY() {
-        return this.contentArea.top() + 134;
+        // Bottom-anchored above the banner band so it can never collide with
+        // the footer or the banner, whatever the window height.
+        return this.height - FOOTER_HEIGHT - BANNER_BAND - SharedWorldServerList.ROW_HEIGHT - 2;
     }
 
     private String previewWorldName() {

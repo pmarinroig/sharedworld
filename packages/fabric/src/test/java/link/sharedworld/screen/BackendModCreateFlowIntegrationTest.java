@@ -117,7 +117,6 @@ final class BackendModCreateFlowIntegrationTest {
             SharedWorldModels.WorldSummaryDto createdWorld = hostClient.listWorlds().get(0);
             SharedWorldIntegrationBackend.StorageSnapshot storage = SharedWorldIntegrationBackend.storageSnapshot();
 
-            assertEquals("screen.sharedworld.operation_created_world", outcome.message());
             assertEquals(createdWorld.id(), outcome.worldId());
             assertTrue(progressEvents.contains("indeterminate:create_upload_prepare"));
             assertEquals("google-drive", createdWorld.storageProvider());

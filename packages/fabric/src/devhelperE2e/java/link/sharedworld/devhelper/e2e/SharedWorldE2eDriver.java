@@ -74,6 +74,39 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
         AWAIT_EXIT
     }
 
+    /**
+     * The ui-tour role walks every SharedWorld screen and saves a PNG of each
+     * into the run dir's screenshots/ folder, so layout work can be reviewed
+     * from actual renders instead of imagination. Driven by scripts/ui-tour.ts.
+     */
+    private enum TourStep {
+        WAIT_TITLE,
+        OPEN_HUB,
+        SHOT_HUB_EMPTY,
+        BEGIN_CREATE,
+        SHOT_CREATE_CONNECT,
+        PRESS_CONNECT,
+        AWAIT_LINK_ADVANCE,
+        SHOT_CREATE_WORLD,
+        TO_DETAILS,
+        SHOT_CREATE_DETAILS,
+        SUBMIT_CREATE,
+        AWAIT_INVITE,
+        SHOT_INVITE,
+        DONE_TO_HUB,
+        SHOT_HUB_SELECTED,
+        OPEN_EDIT,
+        SHOT_EDIT_TAB,
+        OPEN_REPLACE,
+        SHOT_REPLACE,
+        HUB_WATCH,
+        COMPLETE
+    }
+
+    private static final String[] TOUR_EDIT_TAB_SHOTS = {
+            "08-edit-details", "09-edit-settings", "10-edit-backups", "11-edit-members", "12-edit-storage"
+    };
+
     private final HttpClient httpClient = HttpClient.newBuilder()
             .followRedirects(HttpClient.Redirect.NORMAL)
             .connectTimeout(Duration.ofSeconds(10))
@@ -86,6 +119,9 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
 
     private HostStep hostStep = HostStep.WAIT_TITLE;
     private GuestStep guestStep = GuestStep.WAIT_GO;
+    private TourStep tourStep = TourStep.WAIT_TITLE;
+    private int tourSettleTicks;
+    private int tourEditTabIndex;
     private final AtomicBoolean asyncInFlight = new AtomicBoolean(false);
     private final AtomicReference<WorldSummaryDto> targetWorld = new AtomicReference<>();
     private boolean driveLinkPressed;
@@ -120,13 +156,17 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
                 this.tickHost(minecraft);
             } else if ("guest".equals(this.role)) {
                 this.tickGuest(minecraft);
+            } else if ("ui-tour".equals(this.role)) {
+                this.tickUiTour(minecraft);
             }
             // Every ~15s without a step transition, report what the driver is
             // looking at so orchestrator timeouts are diagnosable from markers
             // alone.
             if (this.ticksInStep > 0 && this.ticksInStep % 300 == 0) {
                 String screenName = minecraft.screen == null ? "none" : minecraft.screen.getClass().getName();
-                String step = "host".equals(this.role) ? this.hostStep.name() : this.guestStep.name();
+                String step = "host".equals(this.role) ? this.hostStep.name()
+                        : "guest".equals(this.role) ? this.guestStep.name()
+                        : this.tourStep.name();
                 this.markers.emit("stuck", step + " screen=" + screenName);
             }
         } catch (Exception exception) {
@@ -500,6 +540,185 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
     }
 
     /** A fresh run dir boots into accessibility onboarding; continue past it. */
+    // ---------------------------------------------------------------- ui tour
+
+    private void tickUiTour(Minecraft minecraft) {
+        TourStep before = this.tourStep;
+        if (this.tourSettleTicks > 0) {
+            this.tourSettleTicks--;
+            return;
+        }
+        Screen screen = minecraft.screen;
+        switch (this.tourStep) {
+            case WAIT_TITLE -> {
+                dismissOnboarding(minecraft);
+                if (screen instanceof TitleScreen) {
+                    this.tourStep = TourStep.OPEN_HUB;
+                }
+            }
+            case OPEN_HUB -> {
+                SharedWorldClient.openMainScreen(screen);
+                this.settleThen(TourStep.SHOT_HUB_EMPTY, 40);
+            }
+            case SHOT_HUB_EMPTY -> {
+                this.screenshot(minecraft, "01-hub-empty");
+                this.settleThen(TourStep.BEGIN_CREATE, 10);
+            }
+            case BEGIN_CREATE -> {
+                if (screen instanceof SharedWorldScreen hub && WidgetAutomation.pressButton(hub, "screen.sharedworld.create")) {
+                    this.settleThen(TourStep.SHOT_CREATE_CONNECT, 30);
+                }
+            }
+            case SHOT_CREATE_CONNECT -> {
+                this.screenshot(minecraft, "02-create-connect");
+                this.tourStep = TourStep.PRESS_CONNECT;
+            }
+            case PRESS_CONNECT -> {
+                if (screen != null && WidgetAutomation.pressButton(screen, "screen.sharedworld.storage_link_google_drive")) {
+                    this.tourStep = TourStep.AWAIT_LINK_ADVANCE;
+                }
+            }
+            case AWAIT_LINK_ADVANCE -> {
+                if (screen == null) {
+                    return;
+                }
+                if (!onConnectDriveStep(screen)) {
+                    this.settleThen(TourStep.SHOT_CREATE_WORLD, 20);
+                    return;
+                }
+                this.fetchDriveAuthUrlOnce(screen);
+            }
+            case SHOT_CREATE_WORLD -> {
+                this.emitListGeometry("wizard-list", screen);
+                this.screenshot(minecraft, "03-create-world");
+                this.tourStep = TourStep.TO_DETAILS;
+            }
+            case TO_DETAILS -> {
+                if (screen != null && WidgetAutomation.pressButton(screen, "screen.sharedworld.next")) {
+                    this.settleThen(TourStep.SHOT_CREATE_DETAILS, 20);
+                }
+            }
+            case SHOT_CREATE_DETAILS -> {
+                this.screenshot(minecraft, "04-create-details");
+                this.tourStep = TourStep.SUBMIT_CREATE;
+            }
+            case SUBMIT_CREATE -> {
+                if (screen != null && WidgetAutomation.pressButton(screen, "screen.sharedworld.create_world")) {
+                    this.tourStep = TourStep.AWAIT_INVITE;
+                }
+            }
+            case AWAIT_INVITE -> {
+                if (screen instanceof link.sharedworld.screen.SharedWorldInviteScreen) {
+                    this.settleThen(TourStep.SHOT_INVITE, 40);
+                }
+            }
+            case SHOT_INVITE -> {
+                this.screenshot(minecraft, "05-invite-created");
+                this.tourStep = TourStep.DONE_TO_HUB;
+            }
+            case DONE_TO_HUB -> {
+                if (screen != null && WidgetAutomation.pressButton(screen, "screen.sharedworld.done")) {
+                    this.settleThen(TourStep.SHOT_HUB_SELECTED, 60);
+                }
+            }
+            case SHOT_HUB_SELECTED -> {
+                this.screenshot(minecraft, "06-hub-selected");
+                this.tourStep = TourStep.OPEN_EDIT;
+            }
+            case OPEN_EDIT -> {
+                if (screen instanceof SharedWorldScreen hub && WidgetAutomation.pressButton(hub, "screen.sharedworld.edit")) {
+                    this.tourEditTabIndex = 0;
+                    this.settleThen(TourStep.SHOT_EDIT_TAB, 40);
+                }
+            }
+            case SHOT_EDIT_TAB -> {
+                if (!(screen instanceof link.sharedworld.screen.EditSharedWorldScreen edit)) {
+                    return;
+                }
+                this.screenshot(minecraft, TOUR_EDIT_TAB_SHOTS[this.tourEditTabIndex]);
+                this.tourEditTabIndex++;
+                if (this.tourEditTabIndex < TOUR_EDIT_TAB_SHOTS.length) {
+                    edit.sharedworldSelectTab(this.tourEditTabIndex);
+                    this.settleThen(TourStep.SHOT_EDIT_TAB, 20);
+                } else {
+                    edit.sharedworldSelectTab(0);
+                    this.settleThen(TourStep.OPEN_REPLACE, 20);
+                }
+            }
+            case OPEN_REPLACE -> {
+                if (screen != null && WidgetAutomation.pressButton(screen, "screen.sharedworld.replace_world")) {
+                    this.settleThen(TourStep.SHOT_REPLACE, 30);
+                }
+            }
+            case SHOT_REPLACE -> {
+                this.emitListGeometry("replace-list", screen);
+                this.screenshot(minecraft, "07-replace");
+                if (screen != null) {
+                    WidgetAutomation.pressButton(screen, "gui.back");
+                    // Back lands on the edit screen; leave it for the hub too.
+                }
+                this.settleThen(TourStep.HUB_WATCH, 20);
+            }
+            case HUB_WATCH -> {
+                if (screen instanceof link.sharedworld.screen.EditSharedWorldScreen edit) {
+                    WidgetAutomation.pressButton(edit, "gui.back");
+                    return;
+                }
+                if (screen instanceof SharedWorldScreen) {
+                    // Sit on the hub through several auto-refresh cycles so the
+                    // rebuild log (and a final shot) reveal any periodic flicker.
+                    this.markers.emit("hub-watch-started", null);
+                    this.settleThen(TourStep.COMPLETE, 300);
+                }
+            }
+            case COMPLETE -> {
+                this.screenshot(minecraft, "13-hub-watch");
+                this.markers.emit("tour-complete", null);
+                this.tourStep = TourStep.WAIT_TITLE;
+                this.tourSettleTicks = Integer.MAX_VALUE;
+            }
+        }
+        this.trackStepProgress(before != this.tourStep, this.tourStep.name());
+    }
+
+    /** Layout diagnostics for the ui-tour: geometry of a screen's saveList field. */
+    private void emitListGeometry(String label, Screen screen) {
+        try {
+            java.lang.reflect.Field field = screen.getClass().getDeclaredField("saveList");
+            field.setAccessible(true);
+            var list = (net.minecraft.client.gui.components.AbstractSelectionList<?>) field.get(screen);
+            this.markers.emit(label, "rows=" + list.children().size()
+                    + " x=" + list.getX() + " y=" + list.getY()
+                    + " w=" + list.getWidth() + " h=" + list.getHeight()
+                    + " visible=" + list.visible);
+        } catch (ReflectiveOperationException exception) {
+            this.markers.emit(label, "reflection failed: " + exception);
+        }
+    }
+
+    private void settleThen(TourStep next, int ticks) {
+        this.tourStep = next;
+        this.tourSettleTicks = ticks;
+    }
+
+    /** Save the current frame as screenshots/<name>.png in the run dir. */
+    private void screenshot(Minecraft minecraft, String name) {
+        try {
+            net.minecraft.client.Screenshot.takeScreenshot(minecraft.getMainRenderTarget(), image -> {
+                try (image) {
+                    java.nio.file.Path directory = minecraft.gameDirectory.toPath().resolve("screenshots");
+                    java.nio.file.Files.createDirectories(directory);
+                    image.writeToFile(directory.resolve(name + ".png"));
+                    this.markers.emit("shot", name);
+                } catch (Exception exception) {
+                    this.markers.emit("shot-failed", name + ": " + exception);
+                }
+            });
+        } catch (Exception exception) {
+            this.markers.emit("shot-failed", name + ": " + exception);
+        }
+    }
+
     private static void dismissOnboarding(Minecraft minecraft) {
         if (minecraft.screen instanceof net.minecraft.client.gui.screens.AccessibilityOnboardingScreen onboarding) {
             WidgetAutomation.pressButton(onboarding, "gui.continue");

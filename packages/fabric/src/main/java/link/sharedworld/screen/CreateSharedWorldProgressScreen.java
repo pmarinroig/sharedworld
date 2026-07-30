@@ -187,7 +187,7 @@ public final class CreateSharedWorldProgressScreen extends link.sharedworld.vers
                         ));
                         return;
                     }
-                    this.parent.onChildOperationFinished(outcome.message(), outcome.worldId());
+                    this.parent.onChildOperationFinished(null, outcome.worldId());
                     // Land on the share-code screen: the natural next step after
                     // creating a world is inviting someone to it. Its Back button
                     // returns to the hub with the new world selected.

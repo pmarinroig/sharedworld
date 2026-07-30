@@ -17,6 +17,15 @@ public abstract class VersionedSelectionList<E extends ObjectSelectionList.Entry
         this.updateSize(width, layout);
     }
 
+    /**
+     * Position+size in one call. Entries cache their rectangles on this
+     * version; only updateSizeAndPosition re-lays them, so raw widget setters
+     * leave rows parked at their construction-time (often zero-size) spots.
+     */
+    public void sharedworldSetBounds(int x, int y, int width, int height) {
+        this.updateSizeAndPosition(width, height, x, y);
+    }
+
     /** Tab-visibility sync; on this version the widget visible flag is authoritative. */
     public void sharedworldSetVisibleForTab(boolean visibleForTab) {
         this.visible = visibleForTab;

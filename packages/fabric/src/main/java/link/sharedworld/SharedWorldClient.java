@@ -236,6 +236,12 @@ public final class SharedWorldClient implements ClientModInitializer {
         public void onHostSessionLive(String worldId, String worldName) {
             PLAY_SESSION_TRACKER.beginHostSession(worldId, worldName);
             refreshHostedPermissionLevels();
+            // Difficulty is owner-managed through the Settings tab; no host
+            // (owner included) changes it from the pause menu mid-session.
+            var server = Minecraft.getInstance().getSingleplayerServer();
+            if (server != null) {
+                server.execute(() -> link.sharedworld.versioned.ServerSettingsCompat.setDifficultyLocked(server, true));
+            }
         }
 
         @Override

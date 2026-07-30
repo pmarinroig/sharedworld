@@ -24,6 +24,7 @@ packages/fabric/run-guest/
 DriveBackupV2-master
 packages/fabric/run-e2e-host/
 packages/fabric/run-e2e-guest/
+packages/fabric/run-ui-tour/
 packages/fabric/modern/run/
 packages/fabric/modern/run-host/
 packages/fabric/modern/run-guest/

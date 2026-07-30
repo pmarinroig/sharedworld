@@ -51,6 +51,10 @@ final class LocalSaveSelectionList extends link.sharedworld.versioned.VersionedS
             }
         }
         this.setSelected(selected == null && !this.children().isEmpty() ? this.children().get(0) : selected);
+        // Selecting can auto-scroll while the list is still zero-sized (before
+        // the screen lays it out), leaving a stale scroll that pushes every row
+        // outside the clip. Start from the top deterministically.
+        this.setScrollAmount(0);
     }
 
     LocalSaveCatalog.LocalSaveOption selectedSave() {

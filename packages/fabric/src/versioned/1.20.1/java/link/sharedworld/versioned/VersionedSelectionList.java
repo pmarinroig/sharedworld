@@ -49,6 +49,13 @@ public abstract class VersionedSelectionList<E extends ObjectSelectionList.Entry
         return this.x1 - 6;
     }
 
+    /** Position+size in one call (newer versions also re-lay cached entry rectangles here). */
+    public void sharedworldSetBounds(int x, int y, int width, int height) {
+        this.setPosition(x, y);
+        this.setWidth(width);
+        this.setHeight(height);
+    }
+
     /** Tab-visibility sync; hidden lists skip rendering and swallow no input. */
     public void sharedworldSetVisibleForTab(boolean visibleForTab) {
         this.sharedworldVisibleForTab = visibleForTab;

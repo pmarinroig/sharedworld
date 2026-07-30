@@ -60,6 +60,27 @@ public final class SharedWorldServerList extends link.sharedworld.versioned.Vers
     }
 
     public void setWorlds(List<WorldSummaryDto> worlds, String preferredWorldId) {
+        // Same worlds in the same order: refresh row data in place. Rebuilding
+        // recreates every row and its icon texture (a visible flicker) and
+        // resets scroll, so it is reserved for actual membership changes.
+        if (this.sameWorldIds(worlds)) {
+            int index = 0;
+            Entry preferredEntry = null;
+            for (Entry entry : this.children()) {
+                entry.updateWorld(worlds.get(index++));
+                if (preferredWorldId != null && preferredWorldId.equals(entry.world.id())) {
+                    preferredEntry = entry;
+                }
+            }
+            if (preferredEntry != null && this.getSelected() != preferredEntry) {
+                this.setSelected(preferredEntry);
+                this.centerScrollOn(preferredEntry);
+                this.screen.onEntrySelected(this.selectedWorld());
+            }
+            return;
+        }
+
+        link.sharedworld.SharedWorldClient.LOGGER.info("SharedWorld world list rebuilt ({} worlds)", worlds.size());
         this.clearEntries();
 
         Entry preferredEntry = null;
@@ -81,6 +102,18 @@ public final class SharedWorldServerList extends link.sharedworld.versioned.Vers
         this.screen.onEntrySelected(this.selectedWorld());
     }
 
+    private boolean sameWorldIds(List<WorldSummaryDto> worlds) {
+        if (this.children().size() != worlds.size()) {
+            return false;
+        }
+        for (int index = 0; index < worlds.size(); index++) {
+            if (!this.children().get(index).world.id().equals(worlds.get(index).id())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public WorldSummaryDto selectedWorld() {
         Entry selected = this.getSelected();
         return selected == null ? null : selected.world;
@@ -92,7 +125,7 @@ public final class SharedWorldServerList extends link.sharedworld.versioned.Vers
     }
 
     public final class Entry extends VersionedSelectionEntry<Entry> {
-        private final WorldSummaryDto world;
+        private WorldSummaryDto world;
         private final FaviconTexture iconTexture;
         private long lastIconSignature = Long.MIN_VALUE;
         private Component statusIconTooltip;
@@ -102,6 +135,11 @@ public final class SharedWorldServerList extends link.sharedworld.versioned.Vers
         private Entry(WorldSummaryDto world) {
             this.world = world;
             this.iconTexture = FaviconTexture.forWorld(SharedWorldServerList.this.minecraft.getTextureManager(), "sharedworld/" + world.id());
+        }
+
+        /** In-place data refresh (same world id); presentation re-derives per frame. */
+        private void updateWorld(WorldSummaryDto world) {
+            this.world = world;
         }
 
         @Override

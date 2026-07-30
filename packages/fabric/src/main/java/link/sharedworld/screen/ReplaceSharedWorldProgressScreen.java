@@ -66,7 +66,6 @@ public final class ReplaceSharedWorldProgressScreen extends link.sharedworld.ver
         this.sharedworldRenderMenuBackground(guiGraphics);
         super.render(guiGraphics, mouseX, mouseY, partialTick);
         SharedWorldProgressRenderer.renderCentered(guiGraphics, this.font, this.width, this.height, this.progressState, partialTick);
-        guiGraphics.drawCenteredString(this.font, Component.translatable("screen.sharedworld.progress_cannot_cancel"), this.width / 2, this.height - 34, 0xFF8EA3BC);
     }
 
     private void startReplace() {

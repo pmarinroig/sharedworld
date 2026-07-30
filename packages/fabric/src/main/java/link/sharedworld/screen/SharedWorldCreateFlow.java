@@ -1,6 +1,5 @@
 package link.sharedworld.screen;
 
-import link.sharedworld.SharedWorldText;
 import link.sharedworld.api.SharedWorldModels.CreateWorldResultDto;
 import link.sharedworld.api.SharedWorldModels.WorldDetailsDto;
 import net.minecraft.network.chat.Component;
@@ -43,8 +42,8 @@ final class SharedWorldCreateFlow {
      * Authority source:
      * Backend world creation + temporary host assignment for the initial snapshot upload.
      */
-    /** What the hub needs after a create: the world (to select and invite for) and the message to show. */
-    record Outcome(link.sharedworld.api.SharedWorldModels.WorldSummaryDto world, String message) {
+    /** What the hub needs after a create: the world to select and open the share code for. */
+    record Outcome(link.sharedworld.api.SharedWorldModels.WorldSummaryDto world) {
         String worldId() {
             return this.world.id();
         }
@@ -78,10 +77,7 @@ final class SharedWorldCreateFlow {
         }
 
         progressSink.updateIndeterminate(Component.translatable("screen.sharedworld.create_progress_finishing"), "create_finish");
-        return new Outcome(
-                link.sharedworld.api.SharedWorldModels.summaryOf(createdWorld),
-                SharedWorldText.string("screen.sharedworld.operation_created_world", SharedWorldText.displayWorldName(createdWorld.name()))
-        );
+        return new Outcome(link.sharedworld.api.SharedWorldModels.summaryOf(createdWorld));
     }
 
     private void deleteCreatedWorldQuietly(String worldId, Throwable uploadFailure) {

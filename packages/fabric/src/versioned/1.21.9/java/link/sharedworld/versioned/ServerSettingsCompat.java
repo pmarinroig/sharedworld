@@ -19,6 +19,11 @@ public final class ServerSettingsCompat {
         server.setDefaultGameType(gameType);
     }
 
+    /** While hosting a shared world, difficulty is owner-managed (Settings tab): lock the pause-menu control. */
+    public static void setDifficultyLocked(MinecraftServer server, boolean locked) {
+        server.setDifficultyLocked(locked);
+    }
+
     public static void setGameRule(MinecraftServer server, SharedWorldGameRule rule, boolean value) {
         switch (rule) {
             case KEEP_INVENTORY -> server.getGameRules().getRule(GameRules.RULE_KEEPINVENTORY).set(value, server);

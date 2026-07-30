@@ -53,14 +53,15 @@ public final class ReplaceSharedWorldScreen extends link.sharedworld.versioned.V
                 .build());
         this.layout.visitWidgets(this::addRenderableWidget);
 
-        this.saveList = link.sharedworld.versioned.LayoutCompat.registerTabList(
-                new LocalSaveSelectionList(this.minecraft, 0, 0, 0, 36, this), this::addRenderableWidget);
-        this.saveList.setSaves(this.localSaves, this.selectedSave == null ? null : this.selectedSave.id());
         this.selectFolderButton = Button.builder(
                 Component.translatable("screen.sharedworld.select_folder"),
                 ignored -> this.selectWorldFolder()
         ).width(150).build();
         this.addRenderableWidget(this.selectFolderButton);
+        // No tabs on this screen: the list is a plain widget (registerTabList
+        // is only for TabManager-owned lists and would never render here).
+        this.saveList = this.addRenderableWidget(new LocalSaveSelectionList(this.minecraft, 0, 0, 0, 36, this));
+        this.saveList.setSaves(this.localSaves, this.selectedSave == null ? null : this.selectedSave.id());
 
         this.repositionElements();
         this.updateButtons();
@@ -71,9 +72,12 @@ public final class ReplaceSharedWorldScreen extends link.sharedworld.versioned.V
         this.layout.arrangeElements();
         int top = this.layout.getHeaderHeight();
         int contentHeight = this.height - this.layout.getFooterHeight() - top;
-        this.saveList.setPosition(CONTENT_MARGIN, top + CONTENT_MARGIN);
-        this.saveList.setWidth(this.width - CONTENT_MARGIN * 2);
-        this.saveList.setHeight(contentHeight - CONTENT_MARGIN * 2 - 42);
+        this.saveList.sharedworldSetBounds(
+                CONTENT_MARGIN,
+                top + CONTENT_MARGIN,
+                this.width - CONTENT_MARGIN * 2,
+                contentHeight - CONTENT_MARGIN * 2 - 42
+        );
         this.selectFolderButton.setPosition((this.width - this.selectFolderButton.getWidth()) / 2,
                 top + contentHeight - CONTENT_MARGIN - 20);
     }

@@ -57,7 +57,6 @@ public final class DeleteSharedWorldProgressScreen extends link.sharedworld.vers
         this.sharedworldRenderMenuBackground(guiGraphics);
         super.render(guiGraphics, mouseX, mouseY, partialTick);
         SharedWorldProgressRenderer.renderCentered(guiGraphics, this.font, this.width, this.height, this.progressState, partialTick);
-        guiGraphics.drawCenteredString(this.font, Component.translatable("screen.sharedworld.progress_cannot_cancel"), this.width / 2, this.height - 34, 0xFF8EA3BC);
     }
 
     private void startDeleteFlow() {
@@ -79,9 +78,7 @@ public final class DeleteSharedWorldProgressScreen extends link.sharedworld.vers
                         ));
                     } else {
                         SharedWorldClient.releaseCoordinator().discardPendingReleaseIfMatches(this.world.id());
-                        this.parent.onChildOperationFinished(this.ownerDelete
-                                ? SharedWorldText.string("screen.sharedworld.operation_deleted_world", displayName(this.world))
-                                : SharedWorldText.string("screen.sharedworld.operation_left_world", displayName(this.world)));
+                        this.parent.onChildOperationFinished(null, null);
                         link.sharedworld.versioned.GuiCompat.clearFocus(this.parent);
                         link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, this.parent);
                     }
