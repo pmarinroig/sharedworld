@@ -79,6 +79,8 @@ public final class SharedWorldHostingManager {
     private volatile long lastHeartbeatAttemptAt;
     private volatile int consecutiveHeartbeatFailures;
     private volatile long lastAutosaveAt;
+    /** Last settings revision pushed to the live server; -1 = none this session. */
+    private volatile long appliedSettingsRevision = -1;
     private volatile long startupAttemptId;
     private volatile long hostSessionGeneration;
     private volatile SharedWorldProgressState progressState;
@@ -254,6 +256,7 @@ public final class SharedWorldHostingManager {
         this.lastHeartbeatAttemptAt = 0L;
         this.consecutiveHeartbeatFailures = 0;
         this.lastAutosaveAt = 0L;
+        this.appliedSettingsRevision = -1;
         this.startupProgressRelayActive = false;
         this.startupStarted.set(true);
         this.saveInFlight.set(0L);
@@ -519,6 +522,23 @@ public final class SharedWorldHostingManager {
         );
         SharedWorldDevSessionBridge.setHostedMemberGrants(grants);
         this.events.onHostedMemberPermissionsChanged();
+    }
+
+    /**
+     * Owner-hosting shortcut: when the owner saves world settings while hosting
+     * that world themselves, apply them to the live server immediately. The
+     * next heartbeat may re-apply the same values, which is harmless.
+     */
+    public void applyLocalWorldSettingsChange(String worldId, SharedWorldModels.WorldSettingsDto settings) {
+        ActiveHostSession session = activeHostSession();
+        if (session == null
+                || worldId == null
+                || !worldId.equals(session.worldId())
+                || !SharedWorldDevSessionBridge.isHostingSharedWorld()
+                || settings == null) {
+            return;
+        }
+        this.events.onWorldSettingsChanged(settings);
     }
 
     public void beginCoordinatedRelease() {
@@ -788,11 +808,30 @@ public final class SharedWorldHostingManager {
                 && confirmedJoinTarget.equals(this.publishedJoinTarget)) {
             this.lastAutosaveAt = this.lastHeartbeatAt;
             saveHostRecoveryMarker();
+            this.appliedSettingsRevision = -1;
             SharedWorldDevSessionBridge.setHostingSharedWorld(true, this.world.ownerUuid());
             this.events.onHostSessionLive(this.world.id(), this.world.name());
             setPhase(Phase.RUNNING, SharedWorldText.string("screen.sharedworld.hosting_live_at", confirmedJoinTarget));
         }
         applyHeartbeatMemberships(runtime.memberships());
+        applyHeartbeatSettings(runtime.settings(), runtime.settingsRevision());
+    }
+
+    /**
+     * Apply owner-chosen world settings carried by the heartbeat. The revision
+     * starts unapplied on every host session, so the first live heartbeat
+     * configures the freshly booted server and later bumps reach it within one
+     * heartbeat interval.
+     */
+    private void applyHeartbeatSettings(SharedWorldModels.WorldSettingsDto settings, Long settingsRevision) {
+        if (settings == null || settingsRevision == null || !SharedWorldDevSessionBridge.isHostingSharedWorld()) {
+            return;
+        }
+        if (settingsRevision == this.appliedSettingsRevision) {
+            return;
+        }
+        this.appliedSettingsRevision = settingsRevision;
+        this.events.onWorldSettingsChanged(settings);
     }
 
     /**

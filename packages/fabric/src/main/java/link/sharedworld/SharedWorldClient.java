@@ -253,6 +253,17 @@ public final class SharedWorldClient implements ClientModInitializer {
         }
 
         @Override
+        public void onWorldSettingsChanged(link.sharedworld.api.SharedWorldModels.WorldSettingsDto settings) {
+            var server = Minecraft.getInstance().getSingleplayerServer();
+            if (server == null) {
+                return;
+            }
+            // Difficulty/gamerule setters must run on the server thread; the
+            // heartbeat callback arrives on the client main thread.
+            server.execute(() -> link.sharedworld.host.WorldSettingsApplier.apply(server, settings));
+        }
+
+        @Override
         public void onWorldDeleted() {
             releaseCoordinator.onWorldDeleted();
         }

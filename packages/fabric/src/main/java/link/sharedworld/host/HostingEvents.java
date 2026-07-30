@@ -27,6 +27,10 @@ public interface HostingEvents {
     default void onHostedMemberPermissionsChanged() {
     }
 
+    /** The owner's world settings (difficulty, game mode, gamerules) should be applied to the live server. */
+    default void onWorldSettingsChanged(link.sharedworld.api.SharedWorldModels.WorldSettingsDto settings) {
+    }
+
     /** The backend reported the hosted world as deleted. */
     default void onWorldDeleted() {
     }

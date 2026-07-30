@@ -165,6 +165,13 @@ public final class SharedWorldApiClient {
         return request("PATCH", "/worlds/" + worldId, body, WorldDetailsDto.class, true);
     }
 
+    public WorldDetailsDto putWorldSettings(String worldId, SharedWorldModels.WorldSettingsDto settings) throws IOException, InterruptedException {
+        ensureSession();
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("settings", settings);
+        return request("PUT", "/worlds/" + worldId + "/settings", body, WorldDetailsDto.class, true);
+    }
+
     public StorageLinkSessionDto createStorageLink() throws IOException, InterruptedException {
         return createStorageLink(false);
     }

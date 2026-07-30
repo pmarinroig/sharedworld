@@ -33,6 +33,10 @@ public final class NbtCompat {
         return tag.contains(key) ? tag.getInt(key) : defaultValue;
     }
 
+    public static byte getByteOr(CompoundTag tag, String key, byte defaultValue) {
+        return tag.contains(key) ? tag.getByte(key) : defaultValue;
+    }
+
     public static long getLongOr(CompoundTag tag, String key, long defaultValue) {
         return tag.contains(key) ? tag.getLong(key) : defaultValue;
     }

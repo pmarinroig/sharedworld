@@ -120,8 +120,41 @@ public final class SharedWorldModels {
             WorldMembershipDto membership,
             WorldMembershipDto[] memberships,
             StorageUsageSummaryDto storageUsage,
-            InviteCodeDto activeInviteCode
+            InviteCodeDto activeInviteCode,
+            WorldSettingsDto settings,
+            Long settingsRevision
     ) {
+        /** Pre-settings arity: callers without settings knowledge leave both fields null. */
+        public WorldDetailsDto(
+                String id,
+                String slug,
+                String name,
+                String ownerUuid,
+                String motd,
+                String customIconStorageKey,
+                SignedBlobUrlDto customIconDownload,
+                int memberCount,
+                String status,
+                String lastSnapshotId,
+                String lastSnapshotAt,
+                String activeHostUuid,
+                String activeHostPlayerName,
+                String activeJoinTarget,
+                int onlinePlayerCount,
+                String[] onlinePlayerNames,
+                String storageProvider,
+                boolean storageLinked,
+                String storageAccountEmail,
+                WorldMembershipDto membership,
+                WorldMembershipDto[] memberships,
+                StorageUsageSummaryDto storageUsage,
+                InviteCodeDto activeInviteCode
+        ) {
+            this(id, slug, name, ownerUuid, motd, customIconStorageKey, customIconDownload, memberCount, status,
+                    lastSnapshotId, lastSnapshotAt, activeHostUuid, activeHostPlayerName, activeJoinTarget,
+                    onlinePlayerCount, onlinePlayerNames, storageProvider, storageLinked, storageAccountEmail,
+                    membership, memberships, storageUsage, activeInviteCode, null, null);
+        }
     }
 
     public record CreateWorldResultDto(
@@ -173,6 +206,18 @@ public final class SharedWorldModels {
             String linkedAccountEmail,
             String accountDisplayName,
             String errorMessage
+    ) {
+    }
+
+    /**
+     * Owner-chosen world settings. Absent fields mean "no override". The
+     * gamerule keys are the backend's version-independent ids (see
+     * link.sharedworld.host.SharedWorldGameRule).
+     */
+    public record WorldSettingsDto(
+            String difficulty,
+            String defaultGameMode,
+            java.util.Map<String, Boolean> gamerules
     ) {
     }
 
@@ -549,8 +594,34 @@ public final class SharedWorldModels {
             StartupProgressDto startupProgress,
             UncleanShutdownWarningDto uncleanShutdownWarning,
             String hostMinecraftVersion,
-            HostHeartbeatMembershipDto[] memberships
+            HostHeartbeatMembershipDto[] memberships,
+            WorldSettingsDto settings,
+            Long settingsRevision
     ) {
+        /** Pre-settings arity: callers without settings knowledge leave both fields null. */
+        public HostHeartbeatResponseDto(
+                String worldId,
+                String phase,
+                long runtimeEpoch,
+                String hostUuid,
+                String hostPlayerName,
+                String candidateUuid,
+                String candidatePlayerName,
+                String joinTarget,
+                String startupDeadlineAt,
+                String runtimeTokenIssuedAt,
+                String lastProgressAt,
+                String revokedAt,
+                StartupProgressDto startupProgress,
+                UncleanShutdownWarningDto uncleanShutdownWarning,
+                String hostMinecraftVersion,
+                HostHeartbeatMembershipDto[] memberships
+        ) {
+            this(worldId, phase, runtimeEpoch, hostUuid, hostPlayerName, candidateUuid, candidatePlayerName,
+                    joinTarget, startupDeadlineAt, runtimeTokenIssuedAt, lastProgressAt, revokedAt,
+                    startupProgress, uncleanShutdownWarning, hostMinecraftVersion, memberships, null, null);
+        }
+
         public WorldRuntimeStatusDto toRuntimeStatus() {
             return new WorldRuntimeStatusDto(
                     worldId,

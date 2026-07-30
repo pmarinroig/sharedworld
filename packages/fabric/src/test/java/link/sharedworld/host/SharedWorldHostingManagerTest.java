@@ -347,6 +347,83 @@ final class SharedWorldHostingManagerTest {
     }
 
     @Test
+    void heartbeatSettingsApplyOncePerRevisionAndOnLocalSave() throws Exception {
+        java.util.List<SharedWorldModels.WorldSettingsDto> applied = new java.util.ArrayList<>();
+        HostingEvents events = new HostingEvents() {
+            @Override
+            public void onWorldSettingsChanged(SharedWorldModels.WorldSettingsDto settings) {
+                applied.add(settings);
+            }
+        };
+        SharedWorldHostingManager manager = new SharedWorldHostingManager(
+                apiClient(),
+                new ManagedWorldStore(this.tempDir.resolve("managed-heartbeat-settings")),
+                null,
+                new RecordingWorldOpenController(),
+                new HostStartupProgressRelayController(
+                        (worldId, runtimeEpoch, hostToken, progress) -> {
+                        },
+                        Runnable::run,
+                        () -> 0L
+                ),
+                new InMemoryHostRecoveryStore(),
+                events,
+                Runnable::run,
+                Runnable::run
+        );
+
+        setField(manager, "world", world("world-1", "Handoff World"));
+        setField(manager, "hostPlayerUuid", HOST_UUID);
+        setField(manager, "runtimeEpoch", 7L);
+        setField(manager, "hostToken", "token-7");
+        setField(manager, "hostSessionGeneration", 1L);
+        setField(manager, "startupAttemptId", 7L);
+        setField(manager, "publishedJoinTarget", "join.example");
+        setField(manager, "phase", SharedWorldHostingManager.Phase.RUNNING);
+        ((AtomicBoolean) getField(manager, "startupStarted")).set(true);
+
+        SharedWorldDevSessionBridge.setHostingSharedWorld(true, HOST_UUID);
+        try {
+            Method onHeartbeatSucceeded = SharedWorldHostingManager.class.getDeclaredMethod(
+                    "onHeartbeatSucceeded",
+                    Class.forName("link.sharedworld.host.SharedWorldHostingManager$HostAttemptContext"),
+                    SharedWorldModels.HostHeartbeatResponseDto.class,
+                    String.class,
+                    boolean.class
+            );
+            onHeartbeatSucceeded.setAccessible(true);
+            SharedWorldModels.WorldSettingsDto settings =
+                    new SharedWorldModels.WorldSettingsDto("hard", "survival", java.util.Map.of("keepInventory", true));
+
+            // A world with no saved settings never fires the event.
+            onHeartbeatSucceeded.invoke(manager, hostAttemptContext(1L, 7L, "world-1", 7L, "token-7"),
+                    heartbeatResponseWithSettings("world-1", "host-live", 7L, "join.example", null, 0L), "join.example", false);
+            assertEquals(0, applied.size());
+
+            // Revision 1 applies once; the identical revision does not re-apply.
+            SharedWorldModels.HostHeartbeatResponseDto revisionOne =
+                    heartbeatResponseWithSettings("world-1", "host-live", 7L, "join.example", settings, 1L);
+            onHeartbeatSucceeded.invoke(manager, hostAttemptContext(1L, 7L, "world-1", 7L, "token-7"), revisionOne, "join.example", false);
+            onHeartbeatSucceeded.invoke(manager, hostAttemptContext(1L, 7L, "world-1", 7L, "token-7"), revisionOne, "join.example", false);
+            assertEquals(1, applied.size());
+            assertEquals("hard", applied.get(0).difficulty());
+
+            // A bumped revision applies again.
+            onHeartbeatSucceeded.invoke(manager, hostAttemptContext(1L, 7L, "world-1", 7L, "token-7"),
+                    heartbeatResponseWithSettings("world-1", "host-live", 7L, "join.example", settings, 2L), "join.example", false);
+            assertEquals(2, applied.size());
+
+            // Owner-hosting shortcut fires immediately for the hosted world only.
+            manager.applyLocalWorldSettingsChange("world-1", settings);
+            assertEquals(3, applied.size());
+            manager.applyLocalWorldSettingsChange("world-other", settings);
+            assertEquals(3, applied.size());
+        } finally {
+            SharedWorldDevSessionBridge.clear();
+        }
+    }
+
+    @Test
     void backendFinalizationMarksHostManagerAsReleasing() throws Exception {
         AtomicReference<SharedWorldModels.StartupProgressDto> relayedProgress = new AtomicReference<>();
         SharedWorldHostingManager manager = new SharedWorldHostingManager(
@@ -917,6 +994,36 @@ final class SharedWorldHostingManagerTest {
                 null,
                 null,
                 memberships
+        );
+    }
+
+    private static SharedWorldModels.HostHeartbeatResponseDto heartbeatResponseWithSettings(
+            String worldId,
+            String phase,
+            long runtimeEpoch,
+            String joinTarget,
+            SharedWorldModels.WorldSettingsDto settings,
+            Long settingsRevision
+    ) {
+        return new SharedWorldModels.HostHeartbeatResponseDto(
+                worldId,
+                phase,
+                runtimeEpoch,
+                "player-host",
+                "Host",
+                null,
+                null,
+                joinTarget,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                new SharedWorldModels.HostHeartbeatMembershipDto[0],
+                settings,
+                settingsRevision
         );
     }
 

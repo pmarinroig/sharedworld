@@ -145,6 +145,27 @@ final class EditSharedWorldDataController {
         }));
     }
 
+    void saveSettings(
+            String worldId,
+            link.sharedworld.api.SharedWorldModels.WorldSettingsDto settings,
+            Consumer<WorldDetailsDto> onSuccess,
+            Consumer<Throwable> onError
+    ) {
+        CompletableFuture.supplyAsync(() -> {
+            try {
+                return this.apiClient.putWorldSettings(worldId, settings);
+            } catch (Exception exception) {
+                throw new RuntimeException(exception);
+            }
+        }, this.ioExecutor).whenComplete((details, error) -> this.mainThreadExecutor.accept(() -> {
+            if (error != null) {
+                onError.accept(rootCause(error));
+                return;
+            }
+            onSuccess.accept(details);
+        }));
+    }
+
     static List<WorldMembershipDto> normalizedMemberships(WorldDetailsDto details) {
         List<WorldMembershipDto> memberships = details.memberships() == null
                 ? new ArrayList<>()
