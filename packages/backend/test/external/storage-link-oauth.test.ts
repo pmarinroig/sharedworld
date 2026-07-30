@@ -179,4 +179,55 @@ describe("StorageLinkDomainService Google OAuth exchange", () => {
     expect((caught as HttpError).status).toBe(410);
     expect((caught as HttpError).code).toBe("storage_link_expired");
   });
+
+  test("a grant without a refresh token for an unknown account fails the session with a consent retry", async () => {
+    const { repository, service } = freshService();
+    const sessionId = await createPendingSession(service);
+    stubGoogleFetch({
+      token: () => new Response(JSON.stringify({ access_token: "at-1", expires_in: 3600 }), { status: 200 }),
+      userinfo: () => new Response(JSON.stringify({ sub: "google-sub-new", email: "owner@gmail.com" }), { status: 200 })
+    });
+
+    let caught: unknown = null;
+    try {
+      await service.completeStorageLink(sessionId, { sessionId, code: "auth-code-1" }, new Date());
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(HttpError);
+    expect((caught as HttpError).status).toBe(409);
+    expect((caught as HttpError).code).toBe("storage_link_needs_consent");
+    const session = await repository.getStorageLinkSession(sessionId);
+    expect(session?.status).toBe("failed");
+    expect(session?.errorMessage).toContain("try connecting again");
+  });
+
+  test("a grant without a refresh token still links a known account that has one stored", async () => {
+    const { repository, service } = freshService();
+    await repository.createOrUpdateStorageAccount({
+      id: "storage-1",
+      provider: "google-drive",
+      ownerPlayerUuid: ctx.playerUuid,
+      externalAccountId: "google-sub-1",
+      email: "owner@gmail.com",
+      displayName: "Owner",
+      accessToken: "old-at",
+      refreshToken: "stored-rt",
+      tokenExpiresAt: "2026-01-01T00:00:00.000Z",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    const sessionId = await createPendingSession(service);
+    stubGoogleFetch({
+      token: () => new Response(JSON.stringify({ access_token: "at-2", expires_in: 3600 }), { status: 200 }),
+      userinfo: () => new Response(JSON.stringify({ sub: "google-sub-1", email: "owner@gmail.com" }), { status: 200 })
+    });
+
+    const linked = await service.completeStorageLink(sessionId, { sessionId, code: "auth-code-1" }, new Date());
+
+    expect(linked.status).toBe("linked");
+    const account = await repository.findStorageAccountByExternalId("google-drive", "google-sub-1");
+    expect(account?.accessToken).toBe("at-2");
+    expect(account?.refreshToken).toBe("stored-rt");
+  });
 });

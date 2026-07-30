@@ -1,6 +1,7 @@
 import {
   STORAGE_LINK_TTL_MS,
   type CreateStorageLinkRequest,
+  type StorageAccountSummary,
   type StorageLinkCompleteRequest,
   type StorageLinkSession,
   type StorageProviderType
@@ -24,7 +25,14 @@ export class StorageLinkDomainService {
     const state = randomId("state");
     const completedAt = now.toISOString();
     const expiresAt = new Date(now.getTime() + STORAGE_LINK_TTL_MS).toISOString();
-    const authUrl = this.buildStorageAuthUrl(id, state);
+    // Google issues a refresh token only on a consent-screen grant. Skip the
+    // consent screen when the player already holds a refreshable account for
+    // this provider; force it when they don't (or when the client asks to
+    // recover a broken account).
+    const hasRefreshableAccount = (await this.repository.findStorageAccountsByOwner(provider, ctx.playerUuid))
+      .some((account) => account.refreshToken != null);
+    const forceConsent = request.forceConsent === true || !hasRefreshableAccount;
+    const authUrl = this.buildStorageAuthUrl(id, state, forceConsent);
     await this.repository.createStorageLinkSession({
       id,
       provider,
@@ -94,6 +102,19 @@ export class StorageLinkDomainService {
     }
 
     const account = await this.exchangeGoogleAuth(session, request, now);
+    if (account.refreshToken == null) {
+      // Google granted a session but no refresh token (an account we have never
+      // seen through the consent screen, or one whose grant was revoked). The
+      // link would break as soon as the access token expires, so fail now with
+      // a retry the client turns into a forced-consent attempt.
+      const message = "Google didn't give SharedWorld lasting access to this account. Return to Minecraft and try connecting again.";
+      await this.repository.updateStorageLinkSession(sessionId, {
+        status: "failed",
+        errorMessage: message,
+        completedAt: now.toISOString()
+      });
+      throw new HttpError(409, "storage_link_needs_consent", message);
+    }
     await this.repository.updateStorageLinkSession(sessionId, {
       status: "linked",
       linkedAccountEmail: account.email,
@@ -107,6 +128,23 @@ export class StorageLinkDomainService {
       throw new HttpError(500, "storage_link_missing", "Storage link completion failed.");
     }
     return summarizeStorageLinkSession(refreshed);
+  }
+
+  /**
+   * The caller's reusable storage account for this provider, preferring one
+   * whose authorization can still refresh. `healthy: false` tells the client
+   * a fresh (forced-consent) link is needed before the account can be used.
+   */
+  async getStorageAccountSummary(ctx: RequestContext): Promise<StorageAccountSummary> {
+    const accounts = await this.repository.findStorageAccountsByOwner(this.provider, ctx.playerUuid);
+    const best = accounts.find((account) => account.refreshToken != null) ?? accounts[0] ?? null;
+    return {
+      linked: best != null,
+      provider: this.provider,
+      email: best?.email ?? null,
+      displayName: best?.displayName ?? null,
+      healthy: best?.refreshToken != null
+    };
   }
 
   async requireCompletedLinkSession(ctx: RequestContext, sessionId: string): Promise<StorageLinkSessionRecord> {
@@ -128,7 +166,7 @@ export class StorageLinkDomainService {
     return session;
   }
 
-  private buildStorageAuthUrl(sessionId: string, state: string): string {
+  private buildStorageAuthUrl(sessionId: string, state: string, forceConsent: boolean): string {
     const redirectUri = this.env.GOOGLE_OAUTH_REDIRECT_URI ?? `${this.env.PUBLIC_BASE_URL ?? "http://127.0.0.1:8787"}/storage/google/callback`;
     if ((this.env.ALLOW_DEV_GOOGLE_OAUTH ?? "").toLowerCase() === "true") {
       const mockEmail = encodeURIComponent(this.env.DEV_GOOGLE_EMAIL ?? "dev-google@example.com");
@@ -140,10 +178,12 @@ export class StorageLinkDomainService {
       redirect_uri: redirectUri,
       response_type: "code",
       access_type: "offline",
-      prompt: "consent",
       scope: this.env.GOOGLE_OAUTH_SCOPES ?? "openid email profile https://www.googleapis.com/auth/drive.appdata",
       state: `${sessionId}:${state}`
     });
+    if (forceConsent) {
+      params.set("prompt", "consent");
+    }
     return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
   }
 

@@ -239,7 +239,18 @@ export class GoogleDriveStorageProvider implements StorageProvider {
       })
     });
     if (!response.ok) {
-      throw new HttpError(401, "drive_reauth_required", "Failed to refresh Google Drive authorization.");
+      const detail = await response.json().catch(() => null) as { error?: string } | null;
+      if (detail?.error === "invalid_grant") {
+        // The stored refresh token was revoked or expired at Google. Drop it so
+        // the account reports unhealthy and the client asks for a fresh
+        // (forced-consent) Google Drive connection instead of retrying forever.
+        await this.repository.createOrUpdateStorageAccount({
+          ...account,
+          refreshToken: null,
+          updatedAt: new Date().toISOString()
+        });
+      }
+      throw new HttpError(401, "drive_reauth_required", "Google Drive access needs to be renewed. Connect Google Drive again from Minecraft, then retry.");
     }
     const payload = await response.json() as { access_token: string; expires_in: number };
     const updated = await this.repository.createOrUpdateStorageAccount({

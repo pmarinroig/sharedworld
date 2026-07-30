@@ -3,7 +3,12 @@ import type {
   CreateWorldResult,
   StorageUsageSummary,
   UpdateWorldRequest,
+  UpdateWorldSettingsRequest,
+  WorldDefaultGameMode,
   WorldDetails,
+  WorldDifficulty,
+  WorldGameRule,
+  WorldSettings,
   WorldSummary
 } from "../../../shared/src/index.ts";
 
@@ -33,7 +38,7 @@ export async function createWorld(
   now: Date
 ): Promise<CreateWorldResult> {
   const name = requireValidWorldName(request.name);
-  if (request.storageLinkSessionId && (request.importSource?.type !== "local-save" || !request.importSource.id.trim())) {
+  if ((request.storageLinkSessionId || request.useLinkedStorageAccount) && (request.importSource?.type !== "local-save" || !request.importSource.id.trim())) {
     throw new HttpError(400, "invalid_import_source", "A local save import source is required.");
   }
   const binding: StorageBinding = request.storageLinkSessionId
@@ -41,7 +46,9 @@ export async function createWorld(
       const link = await svc.storageLinks.requireCompletedLinkSession(ctx, request.storageLinkSessionId!);
       return { provider: link.provider, storageAccountId: link.storageAccountId };
     })()
-    : { provider: svc.storageProvider.provider, storageAccountId: null };
+    : request.useLinkedStorageAccount
+      ? await resolveLinkedStorageBinding(svc, ctx)
+      : { provider: svc.storageProvider.provider, storageAccountId: null };
   const motd = normalizeMotd(request.motdLine1 ?? null, request.motdLine2 ?? null);
   const world = await svc.repository.createWorld(ctx, name, slugify(name), binding, motd, null);
   if (request.customIconPngBase64) {
@@ -105,6 +112,22 @@ export async function updateWorld(
     binding,
     world.customIconStorageKey !== updated.customIconStorageKey ? world.customIconStorageKey : null
   );
+  return hydrateWorldDetails(svc, updated, ctx.requestOrigin);
+}
+
+export async function updateWorldSettings(
+  svc: ServiceContext,
+  ctx: RequestContext,
+  worldId: string,
+  request: UpdateWorldSettingsRequest
+): Promise<WorldDetails> {
+  const world = await requireWorldDetails(svc, worldId, ctx.playerUuid);
+  requireOwner(world, ctx, "change world settings");
+  const settings = validateWorldSettings(request.settings);
+  if (!await svc.repository.updateWorldSettings(worldId, JSON.stringify(settings))) {
+    throw new HttpError(404, "world_not_found", "This Shared World no longer exists.");
+  }
+  const updated = await requireWorldDetails(svc, worldId, ctx.playerUuid);
   return hydrateWorldDetails(svc, updated, ctx.requestOrigin);
 }
 
@@ -185,6 +208,63 @@ async function storeCustomIcon(svc: ServiceContext, binding: StorageBinding, ico
     await svc.storageProvider.put(binding, storageKey, bytes, "image/png");
   }
   return storageKey;
+}
+
+/**
+ * Bind a new world to the caller's already-linked storage account. Only an
+ * account that can still refresh its authorization qualifies; anything else
+ * must go through a fresh link session.
+ */
+async function resolveLinkedStorageBinding(svc: ServiceContext, ctx: RequestContext): Promise<StorageBinding> {
+  const accounts = await svc.repository.findStorageAccountsByOwner(svc.storageProvider.provider, ctx.playerUuid);
+  const account = accounts.find((candidate) => candidate.refreshToken != null);
+  if (!account) {
+    throw new HttpError(409, "storage_not_linked", "Google Drive isn't connected yet. Connect it and try again.");
+  }
+  return { provider: account.provider, storageAccountId: account.id };
+}
+
+const WORLD_DIFFICULTIES: readonly WorldDifficulty[] = ["peaceful", "easy", "normal", "hard"];
+const WORLD_DEFAULT_GAME_MODES: readonly WorldDefaultGameMode[] = ["survival", "creative", "adventure"];
+const WORLD_GAME_RULES: readonly WorldGameRule[] = ["keepInventory", "mobGriefing", "daylightCycle", "weatherCycle", "pvp"];
+
+/** Whitelist validation: reject unknown fields/values instead of storing them. */
+function validateWorldSettings(raw: WorldSettings | undefined): WorldSettings {
+  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new HttpError(400, "invalid_world_settings", "World settings are missing or malformed.");
+  }
+  const settings: WorldSettings = {};
+  for (const key of Object.keys(raw)) {
+    if (key !== "difficulty" && key !== "defaultGameMode" && key !== "gamerules") {
+      throw new HttpError(400, "invalid_world_settings", `Unknown world setting "${key}".`);
+    }
+  }
+  if (raw.difficulty !== undefined) {
+    if (!WORLD_DIFFICULTIES.includes(raw.difficulty)) {
+      throw new HttpError(400, "invalid_world_settings", "That difficulty isn't one of the supported values.");
+    }
+    settings.difficulty = raw.difficulty;
+  }
+  if (raw.defaultGameMode !== undefined) {
+    if (!WORLD_DEFAULT_GAME_MODES.includes(raw.defaultGameMode)) {
+      throw new HttpError(400, "invalid_world_settings", "That game mode isn't one of the supported values.");
+    }
+    settings.defaultGameMode = raw.defaultGameMode;
+  }
+  if (raw.gamerules !== undefined) {
+    if (raw.gamerules == null || typeof raw.gamerules !== "object" || Array.isArray(raw.gamerules)) {
+      throw new HttpError(400, "invalid_world_settings", "World settings are missing or malformed.");
+    }
+    const gamerules: Partial<Record<WorldGameRule, boolean>> = {};
+    for (const [rule, value] of Object.entries(raw.gamerules)) {
+      if (!WORLD_GAME_RULES.includes(rule as WorldGameRule) || typeof value !== "boolean") {
+        throw new HttpError(400, "invalid_world_settings", `Unknown game rule "${rule}".`);
+      }
+      gamerules[rule as WorldGameRule] = value;
+    }
+    settings.gamerules = gamerules;
+  }
+  return settings;
 }
 
 const MAX_WORLD_NAME_LENGTH = 128;

@@ -358,8 +358,9 @@ export async function heartbeatHost(
 
 /**
  * The heartbeat response is a FLAT superset of WorldRuntimeStatus: the host uses
- * the membership list to keep in-game command permissions current, while older
- * clients bind the same body to WorldRuntimeStatus and ignore the extra field.
+ * the membership list to keep in-game command permissions current and the world
+ * settings to keep its running server configured, while older clients bind the
+ * same body to WorldRuntimeStatus and ignore the extra fields.
  */
 async function withHeartbeatMemberships(
   svc: ServiceContext,
@@ -371,7 +372,13 @@ async function withHeartbeatMemberships(
     playerName: member.playerName,
     canUseCommands: member.canUseCommands
   }));
-  return { ...status, memberships };
+  const worldSettings = await svc.repository.getWorldSettings(worldId);
+  return {
+    ...status,
+    memberships,
+    settings: worldSettings?.settings ?? null,
+    settingsRevision: worldSettings?.settingsRevision ?? 0
+  };
 }
 
 /**

@@ -71,6 +71,37 @@ export interface StorageUsageSummary {
   accountEmail: string | null;
 }
 
+export type WorldDifficulty = "peaceful" | "easy" | "normal" | "hard";
+export type WorldDefaultGameMode = "survival" | "creative" | "adventure";
+/** SharedWorld's own gamerule ids; each version bucket maps them onto that Minecraft version's rules. */
+export type WorldGameRule = "keepInventory" | "mobGriefing" | "daylightCycle" | "weatherCycle" | "pvp";
+
+/**
+ * Owner-chosen world settings. Absent fields mean "no override": the world
+ * keeps whatever its level.dat already says. Applied by the active host's
+ * client on its running server, so they take effect while playing and are
+ * persisted by the normal world save.
+ */
+export interface WorldSettings {
+  difficulty?: WorldDifficulty;
+  defaultGameMode?: WorldDefaultGameMode;
+  gamerules?: Partial<Record<WorldGameRule, boolean>>;
+}
+
+export interface UpdateWorldSettingsRequest {
+  settings: WorldSettings;
+}
+
+/** The caller's linked storage account, if any (provider-level, reused across worlds). */
+export interface StorageAccountSummary {
+  linked: boolean;
+  provider: StorageProviderType;
+  email: string | null;
+  displayName: string | null;
+  /** False when the stored authorization can no longer refresh; relinking is required. */
+  healthy: boolean;
+}
+
 export interface WorldSummary {
   id: string;
   slug: string;
@@ -93,6 +124,8 @@ export interface WorldSummary {
   storageAccountEmail: string | null;
   lastSnapshotDataVersion: number | null;
   lastSnapshotMinecraftVersion: string | null;
+  settings: WorldSettings | null;
+  settingsRevision: number;
 }
 
 export interface WorldMembership {
@@ -122,6 +155,8 @@ export interface CreateWorldRequest {
   customIconPngBase64?: string | null;
   importSource?: ImportedWorldSource | null;
   storageLinkSessionId?: string | null;
+  /** Bind the world to the caller's already-linked storage account instead of a fresh link session. */
+  useLinkedStorageAccount?: boolean;
 }
 
 export interface UpdateWorldRequest {
@@ -214,11 +249,14 @@ export interface HostHeartbeatMembership {
 
 /**
  * Host heartbeat response: a FLAT superset of WorldRuntimeStatus. Older mod
- * clients bind this to WorldRuntimeStatus and ignore the extra field, so the
- * membership data must stay at the top level (never nested).
+ * clients bind this to WorldRuntimeStatus and ignore the extra fields, so the
+ * membership and settings data must stay at the top level (never nested
+ * inside a wrapper object).
  */
 export interface HostHeartbeatResponse extends WorldRuntimeStatus {
   memberships: HostHeartbeatMembership[];
+  settings: WorldSettings | null;
+  settingsRevision: number;
 }
 
 export interface EnterSessionRequest {
@@ -487,6 +525,8 @@ export interface DownloadPlan {
 export interface CreateStorageLinkRequest {
   provider?: StorageProviderType;
   importSource?: ImportedWorldSource | null;
+  /** Force the full Google consent screen (used to recover an account whose stored authorization broke). */
+  forceConsent?: boolean;
 }
 
 export interface StorageLinkSession {

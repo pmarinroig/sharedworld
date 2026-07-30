@@ -233,6 +233,71 @@ describe("GoogleDriveStorageProvider", () => {
     expect(account?.accessToken).toBe("refreshed-token");
   });
 
+  test("a rejected refresh with invalid_grant drops the stored refresh token", async () => {
+    const fixture = freshProviderFixture();
+    await fixture.seedAccount();
+    // Expire the access token so the provider must refresh before any Drive call.
+    const seeded = await fixture.repository.getStorageAccount(fixture.accountId);
+    await fixture.repository.createOrUpdateStorageAccount({
+      ...seeded!,
+      tokenExpiresAt: new Date(Date.now() - 60_000).toISOString()
+    });
+    const originalFetch = globalThis.fetch;
+    const fetchStub = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.startsWith("https://oauth2.googleapis.com/token")) {
+        return new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 });
+      }
+      return originalFetch(input, init);
+    }) as typeof fetch;
+    globalThis.fetch = fetchStub;
+    let caught: unknown = null;
+    try {
+      await fixture.provider.put(fixture.binding, "worlds/w1/a.bin", "data", "application/octet-stream");
+    } catch (error) {
+      caught = error;
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect((caught as HttpError).code).toBe("drive_reauth_required");
+    const account = await fixture.repository.getStorageAccount(fixture.accountId);
+    expect(account?.refreshToken).toBeNull();
+    // No Drive traffic happened with a dead authorization.
+    expect(requests).toHaveLength(0);
+  });
+
+  test("a rejected refresh without invalid_grant keeps the stored refresh token", async () => {
+    const fixture = freshProviderFixture();
+    await fixture.seedAccount();
+    const seeded = await fixture.repository.getStorageAccount(fixture.accountId);
+    await fixture.repository.createOrUpdateStorageAccount({
+      ...seeded!,
+      tokenExpiresAt: new Date(Date.now() - 60_000).toISOString()
+    });
+    const originalFetch = globalThis.fetch;
+    const fetchStub = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.startsWith("https://oauth2.googleapis.com/token")) {
+        return new Response(null, { status: 503 });
+      }
+      return originalFetch(input, init);
+    }) as typeof fetch;
+    globalThis.fetch = fetchStub;
+    let caught: unknown = null;
+    try {
+      await fixture.provider.put(fixture.binding, "worlds/w1/a.bin", "data", "application/octet-stream");
+    } catch (error) {
+      caught = error;
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect((caught as HttpError).code).toBe("drive_reauth_required");
+    const account = await fixture.repository.getStorageAccount(fixture.accountId);
+    expect(account?.refreshToken).toBe("refresh-token-1");
+  });
+
   test("quota parses the storageQuota payload", async () => {
     const fixture = freshProviderFixture();
     await fixture.seedAccount();

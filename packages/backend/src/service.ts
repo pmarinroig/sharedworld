@@ -26,10 +26,12 @@ import type {
   ResetInviteResponse,
   SnapshotActionResult,
   SnapshotManifest,
+  StorageAccountSummary,
   StorageLinkCompleteRequest,
   StorageUsageSummary,
   UpdateMemberPermissionsRequest,
   UpdateWorldRequest,
+  UpdateWorldSettingsRequest,
   UploadPlanRequest,
   WorldDetails,
   WorldMembership,
@@ -116,6 +118,10 @@ export class SharedWorldService {
     return this.svc.storageLinks.completeStorageLink(sessionId, request, now);
   }
 
+  async getStorageAccount(ctx: RequestContext): Promise<StorageAccountSummary> {
+    return this.svc.storageLinks.getStorageAccountSummary(ctx);
+  }
+
   // --- worlds ---
 
   async listWorlds(ctx: RequestContext): Promise<WorldSummary[]> {
@@ -132,6 +138,10 @@ export class SharedWorldService {
 
   async updateWorld(ctx: RequestContext, worldId: string, request: UpdateWorldRequest): Promise<WorldDetails> {
     return worlds.updateWorld(this.svc, ctx, worldId, request);
+  }
+
+  async updateWorldSettings(ctx: RequestContext, worldId: string, request: UpdateWorldSettingsRequest): Promise<WorldDetails> {
+    return worlds.updateWorldSettings(this.svc, ctx, worldId, request);
   }
 
   async deleteWorld(ctx: RequestContext, worldId: string, now = new Date()): Promise<void> {

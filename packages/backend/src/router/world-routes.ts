@@ -1,4 +1,4 @@
-import type { CreateWorldRequest, RedeemInviteRequest, UpdateMemberPermissionsRequest, UpdateWorldRequest } from "../../../shared/src/index.ts";
+import type { CreateWorldRequest, RedeemInviteRequest, UpdateMemberPermissionsRequest, UpdateWorldRequest, UpdateWorldSettingsRequest } from "../../../shared/src/index.ts";
 
 import { json, ok, readJson } from "../http.ts";
 import type { RouterService } from "./shared.ts";
@@ -17,6 +17,7 @@ export function worldRoutes(
     | "resetInvite"
     | "setMemberCommandPermission"
     | "updateWorld"
+    | "updateWorldSettings"
   >
 ): RouteDefinition[] {
   return [
@@ -44,6 +45,13 @@ export function worldRoutes(
       auth: true,
       handler: async (request, params, ctx) =>
         json(await service.updateWorld(ctx, requireParam(params.worldId, "worldId"), await readJson<UpdateWorldRequest>(request)))
+    },
+    {
+      method: "PUT",
+      pattern: new UrlPattern({ pathname: "/worlds/:worldId/settings" }),
+      auth: true,
+      handler: async (request, params, ctx) =>
+        json(await service.updateWorldSettings(ctx, requireParam(params.worldId, "worldId"), await readJson<UpdateWorldSettingsRequest>(request)))
     },
     {
       method: "DELETE",

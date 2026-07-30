@@ -5,9 +5,15 @@ import type { RouterService } from "./shared.ts";
 import { renderStorageLinkPage, requireParam, RouteDefinition, UrlPattern } from "./shared.ts";
 
 export function storageRoutes(
-  service: Pick<RouterService, "cancelStorageLink" | "completeStorageLink" | "createStorageLink" | "getStorageLinkSession">
+  service: Pick<RouterService, "cancelStorageLink" | "completeStorageLink" | "createStorageLink" | "getStorageAccount" | "getStorageLinkSession">
 ): RouteDefinition[] {
   return [
+    {
+      method: "GET",
+      pattern: new UrlPattern({ pathname: "/storage/account" }),
+      auth: true,
+      handler: async (_request, _params, ctx) => json(await service.getStorageAccount(ctx))
+    },
     {
       method: "POST",
       pattern: new UrlPattern({ pathname: "/storage/link-sessions" }),

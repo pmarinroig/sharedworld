@@ -112,7 +112,9 @@ export function worldSummaryFixture(overrides: Partial<WorldSummary> = {}): Worl
     storageLinked: overrides.storageLinked ?? false,
     storageAccountEmail: overrides.storageAccountEmail ?? null,
     lastSnapshotDataVersion: overrides.lastSnapshotDataVersion ?? null,
-    lastSnapshotMinecraftVersion: overrides.lastSnapshotMinecraftVersion ?? null
+    lastSnapshotMinecraftVersion: overrides.lastSnapshotMinecraftVersion ?? null,
+    settings: overrides.settings ?? null,
+    settingsRevision: overrides.settingsRevision ?? 0
   };
 }
 
@@ -272,6 +274,9 @@ const defaultRouterService = {
   async getSession(token) {
     return token === DEFAULT_SESSION.token ? DEFAULT_SESSION : null;
   },
+  async getStorageAccount(_ctx) {
+    return unexpectedRouteCall("getStorageAccount");
+  },
   async getStorageLinkSession(_ctx, _sessionId) {
     return unexpectedRouteCall("getStorageLinkSession");
   },
@@ -328,6 +333,9 @@ const defaultRouterService = {
   },
   async updateWorld(_ctx, _worldId, _request) {
     return unexpectedRouteCall("updateWorld");
+  },
+  async updateWorldSettings(_ctx, _worldId, _request) {
+    return unexpectedRouteCall("updateWorldSettings");
   },
   async uploadStorageBlob(_ctx, _worldId, _storageKey, _request) {
     return unexpectedRouteCall("uploadStorageBlob");

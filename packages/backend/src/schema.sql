@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS worlds (
   unclean_shutdown_runtime_epoch INTEGER,
   unclean_shutdown_recorded_at TEXT,
   last_runtime_epoch INTEGER NOT NULL DEFAULT 0,
+  settings TEXT,
+  settings_revision INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   deleted_at TEXT,
   FOREIGN KEY (owner_uuid) REFERENCES users(player_uuid)
@@ -177,6 +179,8 @@ CREATE TABLE IF NOT EXISTS storage_accounts (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_storage_accounts_owner ON storage_accounts (owner_player_uuid);
 
 CREATE TABLE IF NOT EXISTS storage_link_sessions (
   id TEXT PRIMARY KEY,

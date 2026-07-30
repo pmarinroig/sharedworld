@@ -11,6 +11,7 @@ import type {
   SnapshotManifest,
   WorldDetails,
   WorldMembership,
+  WorldSettings,
   WorldSnapshotSummary,
   WorldSummary
 } from "../../shared/src/index.ts";
@@ -231,6 +232,31 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       throw new Error("World update failed.");
     }
     return details;
+  }
+
+  async updateWorldSettings(worldId: string, settingsJson: string): Promise<boolean> {
+    const changes = await this.runWithChanges(
+      `UPDATE worlds
+       SET settings = ?, settings_revision = settings_revision + 1
+       WHERE id = ? AND deleted_at IS NULL`,
+      settingsJson,
+      worldId
+    );
+    return changes > 0;
+  }
+
+  async getWorldSettings(worldId: string): Promise<{ settings: WorldSettings | null; settingsRevision: number } | null> {
+    const row = await this.first<Row>(
+      "SELECT settings, settings_revision FROM worlds WHERE id = ? AND deleted_at IS NULL",
+      worldId
+    );
+    if (!row) {
+      return null;
+    }
+    return {
+      settings: parseWorldSettings(row.settings),
+      settingsRevision: Number(row.settings_revision ?? 0)
+    };
   }
 
   async deleteWorldForPlayer(ctx: RequestContext, worldId: string, now: Date): Promise<DeleteWorldResult> {
@@ -530,6 +556,19 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       externalAccountId
     );
     return row ? mapStorageAccount(row) : null;
+  }
+
+  async findStorageAccountsByOwner(provider: StorageProviderType, ownerPlayerUuid: string): Promise<StorageAccountRecord[]> {
+    const rows = await this.all<Row>(
+      `SELECT id, provider, owner_player_uuid, external_account_id, email, display_name,
+              access_token, refresh_token, token_expires_at, created_at, updated_at
+       FROM storage_accounts
+       WHERE provider = ? AND owner_player_uuid = ?
+       ORDER BY updated_at DESC, id DESC`,
+      provider,
+      ownerPlayerUuid
+    );
+    return rows.map(mapStorageAccount);
   }
 
   async upsertStorageObject(record: StorageObjectRecord): Promise<void> {
@@ -1382,7 +1421,7 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
 
   private async buildWorldSummary(worldId: string): Promise<WorldSummary> {
     const world = await this.first<Row>(
-      "SELECT id, slug, name, motd, custom_icon_storage_key, owner_uuid, storage_provider, storage_account_id FROM worlds WHERE id = ?",
+      "SELECT id, slug, name, motd, custom_icon_storage_key, owner_uuid, storage_provider, storage_account_id, settings, settings_revision FROM worlds WHERE id = ?",
       worldId
     );
     if (!world) {
@@ -1422,7 +1461,9 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       storageLinked: asNullableString(world.storage_account_id) != null,
       storageAccountEmail: asNullableString(
         (await this.first<Row>("SELECT email FROM storage_accounts WHERE id = ?", asNullableString(world.storage_account_id)))?.email
-      )
+      ),
+      settings: parseWorldSettings(world.settings),
+      settingsRevision: Number(world.settings_revision ?? 0)
     };
   }
 
@@ -1642,5 +1683,18 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       return null;
     }
     return runtime;
+  }
+}
+
+function parseWorldSettings(raw: unknown): WorldSettings | null {
+  const text = asNullableString(raw);
+  if (text == null) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    return typeof parsed === "object" && parsed != null && !Array.isArray(parsed) ? parsed as WorldSettings : null;
+  } catch {
+    return null;
   }
 }

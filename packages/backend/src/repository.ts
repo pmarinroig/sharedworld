@@ -14,6 +14,7 @@ import type {
   UpdateWorldRequest,
   WorldDetails,
   WorldMembership,
+  WorldSettings,
   WorldSnapshotSummary,
   WorldSummary
 } from "../../shared/src/index.ts";
@@ -121,6 +122,10 @@ export interface WorldRepository {
   ): Promise<WorldDetails>;
   getWorldDetails(worldId: string, playerUuid: string): Promise<WorldDetails | null>;
   updateWorld(ctx: RequestContext, worldId: string, request: WorldUpdateRecord): Promise<WorldDetails>;
+  /** Replace the world's settings JSON and bump its revision; false when no active world row exists. */
+  updateWorldSettings(worldId: string, settingsJson: string): Promise<boolean>;
+  /** Lightweight settings read for the host heartbeat; null when the world does not exist. */
+  getWorldSettings(worldId: string): Promise<{ settings: WorldSettings | null; settingsRevision: number } | null>;
   deleteWorldForPlayer(ctx: RequestContext, worldId: string, now: Date): Promise<DeleteWorldResult>;
   isStorageKeyReferenced(storageKey: string): Promise<boolean>;
   getWorldStorageBinding(worldId: string): Promise<WorldStorageBinding | null>;
@@ -139,6 +144,8 @@ export interface StorageRepository {
   createOrUpdateStorageAccount(account: StorageAccountRecord): Promise<StorageAccountRecord>;
   getStorageAccount(accountId: string): Promise<StorageAccountRecord | null>;
   findStorageAccountByExternalId(provider: StorageProviderType, externalAccountId: string): Promise<StorageAccountRecord | null>;
+  /** All of a player's storage accounts for a provider, most recently updated first. */
+  findStorageAccountsByOwner(provider: StorageProviderType, ownerPlayerUuid: string): Promise<StorageAccountRecord[]>;
   upsertStorageObject(record: StorageObjectRecord): Promise<void>;
   getStorageObject(provider: StorageProviderType, storageAccountId: string, storageKey: string): Promise<StorageObjectRecord | null>;
   deleteStorageObject(provider: StorageProviderType, storageAccountId: string, storageKey: string): Promise<void>;

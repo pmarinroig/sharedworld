@@ -25,6 +25,7 @@ export type RouterService = Pick<
   | "enterSession"
   | "finalizeSnapshot"
   | "getSession"
+  | "getStorageAccount"
   | "getStorageLinkSession"
   | "getWorld"
   | "heartbeatHost"
@@ -44,6 +45,7 @@ export type RouterService = Pick<
   | "setMemberCommandPermission"
   | "setPlayerPresence"
   | "updateWorld"
+  | "updateWorldSettings"
   | "uploadStorageBlob"
 >;
 
