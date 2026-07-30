@@ -68,6 +68,7 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
     private boolean accountCheckStarted;
     private FaviconTexture previewTexture;
     private ScreenRectangle contentArea;
+    private int pickListHeight = 36;
 
     private LocalSaveSelectionList saveList;
     private Button selectFolderButton;
@@ -218,20 +219,24 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         }
         ScreenRectangle area = this.contentArea;
 
-        // Pick-world step widgets: the folder button sits right above the footer
-        // (a banner draws over the list's bottom edge only while a message is
-        // live), the list ends above the button.
+        // Pick-world step widgets: the list is sized to its entries (capped at
+        // the band above the footer-anchored button position) and the folder
+        // button follows the list up instead of leaving an empty list body.
         int folderButtonHeight = 20;
-        int folderButtonY = this.height - FOOTER_HEIGHT - folderButtonHeight - 6;
+        int folderButtonYCap = this.height - FOOTER_HEIGHT - folderButtonHeight - 6;
+        int listTop = area.top() + CONTENT_MARGIN;
+        int maxListHeight = Math.max(36, folderButtonYCap - 8 - listTop);
+        int listHeight = Math.min(Math.max(36, this.localSaves.size() * 36 + 4), maxListHeight);
+        this.pickListHeight = listHeight;
         this.saveList.sharedworldSetBounds(
                 area.left() + CONTENT_MARGIN,
-                area.top() + CONTENT_MARGIN,
+                listTop,
                 area.width() - CONTENT_MARGIN * 2,
-                Math.max(36, folderButtonY - 8 - (area.top() + CONTENT_MARGIN))
+                listHeight
         );
         this.selectFolderButton.setPosition(
                 area.left() + (area.width() - this.selectFolderButton.getWidth()) / 2,
-                folderButtonY
+                Math.min(listTop + listHeight + 6, folderButtonYCap)
         );
 
         // Details step widgets.
@@ -334,11 +339,16 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
             case DETAILS -> this.renderDetailsDecorations(guiGraphics);
         }
 
-        // On the pick step the folder button occupies the strip above the footer,
-        // so the banner (folder-pick errors) draws just above the button instead.
-        int bannerBottomY = this.wizard.step() == CreateWizardModel.Step.PICK_WORLD && this.selectFolderButton != null
-                ? this.selectFolderButton.getY() - 4
-                : this.height - FOOTER_HEIGHT - 6;
+        // On the pick step the banner (folder-pick errors) prefers the freed
+        // strip below the button; when the button sits at its footer cap the
+        // strip is gone and the banner draws just above the button instead.
+        int bannerBottomY = this.height - FOOTER_HEIGHT - 6;
+        if (this.wizard.step() == CreateWizardModel.Step.PICK_WORLD && this.selectFolderButton != null) {
+            int buttonBottom = this.selectFolderButton.getY() + this.selectFolderButton.getHeight();
+            if (bannerBottomY - SharedWorldStatusBanner.BAND_HEIGHT < buttonBottom + 2) {
+                bannerBottomY = this.selectFolderButton.getY() - 4;
+            }
+        }
         this.banner.renderBottomCentered(guiGraphics, this.font, this.width / 2, bannerBottomY, Math.min(this.width - 40, 420));
         GuiBlit.footerSeparator(guiGraphics, this.height - this.layout.getFooterHeight() - 2, this.width);
     }
@@ -374,7 +384,7 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
                 this.font,
                 Component.translatable("screen.sharedworld.no_local_worlds"),
                 this.width / 2,
-                this.contentArea.top() + this.contentArea.height() / 2 - 4,
+                this.contentArea.top() + CONTENT_MARGIN + this.pickListHeight / 2 - 4,
                 0xFFFFFFFF
         );
     }
@@ -418,6 +428,8 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
             this.nameBox.setValue(save.displayName());
         }
         this.saveList.setSaves(this.localSaves, save.id());
+        // A folder pick can add an entry, and the list is sized to its content.
+        this.layoutStepWidgets();
         this.refreshPreview();
         this.updateButtons();
     }

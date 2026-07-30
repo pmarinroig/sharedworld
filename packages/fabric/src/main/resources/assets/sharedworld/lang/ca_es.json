@@ -289,7 +289,6 @@
   "screen.sharedworld.replace_progress_title": "S'està substituint el món",
   "screen.sharedworld.replace_action": "Substitueix el món",
   "screen.sharedworld.confirm_replace": "Confirma la substitució",
-  "screen.sharedworld.replace_hint": "El món seleccionat substituirà \"%s\" per a tots els membres.",
   "screen.sharedworld.replace_done": "S'ha substituït el contingut de \"%s\".",
   "screen.sharedworld.replace_blocked_busy": "Aquest món és obert ara mateix. Demana a l'amfitrió que en surti primer i torna-ho a provar.",
   "screen.sharedworld.replace_blocked_hosting": "Deixa d'hostatjar aquest món abans de substituir-lo.",

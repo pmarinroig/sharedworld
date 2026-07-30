@@ -24,13 +24,14 @@ public final class ReplaceSharedWorldScreen extends link.sharedworld.versioned.V
     private final HeaderAndFooterLayout layout = new HeaderAndFooterLayout(this, 33, 36);
     private final List<LocalSaveCatalog.LocalSaveOption> localSaves = new ArrayList<>(LocalSaveCatalog.discover());
 
+    private final SharedWorldStatusBanner banner = new SharedWorldStatusBanner();
+
     private LocalSaveSelectionList saveList;
     private Button selectFolderButton;
     private Button backButton;
     private Button replaceButton;
     private LocalSaveCatalog.LocalSaveOption selectedSave;
     private boolean confirmReplace;
-    private String message = "";
 
     public ReplaceSharedWorldScreen(EditSharedWorldScreen parent, WorldDetailsDto world) {
         super(Component.translatable("screen.sharedworld.replace_title"));
@@ -70,16 +71,22 @@ public final class ReplaceSharedWorldScreen extends link.sharedworld.versioned.V
     @Override
     protected void repositionElements() {
         this.layout.arrangeElements();
-        int top = this.layout.getHeaderHeight();
-        int contentHeight = this.height - this.layout.getFooterHeight() - top;
+        // Same shape as the create wizard's pick step: the list is sized to its
+        // entries (capped at the band above the footer-anchored button position)
+        // and the folder button follows the list up instead of leaving a dead band.
+        int listTop = this.layout.getHeaderHeight() + CONTENT_MARGIN;
+        int folderButtonHeight = 20;
+        int folderButtonYCap = this.height - this.layout.getFooterHeight() - folderButtonHeight - 6;
+        int maxListHeight = Math.max(36, folderButtonYCap - 8 - listTop);
+        int listHeight = Math.min(Math.max(36, this.localSaves.size() * 36 + 4), maxListHeight);
         this.saveList.sharedworldSetBounds(
                 CONTENT_MARGIN,
-                top + CONTENT_MARGIN,
+                listTop,
                 this.width - CONTENT_MARGIN * 2,
-                contentHeight - CONTENT_MARGIN * 2 - 42
+                listHeight
         );
         this.selectFolderButton.setPosition((this.width - this.selectFolderButton.getWidth()) / 2,
-                top + contentHeight - CONTENT_MARGIN - 20);
+                Math.min(listTop + listHeight + 6, folderButtonYCap));
     }
 
     @Override
@@ -93,26 +100,23 @@ public final class ReplaceSharedWorldScreen extends link.sharedworld.versioned.V
         this.sharedworldRenderMenuBackground(guiGraphics);
         super.render(guiGraphics, mouseX, mouseY, partialTick);
         guiGraphics.drawCenteredString(this.font, this.title, this.width / 2, 14, 0xFFFFFFFF);
-        String hint = this.message.isBlank()
-                ? SharedWorldText.string(
-                        "screen.sharedworld.replace_hint",
-                        SharedWorldText.truncate(this.font, SharedWorldText.displayWorldName(this.world.name()), 120))
-                : this.message;
-        guiGraphics.drawCenteredString(
-                this.font,
-                Component.literal(SharedWorldText.truncate(this.font, hint, this.width - 40)),
-                this.width / 2,
-                this.selectFolderButton.getY() - 12,
-                this.message.isBlank() ? 0xFFB8C5D6 : 0xFFFF6B6B
-        );
+        // Folder-pick errors surface in the shared banner: below the button when
+        // the freed strip has room, above it when the button sits at its cap.
+        int buttonBottom = this.selectFolderButton.getY() + this.selectFolderButton.getHeight();
+        int belowAnchor = this.height - this.layout.getFooterHeight() - 6;
+        int bannerBottomY = belowAnchor - SharedWorldStatusBanner.BAND_HEIGHT >= buttonBottom + 2
+                ? belowAnchor
+                : this.selectFolderButton.getY() - 4;
+        this.banner.renderBottomCentered(guiGraphics, this.font, this.width / 2, bannerBottomY, Math.min(this.width - 40, 420));
     }
 
     @Override
     public void onSaveSelected(LocalSaveCatalog.LocalSaveOption save) {
         this.selectedSave = save;
         this.confirmReplace = false;
-        this.message = "";
+        this.banner.clearSticky();
         this.saveList.setSaves(this.localSaves, save.id());
+        this.repositionElements();
         this.updateButtons();
     }
 
@@ -130,9 +134,10 @@ public final class ReplaceSharedWorldScreen extends link.sharedworld.versioned.V
                     link.sharedworld.versioned.ClientCompat.currentDataVersion()
             );
         } catch (LocalSaveFolderValidator.InvalidSaveFolderException exception) {
-            this.message = exception.getMessage();
+            this.banner.set(SharedWorldStatusBanner.Kind.ERROR, Component.literal(exception.getMessage()));
             return;
         }
+        this.banner.clearSticky();
         this.localSaves.removeIf(save -> save.directory().equals(option.directory()));
         this.localSaves.add(0, option);
         this.onSaveSelected(option);

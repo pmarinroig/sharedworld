@@ -289,7 +289,6 @@
   "screen.sharedworld.replace_progress_title": "Replacing World",
   "screen.sharedworld.replace_action": "Replace World",
   "screen.sharedworld.confirm_replace": "Confirm Replace",
-  "screen.sharedworld.replace_hint": "The selected save will replace \"%s\" for every member.",
   "screen.sharedworld.replace_done": "Replaced the content of \"%s\".",
   "screen.sharedworld.replace_blocked_busy": "This world is open right now. Ask the host to leave first, then try again.",
   "screen.sharedworld.replace_blocked_hosting": "Stop hosting this world before replacing it.",

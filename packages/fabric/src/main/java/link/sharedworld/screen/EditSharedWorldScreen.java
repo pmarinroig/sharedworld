@@ -1090,9 +1090,22 @@ public final class EditSharedWorldScreen extends VersionedScreen {
     }
 
     private int previewCardY() {
-        // Bottom-anchored above the banner band (like the create screen), so the
-        // card can never collide with the Replace button, banner, or footer.
-        return this.height - FOOTER_HEIGHT - SharedWorldStatusBanner.BAND_HEIGHT - SharedWorldServerList.ROW_HEIGHT - 2;
+        // Centered between the Replace World row and the footer so the card
+        // neither glues to the button at small heights nor drifts toward the
+        // footer at large ones. A live status banner (text-only, drawn after
+        // this card) may transiently overlap the card's lower edge at the
+        // minimum window height; there is no room to avoid that without
+        // pinning the card back against the button. The create screen keeps
+        // its bottom-anchored formula: its details step has no widget above
+        // the card, so centering there has nothing to center against.
+        int fallback = this.height - FOOTER_HEIGHT - SharedWorldStatusBanner.BAND_HEIGHT - SharedWorldServerList.ROW_HEIGHT - 2;
+        if (this.replaceWorldButton == null) {
+            return fallback;
+        }
+        int replaceBottom = this.replaceWorldButton.getY() + this.replaceWorldButton.getHeight();
+        int footerTop = this.height - FOOTER_HEIGHT;
+        int centered = replaceBottom + ((footerTop - replaceBottom) - SharedWorldServerList.ROW_HEIGHT) / 2;
+        return Math.max(replaceBottom + 6, centered);
     }
 
     private void renderServerCardPreview(GuiGraphics guiGraphics) {

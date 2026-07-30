@@ -289,7 +289,6 @@
   "screen.sharedworld.replace_progress_title": "Reemplazando mundo",
   "screen.sharedworld.replace_action": "Reemplazar mundo",
   "screen.sharedworld.confirm_replace": "Confirmar reemplazo",
-  "screen.sharedworld.replace_hint": "El mundo seleccionado reemplazará \"%s\" para todos los miembros.",
   "screen.sharedworld.replace_done": "Se ha reemplazado el contenido de \"%s\".",
   "screen.sharedworld.replace_blocked_busy": "Este mundo está abierto ahora mismo. Pídele al anfitrión que salga primero y vuelve a intentarlo.",
   "screen.sharedworld.replace_blocked_hosting": "Deja de hospedar este mundo antes de reemplazarlo.",

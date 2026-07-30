@@ -5,7 +5,6 @@ import link.sharedworld.SharedWorldText;
 import link.sharedworld.api.SharedWorldApiClient;
 import link.sharedworld.api.SharedWorldModels.WorldSummaryDto;
 import link.sharedworld.progress.SharedWorldProgressRenderer;
-import link.sharedworld.progress.SharedWorldProgressState;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
@@ -17,7 +16,7 @@ public final class DeleteSharedWorldProgressScreen extends link.sharedworld.vers
     private final SharedWorldScreen parent;
     private final WorldSummaryDto world;
     private final boolean ownerDelete;
-    private volatile SharedWorldProgressState progressState;
+    private final Component label;
     private boolean started;
 
     public DeleteSharedWorldProgressScreen(SharedWorldScreen parent, WorldSummaryDto world) {
@@ -25,14 +24,9 @@ public final class DeleteSharedWorldProgressScreen extends link.sharedworld.vers
         this.parent = parent;
         this.world = world;
         this.ownerDelete = isOwner(world);
-        this.progressState = SharedWorldProgressState.indeterminate(
-                this.title,
-                Component.translatable(this.ownerDelete
-                        ? "screen.sharedworld.delete_progress_owner"
-                        : "screen.sharedworld.delete_progress_member"),
-                "delete_request",
-                null
-        );
+        this.label = Component.translatable(this.ownerDelete
+                ? "screen.sharedworld.delete_progress_owner"
+                : "screen.sharedworld.delete_progress_member");
     }
 
     @Override
@@ -56,7 +50,11 @@ public final class DeleteSharedWorldProgressScreen extends link.sharedworld.vers
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
         this.sharedworldRenderMenuBackground(guiGraphics);
         super.render(guiGraphics, mouseX, mouseY, partialTick);
-        SharedWorldProgressRenderer.renderCentered(guiGraphics, this.font, this.width, this.height, this.progressState, partialTick);
+        // The delete is a single opaque request, so the bar carries a full-width
+        // activity highlight instead of a fill fraction.
+        SharedWorldProgressRenderer.renderCenteredBar(
+                guiGraphics, this.font, this.width, this.height,
+                this.title, this.label, 0.0F, 0.0F, 1.0F, partialTick);
     }
 
     private void startDeleteFlow() {
