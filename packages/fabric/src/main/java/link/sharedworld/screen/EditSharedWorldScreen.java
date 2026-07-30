@@ -40,6 +40,7 @@ import java.util.function.Consumer;
 public final class EditSharedWorldScreen extends VersionedScreen {
     private static final int FOOTER_HEIGHT = 36;
     private static final int CONTENT_MARGIN = 12;
+    private static final String EDIT_ICON_SPRITE = "sharedworld:edit_icon";
     private static final String EDIT_ICON_HIGHLIGHTED_SPRITE = "sharedworld:edit_icon_highlighted";
     private static final String DELETE_ICON_HIGHLIGHTED_SPRITE = "sharedworld:delete_icon_highlighted";
     private static final String PING_5_SPRITE = "minecraft:server_list/ping_5";
@@ -259,7 +260,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         if (this.contentArea != null) {
             this.renderActiveTabDecorations(guiGraphics);
         }
-        this.statusBanner.renderBottomCentered(guiGraphics, this.font, this.width / 2, this.height - 40, Math.min(this.width - 40, 420));
+        this.statusBanner.renderBottomCentered(guiGraphics, this.font, this.width / 2, this.height - FOOTER_HEIGHT - 6, Math.min(this.width - 40, 420));
     }
 
     void onSnapshotSelected(WorldSnapshotSummaryDto snapshot) {
@@ -320,9 +321,15 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         int iconX = this.iconAreaX();
         int iconY = this.iconAreaY();
 
-        guiGraphics.drawString(this.font, Component.translatable("screen.sharedworld.world_name"), left, top + 34, 0xFFA0A0A0);
-        guiGraphics.drawString(this.font, Component.translatable("screen.sharedworld.motd"), left, top + 88, 0xFFA0A0A0);
+        guiGraphics.drawString(this.font, Component.translatable("screen.sharedworld.world_name"), left, top + 10, 0xFFA0A0A0);
+        guiGraphics.drawString(this.font, Component.translatable("screen.sharedworld.motd"), left, top + 58, 0xFFA0A0A0);
         GuiBlit.favicon(guiGraphics, this.previewTexture, iconX, iconY, 48);
+        if (this.isOwner()) {
+            // Always-visible pencil badge: the icon well is a button, say so silently.
+            // The dark chip keeps the pencil readable over any world screenshot.
+            guiGraphics.fill(iconX + 48 - 16, iconY + 48 - 16, iconX + 48, iconY + 48, 0xB0000000);
+            GuiBlit.sprite(guiGraphics, EDIT_ICON_SPRITE, iconX + 48 - 14, iconY + 48 - 14, 12, 12);
+        }
 
         if (this.iconHovered && this.isOwner()) {
             guiGraphics.fill(iconX, iconY, iconX + 48, iconY + 48, 0x80000000);
@@ -1083,7 +1090,9 @@ public final class EditSharedWorldScreen extends VersionedScreen {
     }
 
     private int previewCardY() {
-        return this.contentArea.top() + 144;
+        // Bottom-anchored above the banner band (like the create screen), so the
+        // card can never collide with the Replace button, banner, or footer.
+        return this.height - FOOTER_HEIGHT - SharedWorldStatusBanner.BAND_HEIGHT - SharedWorldServerList.ROW_HEIGHT - 2;
     }
 
     private void renderServerCardPreview(GuiGraphics guiGraphics) {
@@ -1313,12 +1322,14 @@ public final class EditSharedWorldScreen extends VersionedScreen {
 
         @Override
         public void doLayout(ScreenRectangle area) {
+            // Compact column: the preview card is bottom-anchored, so at the 240px
+            // minimum GUI height the Replace button must still clear its top edge.
             int left = area.left() + 38;
-            EditSharedWorldScreen.this.nameBox.setPosition(left, area.top() + 44);
+            EditSharedWorldScreen.this.nameBox.setPosition(left, area.top() + 20);
             EditSharedWorldScreen.this.nameBox.setWidth(Math.min(190, area.width() - 140));
-            EditSharedWorldScreen.this.motdBox.setPosition(left, area.top() + 98);
+            EditSharedWorldScreen.this.motdBox.setPosition(left, area.top() + 68);
             EditSharedWorldScreen.this.motdBox.setWidth(Math.min(190, area.width() - 140));
-            EditSharedWorldScreen.this.replaceWorldButton.setPosition(left, area.top() + 132);
+            EditSharedWorldScreen.this.replaceWorldButton.setPosition(left, area.top() + 94);
             EditSharedWorldScreen.this.replaceWorldButton.setWidth(Math.min(190, area.width() - 140));
         }
     }

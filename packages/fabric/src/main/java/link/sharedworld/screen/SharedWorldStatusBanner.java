@@ -33,8 +33,14 @@ public final class SharedWorldStatusBanner {
         }
     }
 
-    private static final int MAX_LINES = 3;
+    private static final int MAX_LINES = 2;
     private static final int LINE_HEIGHT = 10;
+    /**
+     * The vertical slot a screen reserves when it lays widgets out around a banner:
+     * a full-height message plus a little breathing room. Keeping it derived from
+     * MAX_LINES guarantees layout reservations can never be smaller than the text.
+     */
+    public static final int BAND_HEIGHT = MAX_LINES * LINE_HEIGHT + 2;
 
     private final LongSupplier clock;
     private Component message;

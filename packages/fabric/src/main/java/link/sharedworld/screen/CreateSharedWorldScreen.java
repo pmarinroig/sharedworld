@@ -43,6 +43,7 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
     private static final int HEADER_HEIGHT = 33;
     private static final int FOOTER_HEIGHT = 36;
     private static final int CONTENT_MARGIN = 12;
+    private static final String EDIT_ICON_SPRITE = "sharedworld:edit_icon";
     private static final String EDIT_ICON_HIGHLIGHTED_SPRITE = "sharedworld:edit_icon_highlighted";
     private static final String DELETE_ICON_HIGHLIGHTED_SPRITE = "sharedworld:delete_icon_highlighted";
     private static final String PING_5_SPRITE = "minecraft:server_list/ping_5";
@@ -50,10 +51,7 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
     private static final int STORAGE_LEFT_PADDING = 36;
     private static final int STORAGE_COPY_TOP = 56;
     private static final int STORAGE_BUTTON_TOP = 104;
-    private static final long SUCCESS_BANNER_TTL_MS = 7_000L;
     private static final long ICON_ERROR_TTL_MS = 4_000L;
-    /** Vertical slot above the footer reserved for the status banner, so it never overlaps widgets. */
-    private static final int BANNER_BAND = 16;
 
     private final SharedWorldScreen parent;
     private final CreateDraft restoredDraft;
@@ -220,10 +218,11 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         }
         ScreenRectangle area = this.contentArea;
 
-        // Pick-world step widgets: the folder button sits above the reserved
-        // banner band, the list ends above the button.
+        // Pick-world step widgets: the folder button sits right above the footer
+        // (a banner draws over the list's bottom edge only while a message is
+        // live), the list ends above the button.
         int folderButtonHeight = 20;
-        int folderButtonY = this.height - FOOTER_HEIGHT - BANNER_BAND - folderButtonHeight - 4;
+        int folderButtonY = this.height - FOOTER_HEIGHT - folderButtonHeight - 6;
         this.saveList.sharedworldSetBounds(
                 area.left() + CONTENT_MARGIN,
                 area.top() + CONTENT_MARGIN,
@@ -239,7 +238,7 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         int left = area.left() + 38;
         this.nameBox.setPosition(left, area.top() + 34);
         this.nameBox.setWidth(Math.min(190, area.width() - 140));
-        this.motdBox.setPosition(left, area.top() + 88);
+        this.motdBox.setPosition(left, area.top() + 82);
         this.motdBox.setWidth(Math.min(190, area.width() - 140));
 
         // Connect step widget.
@@ -335,7 +334,12 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
             case DETAILS -> this.renderDetailsDecorations(guiGraphics);
         }
 
-        this.banner.renderBottomCentered(guiGraphics, this.font, this.width / 2, this.height - FOOTER_HEIGHT - 6, Math.min(this.width - 40, 420));
+        // On the pick step the folder button occupies the strip above the footer,
+        // so the banner (folder-pick errors) draws just above the button instead.
+        int bannerBottomY = this.wizard.step() == CreateWizardModel.Step.PICK_WORLD && this.selectFolderButton != null
+                ? this.selectFolderButton.getY() - 4
+                : this.height - FOOTER_HEIGHT - 6;
+        this.banner.renderBottomCentered(guiGraphics, this.font, this.width / 2, bannerBottomY, Math.min(this.width - 40, 420));
         GuiBlit.footerSeparator(guiGraphics, this.height - this.layout.getFooterHeight() - 2, this.width);
     }
 
@@ -429,15 +433,12 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         int iconY = this.iconAreaY();
 
         guiGraphics.drawString(this.font, Component.translatable("screen.sharedworld.world_name"), left, top + 24, 0xFFA0A0A0);
-        guiGraphics.drawString(this.font, Component.translatable("screen.sharedworld.motd"), left, top + 78, 0xFFA0A0A0);
+        guiGraphics.drawString(this.font, Component.translatable("screen.sharedworld.motd"), left, top + 72, 0xFFA0A0A0);
         GuiBlit.favicon(guiGraphics, this.previewTexture, iconX, iconY, 48);
-
-        Component iconLabel = Component.translatable("screen.sharedworld.icon_label");
-        // Centered under the icon well, but never crossing into the input
-        // column on its left.
-        int fieldsRight = this.contentArea.left() + 38 + Math.min(190, this.contentArea.width() - 140);
-        int labelX = Math.max(iconX + 24, fieldsRight + this.font.width(iconLabel) / 2 + 8);
-        guiGraphics.drawCenteredString(this.font, iconLabel, labelX, iconY + 48 + 6, 0xFFA0A0A0);
+        // Always-visible pencil badge: the icon well is a button, say so silently.
+        // The dark chip keeps the pencil readable over any world screenshot.
+        guiGraphics.fill(iconX + 48 - 16, iconY + 48 - 16, iconX + 48, iconY + 48, 0xB0000000);
+        GuiBlit.sprite(guiGraphics, EDIT_ICON_SPRITE, iconX + 48 - 14, iconY + 48 - 14, 12, 12);
 
         if (this.iconHovered) {
             guiGraphics.fill(iconX, iconY, iconX + 48, iconY + 48, 0x80000000);
@@ -626,14 +627,8 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
 
     private void onDriveLinkTerminal(StorageLinkSessionDto session) {
         if ("linked".equalsIgnoreCase(session.status())) {
-            String email = session.linkedAccountEmail();
-            this.banner.setTransient(
-                    SharedWorldStatusBanner.Kind.SUCCESS,
-                    email == null || email.isBlank()
-                            ? Component.translatable("screen.sharedworld.storage_connected")
-                            : SharedWorldText.component("screen.sharedworld.storage_connected_as", email),
-                    SUCCESS_BANNER_TTL_MS
-            );
+            // No textual confirmation: the wizard auto-advancing (and the
+            // "Saving to Google Drive" header on the details step) IS the feedback.
             if (this.wizard.onLinkCompleted()) {
                 this.onStepChanged();
                 return;
@@ -844,7 +839,7 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
     private int previewCardY() {
         // Bottom-anchored above the banner band so it can never collide with
         // the footer or the banner, whatever the window height.
-        return this.height - FOOTER_HEIGHT - BANNER_BAND - SharedWorldServerList.ROW_HEIGHT - 2;
+        return this.height - FOOTER_HEIGHT - SharedWorldStatusBanner.BAND_HEIGHT - SharedWorldServerList.ROW_HEIGHT - 2;
     }
 
     private String previewWorldName() {
