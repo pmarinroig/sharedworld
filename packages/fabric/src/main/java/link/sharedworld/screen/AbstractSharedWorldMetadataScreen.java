@@ -86,7 +86,7 @@ abstract class AbstractSharedWorldMetadataScreen extends VersionedScreen {
                 .bounds(left + 40, 0, NAME_FIELD_WIDTH - 40, 20)
                 .build());
 
-        this.cancelButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sharedworld.cancel"), button -> this.minecraft.setScreen(this.parent))
+        this.cancelButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sharedworld.cancel"), button -> link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, this.parent))
                 .bounds(left, 0, (FORM_WIDTH - 4) / 2, 20)
                 .build());
         this.doneButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sharedworld.done"), button -> this.submit())
@@ -264,7 +264,7 @@ abstract class AbstractSharedWorldMetadataScreen extends VersionedScreen {
                     } else {
                         this.parent.onChildOperationFinished(result);
                         link.sharedworld.versioned.GuiCompat.clearFocus(this.parent);
-                        this.minecraft.setScreen(this.parent);
+                        link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, this.parent);
                     }
                 }));
     }

@@ -53,10 +53,10 @@ public final class SharedWorldClientLifecycleRouter {
         if (client.level != null || client.hasSingleplayerServer()) {
             return false;
         }
-        if (client.screen instanceof SharedWorldSavingScreen || client.screen instanceof SharedWorldErrorScreen) {
+        if (link.sharedworld.versioned.ClientCompat.currentScreen(client) instanceof SharedWorldSavingScreen || link.sharedworld.versioned.ClientCompat.currentScreen(client) instanceof SharedWorldErrorScreen) {
             return false;
         }
-        client.setScreen(screenForLifecycleView(releaseCoordinator, defaultParent()));
+        link.sharedworld.versioned.ClientCompat.setScreen(client, screenForLifecycleView(releaseCoordinator, defaultParent()));
         return true;
     }
 
@@ -136,7 +136,7 @@ public final class SharedWorldClientLifecycleRouter {
 
     private static void handleTerminalAction(SharedWorldReleaseCoordinator releaseCoordinator, SharedWorldReleaseCoordinator.ReleaseView view, Screen parent) {
         if (view.canRetry() && releaseCoordinator.retry()) {
-            Minecraft.getInstance().setScreen(savingScreen(parent, releaseCoordinator.activeWorldName()));
+            link.sharedworld.versioned.ClientCompat.setScreen(Minecraft.getInstance(), savingScreen(parent, releaseCoordinator.activeWorldName()));
             return;
         }
         if (view.canDiscardLocalState()) {

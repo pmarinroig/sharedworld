@@ -71,7 +71,7 @@ public final class DeleteSharedWorldProgressScreen extends link.sharedworld.vers
                 .whenComplete((ignored, error) -> Minecraft.getInstance().execute(() -> {
                     if (error != null) {
                         Throwable cause = error.getCause() != null ? error.getCause() : error;
-                        this.minecraft.setScreen(new SharedWorldErrorScreen(
+                        link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, new SharedWorldErrorScreen(
                                 this.parent,
                                 Component.translatable("screen.sharedworld.error_title"),
                                 Component.literal(SharedWorldText.errorMessageOrDefault(cause.getMessage()))
@@ -82,7 +82,7 @@ public final class DeleteSharedWorldProgressScreen extends link.sharedworld.vers
                                 ? SharedWorldText.string("screen.sharedworld.operation_deleted_world", displayName(this.world))
                                 : SharedWorldText.string("screen.sharedworld.operation_left_world", displayName(this.world)));
                         link.sharedworld.versioned.GuiCompat.clearFocus(this.parent);
-                        this.minecraft.setScreen(this.parent);
+                        link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, this.parent);
                     }
                 }));
     }

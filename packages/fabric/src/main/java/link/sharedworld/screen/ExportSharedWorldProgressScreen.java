@@ -104,7 +104,7 @@ public final class ExportSharedWorldProgressScreen extends link.sharedworld.vers
     }
 
     private void finishWithError(String message) {
-        this.minecraft.setScreen(new SharedWorldErrorScreen(
+        link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, new SharedWorldErrorScreen(
                 this.parent,
                 Component.translatable("screen.sharedworld.error_title"),
                 Component.literal(message)

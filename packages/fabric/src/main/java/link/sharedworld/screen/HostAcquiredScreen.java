@@ -37,7 +37,7 @@ public final class HostAcquiredScreen extends link.sharedworld.versioned.Version
                     SharedWorldHostingManager.StartupView view = manager.startupView();
                     if (view.hasError()) {
                         link.sharedworld.versioned.GuiCompat.clearFocus(this.parent);
-                        this.minecraft.setScreen(this.parent);
+                        link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, this.parent);
                         return;
                     }
                     this.cancelRequested = true;
@@ -52,7 +52,7 @@ public final class HostAcquiredScreen extends link.sharedworld.versioned.Version
         SharedWorldHostingManager manager = SharedWorldClient.hostingManager();
         SharedWorldHostingManager.StartupView view = manager.startupView();
         if (view.hasError()) {
-            this.minecraft.setScreen(new SharedWorldErrorScreen(
+            link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, new SharedWorldErrorScreen(
                     this.parent,
                     Component.translatable("screen.sharedworld.error_host_title"),
                     Component.literal(SharedWorldText.errorMessageOrDefault(view.errorMessage()))
@@ -64,7 +64,7 @@ public final class HostAcquiredScreen extends link.sharedworld.versioned.Version
                 waitingScreen.resumeAfterHostStartupCancel();
             }
             link.sharedworld.versioned.GuiCompat.clearFocus(this.parent);
-            this.minecraft.setScreen(this.parent);
+            link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, this.parent);
             return;
         }
         if (this.actionButton != null) {

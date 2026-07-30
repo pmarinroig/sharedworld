@@ -80,7 +80,7 @@ public final class ReplaceSharedWorldScreen extends link.sharedworld.versioned.V
 
     @Override
     public void onClose() {
-        this.minecraft.setScreen(this.parent);
+        link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, this.parent);
     }
 
     @Override
@@ -141,7 +141,7 @@ public final class ReplaceSharedWorldScreen extends link.sharedworld.versioned.V
             this.updateButtons();
             return;
         }
-        this.minecraft.setScreen(new ReplaceSharedWorldProgressScreen(this.parent, this.world, this.selectedSave.directory()));
+        link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, new ReplaceSharedWorldProgressScreen(this.parent, this.world, this.selectedSave.directory()));
     }
 
     private void updateButtons() {

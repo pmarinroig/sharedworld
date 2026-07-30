@@ -35,7 +35,7 @@ public final class SharedWorldInviteScreen extends link.sharedworld.versioned.Ve
                 .build());
         this.doneButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sharedworld.done"), button -> {
                     link.sharedworld.versioned.GuiCompat.clearFocus(this.parent);
-                    this.minecraft.setScreen(this.parent);
+                    link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, this.parent);
                 })
                 .bounds(centerX - 100, this.height - 28, 200, 20)
                 .build());
@@ -98,7 +98,7 @@ public final class SharedWorldInviteScreen extends link.sharedworld.versioned.Ve
                     this.actionInFlight = false;
                     if (error != null) {
                         Throwable cause = error.getCause() != null ? error.getCause() : error;
-                        this.minecraft.setScreen(new SharedWorldErrorScreen(
+                        link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, new SharedWorldErrorScreen(
                                 this.parent,
                                 Component.translatable("screen.sharedworld.error_title"),
                                 Component.literal(SharedWorldText.errorMessageOrDefault(cause.getMessage()))
@@ -128,7 +128,7 @@ public final class SharedWorldInviteScreen extends link.sharedworld.versioned.Ve
                     this.actionInFlight = false;
                     if (error != null) {
                         Throwable cause = error.getCause() != null ? error.getCause() : error;
-                        this.minecraft.setScreen(new SharedWorldErrorScreen(
+                        link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, new SharedWorldErrorScreen(
                                 this.parent,
                                 Component.translatable("screen.sharedworld.error_title"),
                                 Component.literal(SharedWorldText.errorMessageOrDefault(cause.getMessage()))

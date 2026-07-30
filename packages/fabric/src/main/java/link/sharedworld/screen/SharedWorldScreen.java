@@ -77,13 +77,13 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
                 .build());
         this.redeemButton = topRow.addChild(Button.builder(Component.translatable("screen.sharedworld.redeem"), button -> {
                     this.releaseWidgetFocus();
-                    this.minecraft.setScreen(new RedeemInviteScreen(this));
+                    link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, new RedeemInviteScreen(this));
                 })
                 .width(74)
                 .build());
         topRow.addChild(Button.builder(Component.translatable("screen.sharedworld.create"), button -> {
                     this.releaseWidgetFocus();
-                    this.minecraft.setScreen(new CreateSharedWorldScreen(this));
+                    link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, new CreateSharedWorldScreen(this));
                 })
                 .width(74)
                 .build());
@@ -197,7 +197,7 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
         // vanilla-servers button has somewhere to go) has an unset minecraft
         // field; closing through it would crash. Land where its own onClose
         // would have led.
-        this.minecraft.setScreen(new net.minecraft.client.gui.screens.TitleScreen());
+        link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, new net.minecraft.client.gui.screens.TitleScreen());
     }
 
     /** A screen that was never shown has no initialized state to close through. */
@@ -208,7 +208,7 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
     @Override
     public void tick() {
         super.tick();
-        if (this.minecraft == null || this.minecraft.screen != this) {
+        if (this.minecraft == null || link.sharedworld.versioned.ClientCompat.currentScreen(this.minecraft) != this) {
             return;
         }
 
@@ -280,7 +280,7 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
             return;
         }
         if (!SharedWorldClient.isE4mcInstalled()) {
-            this.minecraft.setScreen(new SharedWorldErrorScreen(
+            link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, new SharedWorldErrorScreen(
                     this,
                     Component.translatable("screen.sharedworld.error_title"),
                     Component.translatable("screen.sharedworld.missing_e4mc")
@@ -299,21 +299,21 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
     private void openCreateInvite() {
         WorldSummaryDto selected = this.selectedWorld();
         if (selected != null && this.isCurrentPlayerOwner(selected)) {
-            this.minecraft.setScreen(new SharedWorldInviteScreen(this, selected));
+            link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, new SharedWorldInviteScreen(this, selected));
         }
     }
 
     private void openEditWorld() {
         WorldSummaryDto selected = this.selectedWorld();
         if (selected != null) {
-            this.minecraft.setScreen(new EditSharedWorldScreen(this, selected));
+            link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, new EditSharedWorldScreen(this, selected));
         }
     }
 
     private void openDeleteWorld() {
         WorldSummaryDto selected = this.selectedWorld();
         if (selected != null) {
-            this.minecraft.setScreen(new DeleteSharedWorldScreen(this, selected));
+            link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, new DeleteSharedWorldScreen(this, selected));
         }
     }
 
@@ -321,7 +321,7 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
         SharedWorldClient.rememberVanillaView();
         link.sharedworld.versioned.GuiCompat.clearFocus(this.parent);
         this.releaseWidgetFocus();
-        this.minecraft.setScreen(this.parent);
+        link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, this.parent);
     }
 
     private WorldSummaryDto selectedWorld() {
@@ -377,7 +377,7 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
     private void openBlockingError(Component title, Component message) {
         this.releaseWidgetFocus();
         this.updateButtons();
-        this.minecraft.setScreen(new SharedWorldErrorScreen(this, title, message));
+        link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, new SharedWorldErrorScreen(this, title, message));
     }
 
     private static Component friendlyErrorComponent(Throwable error) {

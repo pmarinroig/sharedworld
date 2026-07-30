@@ -25,7 +25,7 @@ public final class DeleteSharedWorldScreen extends link.sharedworld.versioned.Ve
         this.addRenderableWidget(Button.builder(Component.translatable("screen.sharedworld.delete"), button -> this.deleteWorld())
                 .bounds(this.width / 2 - 155, this.height / 6 + 96, 150, 20)
                 .build());
-        this.addRenderableWidget(Button.builder(Component.translatable("screen.sharedworld.cancel"), button -> this.minecraft.setScreen(this.parent))
+        this.addRenderableWidget(Button.builder(Component.translatable("screen.sharedworld.cancel"), button -> link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, this.parent))
                 .bounds(this.width / 2 + 5, this.height / 6 + 96, 150, 20)
                 .build());
     }
@@ -54,7 +54,7 @@ public final class DeleteSharedWorldScreen extends link.sharedworld.versioned.Ve
     }
 
     private void deleteWorld() {
-        this.minecraft.setScreen(new DeleteSharedWorldProgressScreen(this.parent, this.world));
+        link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, new DeleteSharedWorldProgressScreen(this.parent, this.world));
     }
 
     private boolean isOwner() {

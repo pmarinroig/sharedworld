@@ -145,7 +145,7 @@ public final class CreateSharedWorldProgressScreen extends link.sharedworld.vers
                 .whenComplete((message, error) -> Minecraft.getInstance().execute(() -> {
                     if (error != null) {
                         Throwable cause = error.getCause() == null ? error : error.getCause();
-                        this.minecraft.setScreen(CreateSharedWorldScreen.restored(
+                        link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, CreateSharedWorldScreen.restored(
                                 this.parent,
                                 this.draft,
                                 AbstractSharedWorldMetadataScreen.friendlyMessage(cause)
@@ -153,7 +153,7 @@ public final class CreateSharedWorldProgressScreen extends link.sharedworld.vers
                         return;
                     }
                     this.parent.onChildOperationFinished(message);
-                    this.minecraft.setScreen(this.parent);
+                    link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, this.parent);
                 }));
     }
 

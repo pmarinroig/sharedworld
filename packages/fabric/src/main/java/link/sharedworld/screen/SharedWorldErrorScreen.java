@@ -43,7 +43,7 @@ public final class SharedWorldErrorScreen extends link.sharedworld.versioned.Ver
                     if (this.onBack != null) {
                         this.onBack.run();
                     } else {
-                        this.minecraft.setScreen(this.parent);
+                        link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, this.parent);
                     }
                 })
                 .bounds(centerX - 100, this.height - 28, 200, 20)
@@ -71,7 +71,7 @@ public final class SharedWorldErrorScreen extends link.sharedworld.versioned.Ver
             return;
         }
         if (this.parent != null) {
-            this.minecraft.setScreen(this.parent);
+            link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, this.parent);
         }
     }
 }

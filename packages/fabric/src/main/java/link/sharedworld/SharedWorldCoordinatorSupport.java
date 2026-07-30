@@ -119,17 +119,17 @@ public final class SharedWorldCoordinatorSupport {
 
             @Override
             public Screen currentScreen() {
-                return Minecraft.getInstance().screen;
+                return link.sharedworld.versioned.ClientCompat.currentScreen(Minecraft.getInstance());
             }
 
             @Override
             public void setScreen(Screen screen) {
                 Minecraft minecraft = Minecraft.getInstance();
                 if (minecraft.isSameThread()) {
-                    minecraft.setScreen(screen);
+                    link.sharedworld.versioned.ClientCompat.setScreen(minecraft, screen);
                     return;
                 }
-                minecraft.execute(() -> minecraft.setScreen(screen));
+                minecraft.execute(() -> link.sharedworld.versioned.ClientCompat.setScreen(minecraft, screen));
             }
 
             @Override

@@ -163,9 +163,7 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
                 .width(150)
                 .build();
 
-        this.tabNavigationBar = TabNavigationBar.builder(this.tabManager, this.width)
-                .addTabs(this.worldTab, this.detailsTab, this.storageTab)
-                .build();
+        this.tabNavigationBar = link.sharedworld.versioned.TabBarCompat.create(this.tabManager, this.width, this.worldTab, this.detailsTab, this.storageTab);
         this.addRenderableWidget(this.tabNavigationBar);
 
         if (this.restoredDraft != null) {
@@ -190,8 +188,7 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
             return;
         }
 
-        this.tabNavigationBar.setWidth(this.width);
-        this.tabNavigationBar.arrangeElements();
+        link.sharedworld.versioned.TabBarCompat.arrange(this.tabNavigationBar, this.width);
         int headerBottom = this.tabNavigationBar.getRectangle().bottom();
         this.contentArea = new ScreenRectangle(
                 0,
@@ -238,7 +235,7 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
     @Override
     public void onClose() {
         this.cancelDriveLinkAttempt(true);
-        this.minecraft.setScreen(this.parent);
+        link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, this.parent);
     }
 
     @Override
@@ -664,7 +661,7 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         }
         this.submitting = true;
         this.updateButtons();
-        this.minecraft.setScreen(new CreateSharedWorldProgressScreen(
+        link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, new CreateSharedWorldProgressScreen(
                 this.parent,
                 this.buildDraft(),
                 this.buildRequest(save)

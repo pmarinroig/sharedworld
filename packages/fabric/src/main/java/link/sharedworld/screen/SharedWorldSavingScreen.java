@@ -39,7 +39,7 @@ public final class SharedWorldSavingScreen extends link.sharedworld.versioned.Ve
         }
         if (view.phase() == SharedWorldReleasePhase.ERROR_RECOVERABLE && !this.errorScreenOpened) {
             this.errorScreenOpened = true;
-            this.minecraft.setScreen(SharedWorldClientLifecycleRouter.screenForLifecycleView(coordinator, this.parent));
+            link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, SharedWorldClientLifecycleRouter.screenForLifecycleView(coordinator, this.parent));
             return;
         }
         if (view.phase() == SharedWorldReleasePhase.COMPLETE) {
@@ -49,7 +49,7 @@ public final class SharedWorldSavingScreen extends link.sharedworld.versioned.Ve
         }
         if (view.phase() == SharedWorldReleasePhase.TERMINATED_DELETED) {
             coordinator.acknowledgeTerminal();
-            this.minecraft.setScreen(new SharedWorldErrorScreen(
+            link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, new SharedWorldErrorScreen(
                     this.parent,
                     Component.translatable("screen.sharedworld.deleted_title"),
                     Component.translatable("screen.sharedworld.deleted_detail")

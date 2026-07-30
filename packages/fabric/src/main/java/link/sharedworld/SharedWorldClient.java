@@ -162,11 +162,11 @@ public final class SharedWorldClient implements ClientModInitializer {
     public static void openMainScreen(Screen parent) {
         SharedWorldViewState.rememberSharedWorld();
         link.sharedworld.versioned.GuiCompat.clearFocus(parent);
-        Minecraft.getInstance().setScreen(new SharedWorldScreen(parent));
+        link.sharedworld.versioned.ClientCompat.setScreen(Minecraft.getInstance(), new SharedWorldScreen(parent));
     }
 
     public static void openMembershipRevokedScreen(Screen parent) {
-        Minecraft.getInstance().setScreen(membershipRevokedScreen(parent));
+        link.sharedworld.versioned.ClientCompat.setScreen(Minecraft.getInstance(), membershipRevokedScreen(parent));
     }
 
     public static SharedWorldErrorScreen membershipRevokedScreen(Screen parent) {

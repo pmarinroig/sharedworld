@@ -660,7 +660,7 @@ public final class SharedWorldHostingManager {
             int port = HttpUtil.getAvailablePort();
             // Shared World synchronizes playerdata, so late joiners must keep their stored
             // gamemode instead of inheriting a forced LAN publish mode.
-            if (!server.publishServer(SharedWorldPublishedJoinModePolicy.publishGameMode(), false, port)) {
+            if (!link.sharedworld.versioned.ServerPublishCompat.publish(server, SharedWorldPublishedJoinModePolicy.publishGameMode(), port)) {
                 fail(SharedWorldText.string("screen.sharedworld.hosting_publish_failed"), null);
                 return;
             }

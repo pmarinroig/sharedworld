@@ -135,9 +135,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
                 new SnapshotBrowserList(this.minecraft, 120, 100, 0, 36, this), this::addRenderableWidget);
         this.memberList = link.sharedworld.versioned.LayoutCompat.registerTabList(
                 new MemberBrowserList(this.minecraft, 120, 100, 0, 36, this), this::addRenderableWidget);
-        this.tabNavigationBar = TabNavigationBar.builder(this.tabManager, this.width)
-                .addTabs(this.detailsTab, this.backupsTab, this.membersTab, this.storageTab)
-                .build();
+        this.tabNavigationBar = link.sharedworld.versioned.TabBarCompat.create(this.tabManager, this.width, this.detailsTab, this.backupsTab, this.membersTab, this.storageTab);
         this.addRenderableWidget(this.tabNavigationBar);
 
         if (this.details == null) {
@@ -159,8 +157,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
             return;
         }
 
-        this.tabNavigationBar.setWidth(this.width);
-        this.tabNavigationBar.arrangeElements();
+        link.sharedworld.versioned.TabBarCompat.arrange(this.tabNavigationBar, this.width);
         int headerBottom = this.tabNavigationBar.getRectangle().bottom();
         this.contentArea = new ScreenRectangle(
                 0,
@@ -211,7 +208,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
     @Override
     public void onClose() {
         this.parent.clearTransientFocus();
-        this.minecraft.setScreen(this.parent);
+        link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, this.parent);
     }
 
     @Override
@@ -489,7 +486,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         Tab currentTab = this.tabManager.getCurrentTab();
         if (currentTab == this.detailsTab) {
             if (this.isOwner() && !this.loading && !this.actionInFlight && this.details != null) {
-                this.minecraft.setScreen(new ExportSharedWorldProgressScreen(this, this.details));
+                link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, new ExportSharedWorldProgressScreen(this, this.details));
             }
             return;
         }
@@ -641,14 +638,14 @@ public final class EditSharedWorldScreen extends VersionedScreen {
 
     private void openReplaceWorldScreen() {
         if (this.isOwner() && !this.loading && !this.actionInFlight && this.details != null) {
-            this.minecraft.setScreen(new ReplaceSharedWorldScreen(this, this.details));
+            link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, new ReplaceSharedWorldScreen(this, this.details));
         }
     }
 
     void onReplaceFinished(String message) {
         this.setStatusSuccess(message);
         link.sharedworld.versioned.GuiCompat.clearFocus(this);
-        this.minecraft.setScreen(this);
+        link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, this);
         this.reloadData();
     }
 
@@ -656,7 +653,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         this.setStatusSuccess(message);
         this.updateButtons();
         link.sharedworld.versioned.GuiCompat.clearFocus(this);
-        this.minecraft.setScreen(this);
+        link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, this);
     }
 
     private void toggleSelectedMemberCommands() {

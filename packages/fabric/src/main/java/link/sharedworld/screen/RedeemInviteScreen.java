@@ -39,7 +39,7 @@ public final class RedeemInviteScreen extends link.sharedworld.versioned.Version
         this.doneButton.active = !this.redeemInFlight;
         this.addRenderableWidget(Button.builder(Component.translatable("screen.sharedworld.cancel"), button -> {
                     this.parent.clearTransientFocus();
-                    this.minecraft.setScreen(this.parent);
+                    link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, this.parent);
                 })
                 .bounds(centerX - 100, this.height / 4 + 120, 200, 20)
                 .build());
@@ -90,7 +90,7 @@ public final class RedeemInviteScreen extends link.sharedworld.versioned.Version
                     }
                     if (error != null) {
                         this.parent.clearTransientFocus();
-                        this.minecraft.setScreen(new SharedWorldErrorScreen(
+                        link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, new SharedWorldErrorScreen(
                                 this.parent,
                                 Component.translatable("screen.sharedworld.error_title"),
                                 inviteRedeemErrorMessage(error)
@@ -98,7 +98,7 @@ public final class RedeemInviteScreen extends link.sharedworld.versioned.Version
                     } else {
                         this.parent.onChildOperationFinished(SharedWorldText.string("screen.sharedworld.operation_added_world", SharedWorldText.displayWorldName(result.name())));
                         this.parent.clearTransientFocus();
-                        this.minecraft.setScreen(this.parent);
+                        link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, this.parent);
                     }
                 }));
     }

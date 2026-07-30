@@ -5,9 +5,21 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 
 public final class LegacyMotdFormatter {
+    // Classified by constant instead of ChatFormatting.isColor()/isFormat(),
+    // which no longer exist on newer Minecraft versions.
+    private static final Set<ChatFormatting> STYLE_FORMATS = EnumSet.of(
+            ChatFormatting.OBFUSCATED,
+            ChatFormatting.BOLD,
+            ChatFormatting.STRIKETHROUGH,
+            ChatFormatting.UNDERLINE,
+            ChatFormatting.ITALIC
+    );
+
     private LegacyMotdFormatter() {
     }
 
@@ -39,11 +51,13 @@ public final class LegacyMotdFormatter {
                 if (format == ChatFormatting.RESET) {
                     activeColor = null;
                     activeFormats.clear();
-                } else if (format.isColor()) {
+                } else if (STYLE_FORMATS.contains(format)) {
+                    if (!activeFormats.contains(format)) {
+                        activeFormats.add(format);
+                    }
+                } else {
                     activeColor = format;
                     activeFormats.clear();
-                } else if (format.isFormat() && !activeFormats.contains(format)) {
-                    activeFormats.add(format);
                 }
                 continue;
             }

@@ -53,4 +53,14 @@ public final class ClientCompat {
             return null;
         }
     }
+
+    /** Show a screen; screen management moved off Minecraft in newer versions. */
+    public static void setScreen(Minecraft minecraft, net.minecraft.client.gui.screens.Screen screen) {
+        minecraft.setScreen(screen);
+    }
+
+    /** The currently displayed screen, or null when none is open. */
+    public static net.minecraft.client.gui.screens.Screen currentScreen(Minecraft minecraft) {
+        return minecraft.screen;
+    }
 }

@@ -23,7 +23,7 @@ public final class SharedWorldConnector {
 
     public static void connect(Screen parent, String target, String worldId, String worldName, long runtimeEpoch) {
         Minecraft minecraft = Minecraft.getInstance();
-        connect(parent, target, worldId, worldName, runtimeEpoch, minecraft, link.sharedworld.versioned.ConnectCompat::startConnecting, (currentParent, error) -> minecraft.setScreen(new SharedWorldErrorScreen(
+        connect(parent, target, worldId, worldName, runtimeEpoch, minecraft, link.sharedworld.versioned.ConnectCompat::startConnecting, (currentParent, error) -> link.sharedworld.versioned.ClientCompat.setScreen(minecraft, new SharedWorldErrorScreen(
                 currentParent,
                 Component.translatable("screen.sharedworld.error_join_title"),
                 Component.translatable("screen.sharedworld.join_connect_failed")

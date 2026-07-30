@@ -162,7 +162,7 @@ public final class UncleanShutdownWarningScreen extends link.sharedworld.version
 
     private void cancelLaunch() {
         if (this.parent != null) {
-            this.minecraft.setScreen(this.parent);
+            link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, this.parent);
             return;
         }
         SharedWorldClient.openMainScreen(new JoinMultiplayerScreen(new TitleScreen()));

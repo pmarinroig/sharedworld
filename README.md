@@ -4,7 +4,7 @@ Keep a Minecraft world going with friends without running a dedicated server.
 
 ## Install
 
-SharedWorld currently supports Fabric on Minecraft `1.21.6-11` and `26.1.x`.
+SharedWorld currently supports Fabric on Minecraft `1.20`-`1.20.1`, `1.21`-`1.21.11`, and `26.1`-`26.2`.
 
 To use it, install:
 

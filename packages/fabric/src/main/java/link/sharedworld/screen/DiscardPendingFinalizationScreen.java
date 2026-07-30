@@ -85,7 +85,7 @@ public final class DiscardPendingFinalizationScreen extends link.sharedworld.ver
         if (this.closeOnSuccess && !view.discardInFlight() && view.discardErrorMessage() == null) {
             this.parent.resumeWaitingUnregister();
             this.parent.refreshImmediately();
-            this.minecraft.setScreen(this.parent);
+            link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, this.parent);
         }
     }
 
@@ -109,6 +109,6 @@ public final class DiscardPendingFinalizationScreen extends link.sharedworld.ver
 
     private void returnToParent() {
         this.parent.resumeWaitingUnregister();
-        this.minecraft.setScreen(this.parent);
+        link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, this.parent);
     }
 }
