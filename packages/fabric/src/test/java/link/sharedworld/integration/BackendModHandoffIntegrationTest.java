@@ -4,6 +4,7 @@ import link.sharedworld.api.SharedWorldApiClient;
 import link.sharedworld.api.SharedWorldModels;
 import link.sharedworld.integration.support.SharedWorldIntegrationBackend;
 import link.sharedworld.sync.ManagedWorldStore;
+import link.sharedworld.sync.WorldCanonicalizer;
 import link.sharedworld.sync.WorldSyncCoordinator;
 import link.sharedworld.versioned.NbtCompat;
 import net.minecraft.nbt.CompoundTag;
@@ -115,6 +116,72 @@ final class BackendModHandoffIntegrationTest {
             assertEquals("guest-b-updated", NbtCompat.getStringOr(canonicalGuestPlayer, "SharedWorldPlayerMarker", ""));
             assertFalse(Files.exists(canonicalCopy.resolve("playerdata").resolve(offlinePlayerUuid(SharedWorldIntegrationBackend.HOST.playerName()) + ".dat")));
             assertFalse(Files.exists(canonicalCopy.resolve("playerdata").resolve(offlinePlayerUuid(SharedWorldIntegrationBackend.GUEST.playerName()) + ".dat")));
+        } finally {
+            deleteTree(root);
+        }
+    }
+
+    @Test
+    void modernShapedHandoffStripsTheOwnerUuidAndKeepsPlayerFiles() throws Exception {
+        SharedWorldApiClient hostClient = SharedWorldIntegrationBackend.apiClient(SharedWorldIntegrationBackend.HOST);
+        SharedWorldApiClient guestClient = SharedWorldIntegrationBackend.apiClient(SharedWorldIntegrationBackend.GUEST);
+        Path root = Files.createTempDirectory("sharedworld-modern-handoff-integration");
+        try {
+            SharedWorldModels.CreateWorldResultDto created = hostClient.createWorld(
+                    SharedWorldIntegrationBackend.uniqueName("Integration Modern Handoff"),
+                    null,
+                    null,
+                    null,
+                    null,
+                    null
+            );
+            SharedWorldModels.HostAssignmentDto hostAssignment = created.initialUploadAssignment();
+            assertNotNull(hostAssignment);
+
+            SharedWorldModels.InviteCodeDto invite = hostClient.createInvite(created.world().id());
+            guestClient.redeemInvite(invite.code());
+
+            // Minecraft 26.x save shape: per-player files under players/data and an
+            // owner pointer in level.dat instead of an embedded Player tag.
+            Path source = root.resolve("source");
+            Files.createDirectories(source.resolve("players").resolve("data"));
+            CompoundTag hostPlayer = new CompoundTag();
+            hostPlayer.putString("SharedWorldPlayerMarker", "host-a");
+            CompoundTag data = new CompoundTag();
+            data.putString("LevelName", "Integration Modern Handoff World");
+            data.putIntArray(WorldCanonicalizer.MODERN_OWNER_UUID_KEY, new int[]{1, 2, 3, 4});
+            CompoundTag level = new CompoundTag();
+            level.put("Data", data);
+            NbtCompat.writeCompressed(level, source.resolve("level.dat"));
+            NbtCompat.writeCompressed(hostPlayer, source.resolve("players").resolve("data")
+                    .resolve(SharedWorldIntegrationBackend.HOST.playerUuidHyphenated() + ".dat"));
+
+            WorldSyncCoordinator hostSync = new WorldSyncCoordinator(hostClient, new ManagedWorldStore(root.resolve("host-managed")));
+            hostSync.uploadSnapshot(
+                    created.world().id(),
+                    source,
+                    SharedWorldIntegrationBackend.HOST.playerUuidHyphenated(),
+                    hostAssignment.runtimeEpoch(),
+                    hostAssignment.hostToken()
+            );
+            hostClient.heartbeatHost(created.world().id(), hostAssignment.runtimeEpoch(), hostAssignment.hostToken(), "join.example");
+            hostClient.beginFinalization(created.world().id(), hostAssignment.runtimeEpoch(), hostAssignment.hostToken());
+            hostClient.completeFinalization(created.world().id(), hostAssignment.runtimeEpoch(), hostAssignment.hostToken());
+
+            WorldSyncCoordinator guestSync = new WorldSyncCoordinator(guestClient, new ManagedWorldStore(root.resolve("guest-managed")));
+            Path workingCopy = guestSync.ensureSynchronizedWorkingCopy(
+                    created.world().id(),
+                    SharedWorldIntegrationBackend.GUEST.playerUuidHyphenated()
+            );
+
+            CompoundTag downloadedData = NbtCompat.getCompoundOrEmpty(
+                    NbtCompat.readCompressed(workingCopy.resolve("level.dat")), "Data");
+            assertEquals("Integration Modern Handoff World", NbtCompat.getStringOr(downloadedData, "LevelName", ""));
+            assertFalse(downloadedData.contains(WorldCanonicalizer.MODERN_OWNER_UUID_KEY));
+            assertFalse(downloadedData.contains("Player"));
+            CompoundTag downloadedHostPlayer = NbtCompat.readCompressed(workingCopy.resolve("players").resolve("data")
+                    .resolve(SharedWorldIntegrationBackend.HOST.playerUuidHyphenated() + ".dat"));
+            assertEquals("host-a", NbtCompat.getStringOr(downloadedHostPlayer, "SharedWorldPlayerMarker", ""));
         } finally {
             deleteTree(root);
         }

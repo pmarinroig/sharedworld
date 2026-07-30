@@ -111,6 +111,9 @@ final class SharedWorldExportFlow {
         // Hosting locks the managed world's difficulty; an exported save is an
         // ordinary singleplayer world again and must not inherit the lock.
         dataTag.putBoolean("DifficultyLocked", false);
+        // On 26.x the played copy points at whoever hosted last; the exporter
+        // must load their own player file, and vanilla re-writes the key on save.
+        dataTag.remove(WorldCanonicalizer.MODERN_OWNER_UUID_KEY);
         levelTag.put("Data", dataTag);
         NbtCompat.writeCompressed(levelTag, levelDat);
     }

@@ -5,6 +5,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
+import link.sharedworld.sync.WorldCanonicalizer;
 import link.sharedworld.versioned.NbtCompat;
 import net.minecraft.nbt.CompoundTag;
 import org.junit.jupiter.api.Test;
@@ -65,6 +66,8 @@ final class SharedWorldExportFlowTest {
         data.putString("generatorName", "default");
         // Hosting locked the managed world's difficulty; the export must unlock it.
         data.putBoolean("DifficultyLocked", true);
+        // 26.x owner marker pointing at whoever hosted last; the export must drop it.
+        data.putIntArray(WorldCanonicalizer.MODERN_OWNER_UUID_KEY, new int[]{1, 2, 3, 4});
         CompoundTag root = new CompoundTag();
         root.put("Data", data);
         NbtCompat.writeCompressed(root, levelDat);
@@ -76,6 +79,7 @@ final class SharedWorldExportFlowTest {
         assertEquals("Exported (2)", NbtCompat.getStringOr(rereadData, "LevelName", ""));
         assertEquals("default", NbtCompat.getStringOr(rereadData, "generatorName", ""));
         assertEquals((byte) 0, NbtCompat.getByteOr(rereadData, "DifficultyLocked", (byte) 1));
+        assertFalse(rereadData.contains(WorldCanonicalizer.MODERN_OWNER_UUID_KEY));
     }
 
     @Test

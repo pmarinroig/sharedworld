@@ -24,6 +24,14 @@ import java.util.zip.GZIPOutputStream;
 public final class WorldCanonicalizer {
     private static final String CONTENT_TYPE = "application/octet-stream";
 
+    /**
+     * Minecraft 26.x owner marker in level.dat (Data.singleplayer_uuid). Modern versions store
+     * per-player data in players/data/&lt;uuid&gt;.dat and this key tells the integrated server which
+     * player file its owner should load; the canonical snapshot must be owner-neutral or the next
+     * host inherits the previous host's inventory.
+     */
+    public static final String MODERN_OWNER_UUID_KEY = "singleplayer_uuid";
+
     private WorldCanonicalizer() {
     }
 
@@ -68,18 +76,30 @@ public final class WorldCanonicalizer {
 
     public static void materializeHostPlayer(Path worldDirectory, String hostPlayerUuid) throws IOException {
         Path levelDat = worldDirectory.resolve("level.dat");
-        Path playerDataPath = worldDirectory.resolve("playerdata").resolve(hostPlayerUuid + ".dat");
-        if (!Files.exists(levelDat) || !Files.exists(playerDataPath)) {
+        if (!Files.exists(levelDat)) {
             return;
         }
+        Path playerDataPath = worldDirectory.resolve("playerdata").resolve(hostPlayerUuid + ".dat");
+        boolean materializePlayer = Files.exists(playerDataPath);
 
         CompoundTag levelTag = NbtCompat.readCompressed(levelDat);
         CompoundTag dataTag = NbtCompat.getCompoundOrEmpty(levelTag, "Data").copy();
-        CompoundTag playerTag = NbtCompat.readCompressed(playerDataPath);
-        dataTag.put("Player", playerTag.copy());
+        boolean changed = dataTag.contains(MODERN_OWNER_UUID_KEY);
+        dataTag.remove(MODERN_OWNER_UUID_KEY);
+        if (materializePlayer) {
+            CompoundTag playerTag = NbtCompat.readCompressed(playerDataPath);
+            dataTag.put("Player", playerTag.copy());
+            changed = true;
+        }
+        if (!changed) {
+            return;
+        }
+
         levelTag.put("Data", dataTag);
         NbtCompat.writeCompressed(levelTag, levelDat);
-        Files.deleteIfExists(playerDataPath);
+        if (materializePlayer) {
+            Files.deleteIfExists(playerDataPath);
+        }
     }
 
     public static void writeGzipFile(PreparedWorldFile file, Path target) throws IOException {
@@ -109,6 +129,7 @@ public final class WorldCanonicalizer {
             dataTag.remove("Player");
             hostPlayerBytes = writeCompressed(playerTag);
         }
+        dataTag.remove(MODERN_OWNER_UUID_KEY);
 
         canonicalLevel.put("Data", dataTag);
         return new CanonicalLevelResult(writeCompressed(canonicalLevel), hostPlayerBytes);
