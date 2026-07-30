@@ -707,19 +707,48 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         boolean editable = this.isOwner() && !this.loading && !this.actionInFlight && !this.savingSettings;
         this.difficultyButton.setMessage(Component.translatable(
                 "screen.sharedworld.settings_difficulty",
-                Component.translatable("screen.sharedworld.settings_value_" + this.settingsDifficulty)));
+                Component.translatable(difficultyValueKey(this.settingsDifficulty))));
         this.difficultyButton.active = editable;
         this.gameModeButton.setMessage(Component.translatable(
                 "screen.sharedworld.settings_game_mode",
-                Component.translatable("screen.sharedworld.settings_value_" + this.settingsGameMode)));
+                Component.translatable(gameModeValueKey(this.settingsGameMode))));
         this.gameModeButton.active = editable;
         for (var entry : this.gameRuleButtons.entrySet()) {
             boolean value = Boolean.TRUE.equals(this.settingsRules.get(entry.getKey()));
             entry.getValue().setMessage(Component.translatable(
-                    "screen.sharedworld.settings_rule_" + entry.getKey().id(),
+                    gameRuleLabelKey(entry.getKey()),
                     Component.translatable(value ? "screen.sharedworld.settings_value_on" : "screen.sharedworld.settings_value_off")));
             entry.getValue().active = editable;
         }
+    }
+
+    // Full-literal keys (never built from fragments): the localization parity
+    // test resolves every referenced key against the lang files.
+    private static String difficultyValueKey(String difficulty) {
+        return switch (difficulty) {
+            case "peaceful" -> "screen.sharedworld.settings_value_peaceful";
+            case "easy" -> "screen.sharedworld.settings_value_easy";
+            case "hard" -> "screen.sharedworld.settings_value_hard";
+            default -> "screen.sharedworld.settings_value_normal";
+        };
+    }
+
+    private static String gameModeValueKey(String gameMode) {
+        return switch (gameMode) {
+            case "creative" -> "screen.sharedworld.settings_value_creative";
+            case "adventure" -> "screen.sharedworld.settings_value_adventure";
+            default -> "screen.sharedworld.settings_value_survival";
+        };
+    }
+
+    private static String gameRuleLabelKey(link.sharedworld.host.SharedWorldGameRule rule) {
+        return switch (rule) {
+            case KEEP_INVENTORY -> "screen.sharedworld.settings_rule_keepInventory";
+            case MOB_GRIEFING -> "screen.sharedworld.settings_rule_mobGriefing";
+            case DAYLIGHT_CYCLE -> "screen.sharedworld.settings_rule_daylightCycle";
+            case WEATHER_CYCLE -> "screen.sharedworld.settings_rule_weatherCycle";
+            case PVP -> "screen.sharedworld.settings_rule_pvp";
+        };
     }
 
     private void saveSettings() {

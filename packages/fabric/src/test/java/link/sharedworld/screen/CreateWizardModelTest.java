@@ -35,9 +35,10 @@ class CreateWizardModelTest {
         assertTrue(model.onLinkCompleted());
         assertEquals(CreateWizardModel.Step.PICK_WORLD, model.step());
         assertTrue(model.storageSatisfied());
-        // The connect step stays reachable via Back for relinking.
-        assertTrue(model.back());
-        assertEquals(CreateWizardModel.Step.CONNECT_DRIVE, model.step());
+        // Once linked, the connect step is skipped both ways: Back from the
+        // first visible step leaves the wizard instead of reopening it.
+        assertFalse(model.back());
+        assertEquals(CreateWizardModel.Step.PICK_WORLD, model.step());
     }
 
     @Test
