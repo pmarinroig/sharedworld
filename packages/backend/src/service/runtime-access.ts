@@ -102,7 +102,7 @@ export async function requireAuthorizedRuntime(
 }
 
 export function hostNotActiveError(): HttpError {
-  return new HttpError(409, "host_not_active", "SharedWorld host lease is no longer active for snapshot upload.");
+  return new HttpError(409, "host_not_active", "Someone else is hosting this world now, so this upload was stopped.");
 }
 
 export async function requireMembership(svc: ServiceContext, ctx: RequestContext, worldId: string): Promise<void> {

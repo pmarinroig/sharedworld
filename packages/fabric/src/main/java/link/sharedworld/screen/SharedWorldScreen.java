@@ -186,6 +186,11 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
         this.onChildOperationFinished(message, null);
     }
 
+    /** A child screen aborted an operation on the player's request. */
+    public void showTransientWarning(String message) {
+        this.statusBanner.setTransient(SharedWorldStatusBanner.Kind.WARNING, Component.literal(message), SUCCESS_STATUS_TTL_MS);
+    }
+
     /**
      * A child screen finished an operation: confirm it visibly and, when the
      * operation produced or targeted a world, land with that world selected so
@@ -350,10 +355,6 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
         return this.serverList == null ? null : this.serverList.selectedWorld();
     }
 
-    private static String displayName(WorldSummaryDto world) {
-        return SharedWorldText.displayWorldName(world.name());
-    }
-
     public void clearTransientFocus() {
         this.releaseWidgetFocus();
     }
@@ -384,26 +385,12 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
         }
     }
 
-    private static String friendlyError(Throwable error) {
-        return SharedWorldApiClient.friendlyErrorMessage(error);
-    }
-
     private static Throwable rootCause(Throwable error) {
         Throwable current = error;
         while (current.getCause() != null && current.getCause() != current) {
             current = current.getCause();
         }
         return current;
-    }
-
-    private void openBlockingError(Component title, Component message) {
-        this.releaseWidgetFocus();
-        this.updateButtons();
-        link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, new SharedWorldErrorScreen(this, title, message));
-    }
-
-    private static Component friendlyErrorComponent(Throwable error) {
-        return Component.literal(SharedWorldText.errorMessageOrDefault(friendlyError(error)));
     }
 
     private long autoRefreshIntervalMs() {

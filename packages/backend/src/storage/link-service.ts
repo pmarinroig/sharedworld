@@ -64,9 +64,9 @@ export class StorageLinkDomainService {
   async getStorageLinkSession(ctx: RequestContext, sessionId: string, now = new Date()): Promise<StorageLinkSession> {
     const session = await this.requireLinkSessionOwner(ctx, sessionId);
     if (new Date(session.expiresAt).getTime() < now.getTime() && session.status === "pending") {
-      await this.repository.updateStorageLinkSession(session.id, { status: "expired", errorMessage: "Storage link session expired." });
+      await this.repository.updateStorageLinkSession(session.id, { status: "expired", errorMessage: "The Google Drive sign-in took too long. Start it again from Minecraft." });
       session.status = "expired";
-      session.errorMessage = "Storage link session expired.";
+      session.errorMessage = "The Google Drive sign-in took too long. Start it again from Minecraft.";
     }
     return summarizeStorageLinkSession(session);
   }
@@ -74,9 +74,9 @@ export class StorageLinkDomainService {
   async cancelStorageLink(ctx: RequestContext, sessionId: string, now = new Date()): Promise<StorageLinkSession> {
     const session = await this.requireLinkSessionOwner(ctx, sessionId);
     if (new Date(session.expiresAt).getTime() < now.getTime() && session.status === "pending") {
-      await this.repository.updateStorageLinkSession(session.id, { status: "expired", errorMessage: "Storage link session expired." });
+      await this.repository.updateStorageLinkSession(session.id, { status: "expired", errorMessage: "The Google Drive sign-in took too long. Start it again from Minecraft." });
       session.status = "expired";
-      session.errorMessage = "Storage link session expired.";
+      session.errorMessage = "The Google Drive sign-in took too long. Start it again from Minecraft.";
       return summarizeStorageLinkSession(session);
     }
     if (session.status === "pending") {
@@ -92,13 +92,13 @@ export class StorageLinkDomainService {
   async completeStorageLink(sessionId: string, request: StorageLinkCompleteRequest, now = new Date()): Promise<StorageLinkSession> {
     const session = await this.repository.getStorageLinkSession(sessionId);
     if (!session) {
-      throw new HttpError(404, "storage_link_not_found", "Storage link session not found.");
+      throw new HttpError(404, "storage_link_not_found", "This Google Drive sign-in is no longer active. Start it again from Minecraft.");
     }
     if (session.status === "cancelled") {
       throw new HttpError(409, "storage_link_cancelled", "This Google Drive link is no longer active. Return to Minecraft and start again.");
     }
     if (new Date(session.expiresAt).getTime() < now.getTime()) {
-      throw new HttpError(410, "storage_link_expired", "Storage link session expired.");
+      throw new HttpError(410, "storage_link_expired", "The Google Drive sign-in took too long. Start it again from Minecraft.");
     }
 
     const account = await this.exchangeGoogleAuth(session, request, now);
@@ -125,7 +125,7 @@ export class StorageLinkDomainService {
     });
     const refreshed = await this.repository.getStorageLinkSession(sessionId);
     if (!refreshed) {
-      throw new HttpError(500, "storage_link_missing", "Storage link completion failed.");
+      throw new HttpError(500, "storage_link_missing", "Connecting Google Drive didn't finish. Try again from Minecraft.");
     }
     return summarizeStorageLinkSession(refreshed);
   }
@@ -158,7 +158,7 @@ export class StorageLinkDomainService {
   async requireLinkSessionOwner(ctx: RequestContext, sessionId: string): Promise<StorageLinkSessionRecord> {
     const session = await this.repository.getStorageLinkSession(sessionId);
     if (!session) {
-      throw new HttpError(404, "storage_link_not_found", "Storage link session not found.");
+      throw new HttpError(404, "storage_link_not_found", "This Google Drive sign-in is no longer active. Start it again from Minecraft.");
     }
     if (session.playerUuid !== ctx.playerUuid) {
       throw new HttpError(403, "forbidden", "Storage link session does not belong to this player.");

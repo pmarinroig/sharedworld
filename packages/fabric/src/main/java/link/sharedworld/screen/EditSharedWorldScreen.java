@@ -582,7 +582,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         }, error -> {
             this.loading = false;
             this.actionInFlight = false;
-            this.setStatusError(AbstractSharedWorldMetadataScreen.friendlyMessage(error));
+            this.setStatusError(SharedWorldMetadataFormat.friendlyMessage(error));
             this.updateButtons();
         });
     }
@@ -602,7 +602,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
 
     private void populateDetailFields() {
         this.nameBox.setValue(this.details == null || this.details.name() == null ? "" : this.details.name());
-        this.motdBox.setValue(this.details == null ? AbstractSharedWorldMetadataScreen.defaultMotd() : AbstractSharedWorldMetadataScreen.encodeMotdInput(this.details.motd()));
+        this.motdBox.setValue(this.details == null ? SharedWorldMetadataFormat.defaultMotd() : SharedWorldMetadataFormat.encodeMotdInput(this.details.motd()));
         this.selectedIcon = null;
         this.clearCustomIcon = false;
         this.populateSettingsFields();
@@ -744,7 +744,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         }, error -> {
             this.savingSettings = false;
             this.actionInFlight = false;
-            this.setStatusError(AbstractSharedWorldMetadataScreen.friendlyMessage(error));
+            this.setStatusError(SharedWorldMetadataFormat.friendlyMessage(error));
             this.updateButtons();
         });
     }
@@ -760,7 +760,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
                 new EditSharedWorldDataController.SaveDetailsRequest(
                         this.world.id(),
                         this.nameBox.getValue().trim(),
-                        AbstractSharedWorldMetadataScreen.effectiveMotd(this.motdBox.getValue()),
+                        SharedWorldMetadataFormat.effectiveMotd(this.motdBox.getValue()),
                         this.selectedIcon,
                         this.clearCustomIcon
                 ),
@@ -774,7 +774,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
                 error -> {
                     this.savingDetails = false;
                     this.actionInFlight = false;
-                    this.setStatusError(AbstractSharedWorldMetadataScreen.friendlyMessage(error));
+                    this.setStatusError(SharedWorldMetadataFormat.friendlyMessage(error));
                     this.updateButtons();
                 }
         );
@@ -796,7 +796,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         }, error -> {
             this.actionInFlight = false;
             this.confirmRestore = false;
-            this.setStatusError(AbstractSharedWorldMetadataScreen.friendlyMessage(error));
+            this.setStatusError(SharedWorldMetadataFormat.friendlyMessage(error));
             this.updateButtons();
         });
     }
@@ -816,7 +816,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         }, error -> {
             this.actionInFlight = false;
             this.confirmDelete = false;
-            this.setStatusError(AbstractSharedWorldMetadataScreen.friendlyMessage(error));
+            this.setStatusError(SharedWorldMetadataFormat.friendlyMessage(error));
             this.updateButtons();
         });
     }
@@ -836,7 +836,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         }, error -> {
             this.actionInFlight = false;
             this.confirmKick = false;
-            this.setStatusError(AbstractSharedWorldMetadataScreen.friendlyMessage(error));
+            this.setStatusError(SharedWorldMetadataFormat.friendlyMessage(error));
             this.updateButtons();
         });
     }
@@ -888,7 +888,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
             this.reloadData();
         }, error -> {
             this.actionInFlight = false;
-            this.setStatusError(AbstractSharedWorldMetadataScreen.friendlyMessage(error));
+            this.setStatusError(SharedWorldMetadataFormat.friendlyMessage(error));
             this.updateButtons();
         });
     }
@@ -902,7 +902,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
                 this.refreshStatus();
             }
         } catch (Exception exception) {
-            this.setStatusError(AbstractSharedWorldMetadataScreen.friendlyMessage(exception));
+            this.setStatusError(SharedWorldMetadataFormat.friendlyMessage(exception));
         }
     }
 
@@ -997,7 +997,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
             return false;
         }
         String currentName = this.nameBox.getValue().trim();
-        String currentMotd = AbstractSharedWorldMetadataScreen.effectiveMotd(this.motdBox.getValue());
+        String currentMotd = SharedWorldMetadataFormat.effectiveMotd(this.motdBox.getValue());
         return !Objects.equals(currentName, blankOr(this.details.name(), ""))
                 || !Objects.equals(currentMotd, blankOr(this.details.motd(), ""))
                 || this.selectedIcon != null
@@ -1078,7 +1078,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
     }
 
     private String previewMotd() {
-        return AbstractSharedWorldMetadataScreen.effectiveMotd(this.motdBox.getValue());
+        return SharedWorldMetadataFormat.effectiveMotd(this.motdBox.getValue());
     }
 
     private WorldSnapshotSummaryDto chooseSelectedSnapshot(String preferredId) {
@@ -1107,6 +1107,11 @@ public final class EditSharedWorldScreen extends VersionedScreen {
             }
         }
         return this.memberships.get(0);
+    }
+
+    /** A child screen aborted an operation on the player's request. */
+    void showTransientWarning(String message) {
+        this.statusBanner.setTransient(SharedWorldStatusBanner.Kind.WARNING, Component.literal(message), SUCCESS_STATUS_TTL_MS);
     }
 
     private void resetConfirms() {

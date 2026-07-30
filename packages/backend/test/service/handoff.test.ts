@@ -764,7 +764,7 @@ describe("SharedWorldService handoff", () => {
       })
     ))).rejects.toMatchObject({
       status: 409,
-      message: "SharedWorld host lease is no longer active for snapshot upload."
+      message: "Someone else is hosting this world now, so this upload was stopped."
     });
 
     expect(uploaded).toEqual([]);

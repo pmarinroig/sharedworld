@@ -135,6 +135,11 @@ final class InitialSnapshotUploadPipeline {
         long copiedBytes = 0L;
 
         for (Path path : paths) {
+            if (Thread.currentThread().isInterrupted()) {
+                // Cancel support: a large world copy must notice the interrupt
+                // between files, not only during network I/O.
+                throw new IOException("Copy cancelled.");
+            }
             Path relative = source.relativize(path);
             if (relative.toString().isBlank()) {
                 continue;

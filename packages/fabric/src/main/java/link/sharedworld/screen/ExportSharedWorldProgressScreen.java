@@ -26,6 +26,9 @@ public final class ExportSharedWorldProgressScreen extends link.sharedworld.vers
     private final WorldDetailsDto world;
     private volatile SharedWorldProgressState progressState;
     private boolean started;
+    private volatile Thread workerThread;
+    private volatile boolean cancelRequested;
+    private net.minecraft.client.gui.components.Button cancelButton;
 
     public ExportSharedWorldProgressScreen(EditSharedWorldScreen parent, WorldDetailsDto world) {
         super(Component.empty());
@@ -41,9 +44,27 @@ public final class ExportSharedWorldProgressScreen extends link.sharedworld.vers
 
     @Override
     protected void init() {
+        this.cancelButton = this.addRenderableWidget(net.minecraft.client.gui.components.Button.builder(
+                        Component.translatable("screen.sharedworld.cancel"), ignored -> this.requestCancel())
+                .bounds(this.width / 2 - 75, this.height - 40, 150, 20)
+                .build());
+        this.cancelButton.active = !this.cancelRequested;
         if (!this.started) {
             this.started = true;
             this.startExport();
+        }
+    }
+
+    /** Abort the export; the flow deletes the partial saves-folder copy on failure. */
+    private void requestCancel() {
+        if (this.cancelRequested) {
+            return;
+        }
+        this.cancelRequested = true;
+        this.cancelButton.active = false;
+        Thread worker = this.workerThread;
+        if (worker != null) {
+            worker.interrupt();
         }
     }
 
@@ -80,6 +101,7 @@ public final class ExportSharedWorldProgressScreen extends link.sharedworld.vers
         SharedWorldClient.guestCacheWarmer().pauseWorld(this.world.id());
         CompletableFuture
                 .supplyAsync(() -> {
+                    this.workerThread = Thread.currentThread();
                     try {
                         return flow.export(
                                 this.world.id(),
@@ -89,11 +111,20 @@ public final class ExportSharedWorldProgressScreen extends link.sharedworld.vers
                         );
                     } catch (Exception exception) {
                         throw new RuntimeException(exception);
+                    } finally {
+                        this.workerThread = null;
+                        // Don't leak the interrupt flag into the shared IO pool.
+                        Thread.interrupted();
                     }
                 }, SharedWorldClient.ioExecutor())
                 .whenComplete((result, error) -> Minecraft.getInstance().execute(() -> {
                     SharedWorldClient.guestCacheWarmer().resumeWorld(this.world.id());
                     if (error != null) {
+                        if (this.cancelRequested) {
+                            this.parent.showTransientWarning(SharedWorldText.string("screen.sharedworld.export_cancelled"));
+                            link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, this.parent);
+                            return;
+                        }
                         Throwable cause = error.getCause() != null ? error.getCause() : error;
                         this.finishWithError(SharedWorldText.errorMessageOrDefault(cause.getMessage()));
                     } else {

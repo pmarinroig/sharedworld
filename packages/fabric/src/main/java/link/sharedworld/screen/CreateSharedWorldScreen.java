@@ -597,7 +597,7 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
                 this.driveLinkController.clearIfCurrent(attempt);
                 this.banner.set(
                         SharedWorldStatusBanner.Kind.ERROR,
-                        Component.literal(AbstractSharedWorldMetadataScreen.friendlyMessage(exception))
+                        Component.literal(SharedWorldMetadataFormat.friendlyMessage(exception))
                 );
                 this.updateButtons();
             });
@@ -766,7 +766,7 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
                 save,
                 freshLink,
                 this.worldName(),
-                AbstractSharedWorldMetadataScreen.effectiveMotd(this.motdBox.getValue()),
+                SharedWorldMetadataFormat.effectiveMotd(this.motdBox.getValue()),
                 this.selectedIcon,
                 this.clearCustomIcon
         );
@@ -839,7 +839,7 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
     }
 
     private String previewMotd() {
-        return AbstractSharedWorldMetadataScreen.effectiveMotd(this.motdBox.getValue());
+        return SharedWorldMetadataFormat.effectiveMotd(this.motdBox.getValue());
     }
 
     private static String blankOr(String value, String fallback) {

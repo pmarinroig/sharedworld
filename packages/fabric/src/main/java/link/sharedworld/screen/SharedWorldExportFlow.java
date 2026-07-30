@@ -73,6 +73,11 @@ final class SharedWorldExportFlow {
         }
         Files.createDirectories(target);
         for (Path path : paths) {
+            if (Thread.currentThread().isInterrupted()) {
+                // Cancel support: a large world copy must notice the interrupt
+                // between files, not only during network I/O.
+                throw new IOException("Export cancelled.");
+            }
             Path relative = source.relativize(path);
             if (relative.toString().isBlank()) {
                 continue;

@@ -795,7 +795,7 @@ describe("SharedWorldService lifecycle", () => {
       { playerUuid: "player-owner", playerName: "Owner" },
       world.id,
       { files: [], nonRegionPack: null, regionBundles: [] }
-    )).rejects.toMatchObject({ status: 409, message: "SharedWorld host lease is no longer active for snapshot upload." });
+    )).rejects.toMatchObject({ status: 409, message: "Someone else is hosting this world now, so this upload was stopped." });
 
     await expect(instance.finalizeSnapshot(
       { playerUuid: "player-owner", playerName: "Owner" },
@@ -805,7 +805,7 @@ describe("SharedWorldService lifecycle", () => {
         packs: []
       },
       new Date("2099-01-03T00:01:06.000Z")
-    )).rejects.toMatchObject({ status: 409, message: "SharedWorld host lease is no longer active for snapshot upload." });
+    )).rejects.toMatchObject({ status: 409, message: "Someone else is hosting this world now, so this upload was stopped." });
 
     await expect(instance.completeFinalization(
       { playerUuid: "player-owner", playerName: "Owner" },
@@ -890,7 +890,7 @@ describe("SharedWorldService lifecycle", () => {
       world.id,
       { ...auth, graceful: true },
       new Date("2099-01-01T00:30:00.000Z")
-    )).rejects.toThrow("host lease is no longer active");
+    )).rejects.toThrow("hosting this world now");
     expect(await repository.getUncleanShutdownWarning(world.id)).not.toBeNull();
   });
 });
