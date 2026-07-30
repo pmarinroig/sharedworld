@@ -419,7 +419,8 @@ public final class SharedWorldServerList extends link.sharedworld.versioned.Vers
         int playerCountX = iconRight - playerCountWidth - PLAYER_COUNT_GAP;
         int detailsWidth = Math.max(90, playerCountX - textLeft - DETAILS_GAP);
 
-        guiGraphics.drawString(font, Component.literal(name), textLeft, top + TITLE_Y_OFFSET, 0xFFFFFFFF);
+        String title = link.sharedworld.SharedWorldText.truncate(font, name, Math.max(40, playerCountX - DETAILS_GAP - textLeft));
+        guiGraphics.drawString(font, Component.literal(title), textLeft, top + TITLE_Y_OFFSET, 0xFFFFFFFF);
         List<FormattedCharSequence> lines = detailLines(font, motd, detailsWidth);
         for (int index = 0; index < Math.min(2, lines.size()); index++) {
             guiGraphics.drawString(font, lines.get(index), textLeft, top + DETAIL_Y_OFFSET + (index * DETAIL_LINE_SPACING), 0xFF808080);

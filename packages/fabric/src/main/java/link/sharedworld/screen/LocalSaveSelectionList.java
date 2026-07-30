@@ -83,15 +83,19 @@ final class LocalSaveSelectionList extends link.sharedworld.versioned.VersionedS
             int x = this.getContentX();
             int y = this.getContentY();
             GuiBlit.favicon(guiGraphics, this.iconTexture, x, y, 32);
-            guiGraphics.drawString(LocalSaveSelectionList.this.minecraft.font, Component.literal(this.save.displayName()), x + 36, y + 1, 0xFFFFFFFF);
+            var font = LocalSaveSelectionList.this.minecraft.font;
+            int textWidth = LocalSaveSelectionList.this.getRowWidth() - 36;
+            guiGraphics.drawString(font, Component.literal(link.sharedworld.SharedWorldText.truncate(font, this.save.displayName(), textWidth)), x + 36, y + 1, 0xFFFFFFFF);
             guiGraphics.drawString(
-                    LocalSaveSelectionList.this.minecraft.font,
-                    Component.literal(this.idAndLastPlayed()),
+                    font,
+                    Component.literal(link.sharedworld.SharedWorldText.truncate(font, this.idAndLastPlayed(), textWidth)),
                     x + 36,
                     y + 12,
                     0xFF808080
             );
-            guiGraphics.drawString(LocalSaveSelectionList.this.minecraft.font, this.save.metadata(), x + 36, y + 21, 0xFF808080);
+            // Folder-picked entries carry the full folder path here; keep the informative tail.
+            String metadata = link.sharedworld.SharedWorldText.truncateLeading(font, this.save.metadata().getString(), textWidth);
+            guiGraphics.drawString(font, Component.literal(metadata), x + 36, y + 21, 0xFF808080);
         }
 
         @Override

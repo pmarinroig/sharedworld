@@ -36,7 +36,8 @@ public final class DeleteSharedWorldScreen extends link.sharedworld.versioned.Ve
                 this.font,
                 Component.translatable(isOwner()
                         ? "screen.sharedworld.delete_question_owner"
-                        : "screen.sharedworld.delete_question_member", displayName(this.world)),
+                        : "screen.sharedworld.delete_question_member",
+                        SharedWorldText.truncate(this.font, displayName(this.world), 140)),
                 this.width / 2,
                 84,
                 0xFFFFFFFF

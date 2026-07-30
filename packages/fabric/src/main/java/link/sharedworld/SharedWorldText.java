@@ -34,4 +34,74 @@ public final class SharedWorldText {
     public static Component playerCount(int current, int max) {
         return component("screen.sharedworld.player_count", current, max);
     }
+
+    private static final String ELLIPSIS = "...";
+
+    /** Seam over Font width/substring operations so truncation stays unit-testable. */
+    public interface WidthProbe {
+        int width(String text);
+
+        /** The longest prefix of text that fits maxWidth. */
+        String prefixByWidth(String text, int maxWidth);
+
+        /** The longest suffix of text that fits maxWidth. */
+        String suffixByWidth(String text, int maxWidth);
+    }
+
+    /** Tail-ellipsized text fitting maxWidth ("My Very Long Wo..."). */
+    public static String truncate(net.minecraft.client.gui.Font font, String text, int maxWidth) {
+        return truncate(text, maxWidth, fontProbe(font));
+    }
+
+    /** Leading-ellipsized text fitting maxWidth ("...minecraft/saves/My World") — for paths, whose tail is the informative part. */
+    public static String truncateLeading(net.minecraft.client.gui.Font font, String text, int maxWidth) {
+        return truncateLeading(text, maxWidth, fontProbe(font));
+    }
+
+    static String truncate(String text, int maxWidth, WidthProbe probe) {
+        if (text == null) {
+            return "";
+        }
+        if (probe.width(text) <= maxWidth) {
+            return text;
+        }
+        int budget = maxWidth - probe.width(ELLIPSIS);
+        if (budget <= 0) {
+            return ELLIPSIS;
+        }
+        return probe.prefixByWidth(text, budget) + ELLIPSIS;
+    }
+
+    static String truncateLeading(String text, int maxWidth, WidthProbe probe) {
+        if (text == null) {
+            return "";
+        }
+        if (probe.width(text) <= maxWidth) {
+            return text;
+        }
+        int budget = maxWidth - probe.width(ELLIPSIS);
+        if (budget <= 0) {
+            return ELLIPSIS;
+        }
+        return ELLIPSIS + probe.suffixByWidth(text, budget);
+    }
+
+    private static WidthProbe fontProbe(net.minecraft.client.gui.Font font) {
+        return new WidthProbe() {
+            @Override
+            public int width(String text) {
+                return font.width(text);
+            }
+
+            @Override
+            public String prefixByWidth(String text, int maxWidth) {
+                return font.plainSubstrByWidth(text, maxWidth);
+            }
+
+            @Override
+            public String suffixByWidth(String text, int maxWidth) {
+                return font.plainSubstrByWidth(text, maxWidth, true);
+            }
+        };
+    }
 }

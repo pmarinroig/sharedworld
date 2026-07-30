@@ -378,7 +378,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
             return;
         }
 
-        this.drawKeyValue(guiGraphics, detailX + 12, detailY + 18, Component.translatable("screen.sharedworld.members_player"), this.selectedMember.playerName(), 84);
+        this.drawKeyValue(guiGraphics, detailX + 12, detailY + 18, Component.translatable("screen.sharedworld.members_player"), this.selectedMember.playerName(), 84, detailWidth - 24 - 84);
         this.drawKeyValue(guiGraphics, detailX + 12, detailY + 34, Component.translatable("screen.sharedworld.members_role"), formatRole(this.selectedMember.role()), 84);
         this.drawKeyValue(guiGraphics, detailX + 12, detailY + 50, Component.translatable("screen.sharedworld.members_joined"), formatTimestamp(this.selectedMember.joinedAt()), 84);
         this.drawKeyValue(
@@ -402,10 +402,11 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         int width = this.contentArea.width() - 72;
         int top = this.contentArea.top() + 18;
         this.drawPanel(guiGraphics, left, top, width, this.contentArea.height() - 36, 0x7F000000, 0xFF6C6C6C);
-        this.drawKeyValue(guiGraphics, left + 14, top + 18, Component.translatable("screen.sharedworld.storage_provider"), formatStorageProvider(this.details));
-        this.drawKeyValue(guiGraphics, left + 14, top + 40, Component.translatable("screen.sharedworld.storage_account"), formatStorageAccount(this.details, this.storageUsage));
-        this.drawKeyValue(guiGraphics, left + 14, top + 62, Component.translatable("screen.sharedworld.storage_used_by_world"), formatUsedByWorld(this.storageUsage));
-        this.drawKeyValue(guiGraphics, left + 14, top + 84, Component.translatable("screen.sharedworld.storage_quota"), formatQuota(this.storageUsage));
+        int storageValueWidth = width - 28 - 108;
+        this.drawKeyValue(guiGraphics, left + 14, top + 18, Component.translatable("screen.sharedworld.storage_provider"), formatStorageProvider(this.details), 108, storageValueWidth);
+        this.drawKeyValue(guiGraphics, left + 14, top + 40, Component.translatable("screen.sharedworld.storage_account"), formatStorageAccount(this.details, this.storageUsage), 108, storageValueWidth);
+        this.drawKeyValue(guiGraphics, left + 14, top + 62, Component.translatable("screen.sharedworld.storage_used_by_world"), formatUsedByWorld(this.storageUsage), 108, storageValueWidth);
+        this.drawKeyValue(guiGraphics, left + 14, top + 84, Component.translatable("screen.sharedworld.storage_quota"), formatQuota(this.storageUsage), 108, storageValueWidth);
     }
 
     private void updateButtons() {
@@ -1201,8 +1202,13 @@ public final class EditSharedWorldScreen extends VersionedScreen {
     }
 
     private void drawKeyValue(GuiGraphics guiGraphics, int x, int y, Component key, String value, int valueOffset) {
+        this.drawKeyValue(guiGraphics, x, y, key, value, valueOffset, Integer.MAX_VALUE);
+    }
+
+    private void drawKeyValue(GuiGraphics guiGraphics, int x, int y, Component key, String value, int valueOffset, int maxValueWidth) {
         guiGraphics.drawString(this.font, key, x, y, 0xFF8EA3BC);
-        guiGraphics.drawString(this.font, Component.literal(blankOr(value, SharedWorldText.string("screen.sharedworld.not_set"))), x + valueOffset, y, 0xFFFFFFFF);
+        String display = blankOr(value, SharedWorldText.string("screen.sharedworld.not_set"));
+        guiGraphics.drawString(this.font, Component.literal(SharedWorldText.truncate(this.font, display, maxValueWidth)), x + valueOffset, y, 0xFFFFFFFF);
     }
 
     private void drawWrappedText(GuiGraphics guiGraphics, Component text, int x, int y, int width, int color) {

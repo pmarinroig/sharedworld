@@ -94,11 +94,13 @@ public final class ReplaceSharedWorldScreen extends link.sharedworld.versioned.V
         super.render(guiGraphics, mouseX, mouseY, partialTick);
         guiGraphics.drawCenteredString(this.font, this.title, this.width / 2, 14, 0xFFFFFFFF);
         String hint = this.message.isBlank()
-                ? SharedWorldText.string("screen.sharedworld.replace_hint", SharedWorldText.displayWorldName(this.world.name()))
+                ? SharedWorldText.string(
+                        "screen.sharedworld.replace_hint",
+                        SharedWorldText.truncate(this.font, SharedWorldText.displayWorldName(this.world.name()), 120))
                 : this.message;
         guiGraphics.drawCenteredString(
                 this.font,
-                Component.literal(hint),
+                Component.literal(SharedWorldText.truncate(this.font, hint, this.width - 40)),
                 this.width / 2,
                 this.selectFolderButton.getY() - 12,
                 this.message.isBlank() ? 0xFFB8C5D6 : 0xFFFF6B6B
