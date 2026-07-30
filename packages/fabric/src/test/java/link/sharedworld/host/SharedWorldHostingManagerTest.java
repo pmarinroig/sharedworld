@@ -1494,6 +1494,38 @@ final class SharedWorldHostingManagerTest {
     }
 
     @Test
+    void foreignOpenServerFailsThePublishInsteadOfTouchingIt() throws Exception {
+        LeaseRuntimeState leaseState = new LeaseRuntimeState("world-1", 7L, "token-7", 90_000L);
+        try (HeartbeatTestServer server = new HeartbeatTestServer(leaseState)) {
+            ManualExecutor background = new ManualExecutor();
+            ManualExecutor mainThread = new ManualExecutor();
+            FakeClientWorldGate gate = new FakeClientWorldGate(true);
+            // The player opened a plain singleplayer world while this attempt was
+            // stuck in OPENING_WORLD: publish must never attach to it.
+            gate.foreignServerOpen = true;
+            SharedWorldHostingManager manager = managerWithGate(
+                    apiClient(server.baseUrl()),
+                    new ManagedWorldStore(this.tempDir.resolve("managed-foreign-world")),
+                    background,
+                    mainThread,
+                    gate
+            );
+            primeStartup(manager, world("world-1", "Handoff World"), 7L, SharedWorldHostingManager.StartupMode.NORMAL);
+            setField(manager, "phase", SharedWorldHostingManager.Phase.OPENING_WORLD);
+
+            manager.tick(null);
+
+            assertEquals(SharedWorldHostingManager.Phase.ERROR, manager.phase());
+            // The foreign world stays untouched: no forced disconnect.
+            assertEquals(0, gate.disconnectRequests);
+
+            background.runAll();
+            mainThread.runAll();
+            assertEquals(1, leaseState.releaseCount());
+        }
+    }
+
+    @Test
     void beginHostingReentryReleasesADuplicateAssignmentInsteadOfLeakingIt() throws Exception {
         // The backend issued a fresh epoch-8 lease while the local attempt is
         // still running with epoch 7: the duplicate must be released.
@@ -1553,10 +1585,16 @@ final class SharedWorldHostingManagerTest {
     private static final class FakeClientWorldGate implements SharedWorldHostingManager.ClientWorldGate {
         private boolean worldOpen;
         private boolean safeToDisconnect = true;
+        private boolean foreignServerOpen;
         private int disconnectRequests;
 
         private FakeClientWorldGate(boolean worldOpen) {
             this.worldOpen = worldOpen;
+        }
+
+        @Override
+        public boolean isForeignServerOpen(Path expectedWorkingCopy) {
+            return this.foreignServerOpen;
         }
 
         @Override

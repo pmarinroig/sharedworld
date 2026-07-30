@@ -128,6 +128,7 @@
   "screen.sharedworld.hosting_opening_world": "S'està obrint el món...",
   "screen.sharedworld.hosting_opening_to_friends": "S'està obrint el món als teus amics...",
   "screen.sharedworld.hosting_publish_failed": "Minecraft no ha pogut obrir el món a altres jugadors. Torna-ho a provar d'aquí a un moment.",
+  "screen.sharedworld.hosting_foreign_world_open": "SharedWorld ha deixat d'allotjar perquè hi ha un altre món obert. Torna al menú de SharedWorld i torna-ho a provar.",
   "screen.sharedworld.hosting_waiting_for_e4mc": "S'està preparant la connexió per als teus amics...",
   "screen.sharedworld.hosting_live_at": "El teu món és obert a %s. Els teus amics ja s'hi poden unir!",
   "screen.sharedworld.hosting_running": "El teu món és obert. Els teus amics s'hi poden unir.",

@@ -174,6 +174,16 @@ public final class SharedWorldHostingManager {
         boolean isSafeToDisconnect();
 
         void requestDisconnect();
+
+        /**
+         * Whether a singleplayer server is open that is NOT the given managed working copy.
+         * Guards publish against attaching to a foreign world (e.g. a vanilla singleplayer world
+         * the player opened while a stuck attempt was still in OPENING_WORLD). False when no
+         * server is open at all — a world that is still opening is not foreign.
+         */
+        default boolean isForeignServerOpen(Path expectedWorkingCopy) {
+            return false;
+        }
     }
 
     private static final class MinecraftClientWorldGate implements ClientWorldGate {
@@ -192,6 +202,12 @@ public final class SharedWorldHostingManager {
         public void requestDisconnect() {
             Minecraft minecraft = Minecraft.getInstance();
             minecraft.execute(() -> link.sharedworld.versioned.ClientCompat.disconnectFromWorld(minecraft));
+        }
+
+        @Override
+        public boolean isForeignServerOpen(Path expectedWorkingCopy) {
+            var server = Minecraft.getInstance().getSingleplayerServer();
+            return server != null && !SharedWorldServerIdentity.isServerForWorkingCopy(server, expectedWorkingCopy);
         }
     }
 
@@ -353,7 +369,16 @@ public final class SharedWorldHostingManager {
     }
 
     private boolean driveLocalWorldPublish(Minecraft minecraft) {
-        if (this.phase != Phase.OPENING_WORLD || !minecraft.hasSingleplayerServer()) {
+        if (this.phase != Phase.OPENING_WORLD) {
+            return false;
+        }
+        if (this.clientWorldGate.isForeignServerOpen(this.worldStore.workingCopy(this.world.id()))) {
+            // The open integrated server is not this attempt's managed working copy — the player's
+            // own world must never be published or otherwise touched; fail the attempt instead.
+            fail(SharedWorldText.string("screen.sharedworld.hosting_foreign_world_open"), null);
+            return true;
+        }
+        if (!minecraft.hasSingleplayerServer()) {
             return false;
         }
         if (!isClientReadyForPublish(minecraft)) {

@@ -108,6 +108,9 @@ final class SharedWorldExportFlow {
         CompoundTag levelTag = NbtCompat.readCompressed(levelDat);
         CompoundTag dataTag = NbtCompat.getCompoundOrEmpty(levelTag, "Data").copy();
         dataTag.putString("LevelName", levelName);
+        // Hosting locks the managed world's difficulty; an exported save is an
+        // ordinary singleplayer world again and must not inherit the lock.
+        dataTag.putBoolean("DifficultyLocked", false);
         levelTag.put("Data", dataTag);
         NbtCompat.writeCompressed(levelTag, levelDat);
     }

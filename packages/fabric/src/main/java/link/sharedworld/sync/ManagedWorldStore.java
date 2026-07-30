@@ -23,6 +23,10 @@ public final class ManagedWorldStore {
         this.sharedWorldRoot = sharedWorldRoot;
     }
 
+    public Path root() {
+        return this.sharedWorldRoot;
+    }
+
     public Path worldContainer(String worldId) {
         return this.sharedWorldRoot.resolve(worldId);
     }

@@ -239,7 +239,7 @@ public final class SharedWorldClient implements ClientModInitializer {
             // Difficulty is owner-managed through the Settings tab; no host
             // (owner included) changes it from the pause menu mid-session.
             var server = Minecraft.getInstance().getSingleplayerServer();
-            if (server != null) {
+            if (server != null && link.sharedworld.host.SharedWorldServerIdentity.isManagedWorldServer(server)) {
                 server.execute(() -> link.sharedworld.versioned.ServerSettingsCompat.setDifficultyLocked(server, true));
             }
         }
@@ -261,7 +261,7 @@ public final class SharedWorldClient implements ClientModInitializer {
         @Override
         public void onWorldSettingsChanged(link.sharedworld.api.SharedWorldModels.WorldSettingsDto settings) {
             var server = Minecraft.getInstance().getSingleplayerServer();
-            if (server == null) {
+            if (server == null || !link.sharedworld.host.SharedWorldServerIdentity.isManagedWorldServer(server)) {
                 return;
             }
             // Difficulty/gamerule setters must run on the server thread; the

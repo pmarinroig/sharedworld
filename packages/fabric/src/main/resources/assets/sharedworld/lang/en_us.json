@@ -128,6 +128,7 @@
   "screen.sharedworld.hosting_opening_world": "Opening the world...",
   "screen.sharedworld.hosting_opening_to_friends": "Opening the world to your friends...",
   "screen.sharedworld.hosting_publish_failed": "Minecraft couldn't open the world to other players. Try again in a moment.",
+  "screen.sharedworld.hosting_foreign_world_open": "SharedWorld stopped hosting because a different world is open. Go back to the SharedWorld menu and try again.",
   "screen.sharedworld.hosting_waiting_for_e4mc": "Setting up the connection for your friends...",
   "screen.sharedworld.hosting_live_at": "Your world is open at %s. Friends can join now!",
   "screen.sharedworld.hosting_running": "Your world is open. Friends can join.",

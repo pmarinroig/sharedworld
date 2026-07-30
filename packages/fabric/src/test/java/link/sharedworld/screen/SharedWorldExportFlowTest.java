@@ -63,6 +63,8 @@ final class SharedWorldExportFlowTest {
         CompoundTag data = new CompoundTag();
         data.putString("LevelName", "Original Save");
         data.putString("generatorName", "default");
+        // Hosting locked the managed world's difficulty; the export must unlock it.
+        data.putBoolean("DifficultyLocked", true);
         CompoundTag root = new CompoundTag();
         root.put("Data", data);
         NbtCompat.writeCompressed(root, levelDat);
@@ -73,6 +75,7 @@ final class SharedWorldExportFlowTest {
         CompoundTag rereadData = NbtCompat.getCompoundOrEmpty(reread, "Data");
         assertEquals("Exported (2)", NbtCompat.getStringOr(rereadData, "LevelName", ""));
         assertEquals("default", NbtCompat.getStringOr(rereadData, "generatorName", ""));
+        assertEquals((byte) 0, NbtCompat.getByteOr(rereadData, "DifficultyLocked", (byte) 1));
     }
 
     @Test
