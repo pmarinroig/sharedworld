@@ -10,6 +10,7 @@ import java.io.IOException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -309,6 +310,61 @@ final class SharedWorldReleaseCoordinatorTest {
             assertEquals(SharedWorldReleasePhase.BEGINNING_BACKEND_FINALIZATION, restarted.releaseCoordinator.view().phase());
 
             restarted.close();
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
+    void startupRecoveryDefersAndRearmsWhenAWorldOpenedDuringTheAsyncCheck() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            harness.hostControl.setActiveHostSession("world-1", "World", 7L, "token-7", "join.example");
+            harness.releaseBackend.setRuntime(SharedWorldCoordinatorHarness.runtime("world-1", "host-live", 7L, null, "join.example"));
+            harness.releaseCoordinator.beginGracefulDisconnect(null);
+            harness.clientShell.setLocalServerState(false, false, false);
+            assertNotNull(harness.releaseCoordinator.onClientDisconnectReturnDisplay(null));
+
+            SharedWorldCoordinatorHarness restarted = harness.restart();
+            restarted.clientShell.setLocalServerState(false, false, false);
+            restarted.tickRelease();
+            // The player enters a (vanilla) world while the startup resolution is in flight:
+            // activating release state now would disconnect or cover their world.
+            restarted.clientShell.setLocalServerState(true, true, true);
+            restarted.runUntilIdle();
+
+            assertNull(restarted.releaseCoordinator.view());
+            assertEquals(0, restarted.clientShell.disconnectCalls());
+            assertNotNull(restarted.releaseStore.load());
+
+            // Back at a menu the re-armed check reactivates the persisted release.
+            restarted.clientShell.setLocalServerState(false, false, false);
+            restarted.tickRelease();
+            restarted.runUntilIdle();
+
+            assertNotNull(restarted.releaseCoordinator.view());
+            restarted.close();
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
+    void gracefulReleaseSkipsDisconnectWhenTheOpenWorldIsNotTheHostedOne() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            harness.hostControl.setActiveHostSession("world-1", "World", 7L, "token-7", "join.example");
+            harness.releaseBackend.setRuntime(SharedWorldCoordinatorHarness.runtime("world-1", "host-live", 7L, null, "join.example"));
+            // The open singleplayer world is NOT the hosted managed world (our world already
+            // closed; the player opened a vanilla world): it must never be disconnected.
+            harness.clientShell.setManagedWorldOpen(false);
+
+            harness.releaseCoordinator.beginGracefulDisconnect(null);
+
+            assertEquals(0, harness.clientShell.disconnectCalls());
+            assertNotNull(harness.releaseCoordinator.view());
+            // The release still proceeds from its staging copy.
+            assertNotEquals(SharedWorldReleasePhase.DISCONNECTING_LOCAL_WORLD, harness.releaseCoordinator.view().phase());
         } finally {
             harness.close();
         }

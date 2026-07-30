@@ -50,14 +50,31 @@ public final class SharedWorldClientLifecycleRouter {
             LOGGER.info("SharedWorld release diagnostics [router]: auto-acknowledged COMPLETE release state at menu.");
             return false;
         }
-        if (client.level != null || client.hasSingleplayerServer()) {
-            return false;
-        }
-        if (link.sharedworld.versioned.ClientCompat.currentScreen(client) instanceof SharedWorldSavingScreen || link.sharedworld.versioned.ClientCompat.currentScreen(client) instanceof SharedWorldErrorScreen) {
+        Screen currentScreen = link.sharedworld.versioned.ClientCompat.currentScreen(client);
+        boolean onLifecycleScreen = currentScreen instanceof SharedWorldSavingScreen || currentScreen instanceof SharedWorldErrorScreen;
+        if (!shouldForceLifecycleScreen(
+                client.level != null,
+                client.hasSingleplayerServer(),
+                onLifecycleScreen,
+                link.sharedworld.versioned.ClientCompat.isWorldEntryScreen(currentScreen))) {
             return false;
         }
         link.sharedworld.versioned.ClientCompat.setScreen(client, screenForLifecycleView(releaseCoordinator, defaultParent()));
         return true;
+    }
+
+    /**
+     * The "no level open" window also covers vanilla world creation/loading (the moments between
+     * clicking Create New World and the integrated server attaching); forcing a lifecycle screen
+     * there would clobber the player's world-entry flow.
+     */
+    static boolean shouldForceLifecycleScreen(
+            boolean hasLevel,
+            boolean hasSingleplayerServer,
+            boolean onLifecycleScreen,
+            boolean onWorldEntryScreen
+    ) {
+        return !hasLevel && !hasSingleplayerServer && !onLifecycleScreen && !onWorldEntryScreen;
     }
 
     static boolean autoAcknowledgeCompletedReleaseAtMenu(

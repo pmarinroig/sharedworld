@@ -66,4 +66,18 @@ public final class ClientCompat {
     public static net.minecraft.client.gui.screens.Screen currentScreen(Minecraft minecraft) {
         return minecraft.screen;
     }
+
+    /**
+     * Whether the screen belongs to the vanilla world-entry flow (world selection/creation,
+     * connecting, level loading). SharedWorld lifecycle screens must never be forced over these.
+     */
+    public static boolean isWorldEntryScreen(net.minecraft.client.gui.screens.Screen screen) {
+        return screen instanceof net.minecraft.client.gui.screens.worldselection.SelectWorldScreen
+            || screen instanceof net.minecraft.client.gui.screens.worldselection.CreateWorldScreen
+            || screen instanceof net.minecraft.client.gui.screens.ConnectScreen
+            || screen instanceof net.minecraft.client.gui.screens.LevelLoadingScreen
+            || screen instanceof net.minecraft.client.gui.screens.ProgressScreen
+            || screen instanceof net.minecraft.client.gui.screens.GenericMessageScreen
+            || screen instanceof net.minecraft.client.gui.screens.ReceivingLevelScreen;
+    }
 }

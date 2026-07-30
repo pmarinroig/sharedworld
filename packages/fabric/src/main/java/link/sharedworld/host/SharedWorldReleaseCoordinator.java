@@ -680,6 +680,13 @@ public final class SharedWorldReleaseCoordinator {
                     if (this.state != null || this.terminalState != null) {
                         return;
                     }
+                    if (this.clientShell.hasLevel() || this.clientShell.hasSingleplayerServer()) {
+                        // The player entered a world while the startup resolution was in flight;
+                        // activating release state now would disconnect or cover their world.
+                        // Re-arm so the record is reconsidered at the next genuine menu tick.
+                        this.startupCleanupChecked = false;
+                        return;
+                    }
                     SharedWorldReleaseStore.ReleaseRecord latest = this.releaseStore.loadFor(record.worldId, this.playerIdentity.currentPlayerUuid());
                     if (latest == null || latest.releaseAttemptId != record.releaseAttemptId) {
                         return;
@@ -1139,6 +1146,14 @@ public final class SharedWorldReleaseCoordinator {
         }
         current.localDisconnectRequested = true;
         if (!this.clientShell.hasSingleplayerServer() && !this.clientShell.hasLevel()) {
+            markLocalDisconnectObserved(current.record);
+            return;
+        }
+        if ((this.clientShell.hasSingleplayerServer() && !this.clientShell.isManagedWorldOpen())
+                || (!this.clientShell.hasSingleplayerServer() && this.clientShell.hasLevel() && !this.clientShell.isLocalServer())) {
+            // A world is open but it is not our hosted world (a vanilla singleplayer world, or a
+            // remote-server session entered after our world closed): the hosted world is already
+            // gone, so the release proceeds from its staging copy without touching this one.
             markLocalDisconnectObserved(current.record);
             return;
         }

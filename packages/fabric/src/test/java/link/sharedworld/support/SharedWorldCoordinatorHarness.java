@@ -348,6 +348,7 @@ public final class SharedWorldCoordinatorHarness {
         private boolean hasSingleplayerServer;
         private boolean hasLevel;
         private boolean localServer;
+        private Boolean managedWorldOpen;
         private boolean renderThread = true;
         private Screen currentScreen;
         private final List<String> actions = new ArrayList<>();
@@ -450,6 +451,16 @@ public final class SharedWorldCoordinatorHarness {
             this.hasSingleplayerServer = hasSingleplayerServer;
             this.hasLevel = hasLevel;
             this.localServer = localServer;
+        }
+
+        @Override
+        public boolean isManagedWorldOpen() {
+            return this.managedWorldOpen != null ? this.managedWorldOpen : this.hasSingleplayerServer;
+        }
+
+        /** Overrides the default "any open local server is managed"; null restores mirroring. */
+        public void setManagedWorldOpen(Boolean managedWorldOpen) {
+            this.managedWorldOpen = managedWorldOpen;
         }
 
         public void setRenderThread(boolean renderThread) {

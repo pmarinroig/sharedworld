@@ -46,6 +46,14 @@ public final class SharedWorldCoordinatorSupport {
         default SharedWorldPlaySessionTracker.ActiveWorldSession currentPlaySession() {
             return null;
         }
+
+        /**
+         * Whether the open singleplayer server is running a SharedWorld-managed world.
+         * Shells that cannot tell treat any open local server as managed.
+         */
+        default boolean isManagedWorldOpen() {
+            return hasSingleplayerServer();
+        }
     }
 
     @FunctionalInterface
@@ -176,6 +184,12 @@ public final class SharedWorldCoordinatorSupport {
             @Override
             public SharedWorldPlaySessionTracker.ActiveWorldSession currentPlaySession() {
                 return SharedWorldClient.playSessionTracker().currentSession();
+            }
+
+            @Override
+            public boolean isManagedWorldOpen() {
+                return link.sharedworld.host.SharedWorldServerIdentity.isManagedWorldServer(
+                        Minecraft.getInstance().getSingleplayerServer());
             }
         };
     }

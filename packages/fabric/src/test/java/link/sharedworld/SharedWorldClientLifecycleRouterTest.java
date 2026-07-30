@@ -7,11 +7,24 @@ import link.sharedworld.support.SharedWorldCoordinatorHarness;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class SharedWorldClientLifecycleRouterTest {
+    @Test
+    void lifecycleScreenIsOnlyForcedAtAGenuineMenu() {
+        // hasLevel, hasSingleplayerServer, onLifecycleScreen, onWorldEntryScreen
+        assertTrue(SharedWorldClientLifecycleRouter.shouldForceLifecycleScreen(false, false, false, false));
+        assertFalse(SharedWorldClientLifecycleRouter.shouldForceLifecycleScreen(true, false, false, false));
+        assertFalse(SharedWorldClientLifecycleRouter.shouldForceLifecycleScreen(false, true, false, false));
+        assertFalse(SharedWorldClientLifecycleRouter.shouldForceLifecycleScreen(false, false, true, false));
+        // The window between clicking Create New World and the integrated server attaching:
+        // no level, no server, but a world-entry screen is up - never clobber it.
+        assertFalse(SharedWorldClientLifecycleRouter.shouldForceLifecycleScreen(false, false, false, true));
+    }
+
     @Test
     void revokedTerminalViewUsesLocalizedRevokedCopy() {
         SharedWorldReleaseCoordinator.ReleaseView view = new SharedWorldReleaseCoordinator.ReleaseView(
