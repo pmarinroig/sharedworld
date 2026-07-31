@@ -18,6 +18,8 @@ import net.minecraft.network.chat.Component;
  */
 public final class ReplaceSharedWorldScreen extends link.sharedworld.versioned.VersionedScreen implements LocalSaveSelectionList.Host {
     private static final int CONTENT_MARGIN = 12;
+    /** Screen title sits at y 14 (9px tall); the list follows right under it. */
+    private static final int LIST_TOP = 32;
 
     private final EditSharedWorldScreen parent;
     private final WorldDetailsDto world;
@@ -71,22 +73,19 @@ public final class ReplaceSharedWorldScreen extends link.sharedworld.versioned.V
     @Override
     protected void repositionElements() {
         this.layout.arrangeElements();
-        // Same shape as the create wizard's pick step: the list is sized to its
-        // entries (capped at the band above the footer-anchored button position)
-        // and the folder button follows the list up instead of leaving a dead band.
-        int listTop = this.layout.getHeaderHeight() + CONTENT_MARGIN;
+        // Same shape as the create wizard's pick step: the list starts right
+        // under the title and runs to the folder button, which sits right
+        // above the footer.
         int folderButtonHeight = 20;
-        int folderButtonYCap = this.height - this.layout.getFooterHeight() - folderButtonHeight - 6;
-        int maxListHeight = Math.max(36, folderButtonYCap - 8 - listTop);
-        int listHeight = Math.min(Math.max(36, this.localSaves.size() * 36 + 4), maxListHeight);
+        int folderButtonY = this.height - this.layout.getFooterHeight() - folderButtonHeight - 6;
         this.saveList.sharedworldSetBounds(
                 CONTENT_MARGIN,
-                listTop,
+                LIST_TOP,
                 this.width - CONTENT_MARGIN * 2,
-                listHeight
+                Math.max(36, folderButtonY - 8 - LIST_TOP)
         );
         this.selectFolderButton.setPosition((this.width - this.selectFolderButton.getWidth()) / 2,
-                Math.min(listTop + listHeight + 6, folderButtonYCap));
+                folderButtonY);
     }
 
     @Override
@@ -100,14 +99,10 @@ public final class ReplaceSharedWorldScreen extends link.sharedworld.versioned.V
         this.sharedworldRenderMenuBackground(guiGraphics);
         super.render(guiGraphics, mouseX, mouseY, partialTick);
         guiGraphics.drawCenteredString(this.font, this.title, this.width / 2, 14, 0xFFFFFFFF);
-        // Folder-pick errors surface in the shared banner: below the button when
-        // the freed strip has room, above it when the button sits at its cap.
-        int buttonBottom = this.selectFolderButton.getY() + this.selectFolderButton.getHeight();
-        int belowAnchor = this.height - this.layout.getFooterHeight() - 6;
-        int bannerBottomY = belowAnchor - SharedWorldStatusBanner.BAND_HEIGHT >= buttonBottom + 2
-                ? belowAnchor
-                : this.selectFolderButton.getY() - 4;
-        this.banner.renderBottomCentered(guiGraphics, this.font, this.width / 2, bannerBottomY, Math.min(this.width - 40, 420));
+        // Folder-pick errors surface in the shared banner, drawn just above the
+        // button like the create wizard's pick step.
+        this.banner.renderBottomCentered(guiGraphics, this.font, this.width / 2,
+                this.selectFolderButton.getY() - 4, Math.min(this.width - 40, 420));
     }
 
     @Override
@@ -116,7 +111,6 @@ public final class ReplaceSharedWorldScreen extends link.sharedworld.versioned.V
         this.confirmReplace = false;
         this.banner.clearSticky();
         this.saveList.setSaves(this.localSaves, save.id());
-        this.repositionElements();
         this.updateButtons();
     }
 

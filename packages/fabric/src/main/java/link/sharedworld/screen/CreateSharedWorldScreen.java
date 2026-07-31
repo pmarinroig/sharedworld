@@ -67,8 +67,10 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
     private StorageAccountSummaryDto storageAccount;
     private boolean accountCheckStarted;
     private FaviconTexture previewTexture;
+    /** Step title sits at y 8 (9px tall); the pick list follows right under it. */
+    private static final int PICK_LIST_TOP = 26;
+
     private ScreenRectangle contentArea;
-    private int pickListHeight = 36;
 
     private LocalSaveSelectionList saveList;
     private Button selectFolderButton;
@@ -219,24 +221,20 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         }
         ScreenRectangle area = this.contentArea;
 
-        // Pick-world step widgets: the list is sized to its entries (capped at
-        // the band above the footer-anchored button position) and the folder
-        // button follows the list up instead of leaving an empty list body.
+        // Pick-world step widgets: the list starts right under the step title
+        // (no header band to honor on this screen) and runs to the folder
+        // button, which sits right above the footer.
         int folderButtonHeight = 20;
-        int folderButtonYCap = this.height - FOOTER_HEIGHT - folderButtonHeight - 6;
-        int listTop = area.top() + CONTENT_MARGIN;
-        int maxListHeight = Math.max(36, folderButtonYCap - 8 - listTop);
-        int listHeight = Math.min(Math.max(36, this.localSaves.size() * 36 + 4), maxListHeight);
-        this.pickListHeight = listHeight;
+        int folderButtonY = this.height - FOOTER_HEIGHT - folderButtonHeight - 6;
         this.saveList.sharedworldSetBounds(
                 area.left() + CONTENT_MARGIN,
-                listTop,
+                PICK_LIST_TOP,
                 area.width() - CONTENT_MARGIN * 2,
-                listHeight
+                Math.max(36, folderButtonY - 8 - PICK_LIST_TOP)
         );
         this.selectFolderButton.setPosition(
                 area.left() + (area.width() - this.selectFolderButton.getWidth()) / 2,
-                Math.min(listTop + listHeight + 6, folderButtonYCap)
+                folderButtonY
         );
 
         // Details step widgets.
@@ -339,16 +337,11 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
             case DETAILS -> this.renderDetailsDecorations(guiGraphics);
         }
 
-        // On the pick step the banner (folder-pick errors) prefers the freed
-        // strip below the button; when the button sits at its footer cap the
-        // strip is gone and the banner draws just above the button instead.
-        int bannerBottomY = this.height - FOOTER_HEIGHT - 6;
-        if (this.wizard.step() == CreateWizardModel.Step.PICK_WORLD && this.selectFolderButton != null) {
-            int buttonBottom = this.selectFolderButton.getY() + this.selectFolderButton.getHeight();
-            if (bannerBottomY - SharedWorldStatusBanner.BAND_HEIGHT < buttonBottom + 2) {
-                bannerBottomY = this.selectFolderButton.getY() - 4;
-            }
-        }
+        // On the pick step the folder button occupies the strip above the footer,
+        // so the banner (folder-pick errors) draws just above the button instead.
+        int bannerBottomY = this.wizard.step() == CreateWizardModel.Step.PICK_WORLD && this.selectFolderButton != null
+                ? this.selectFolderButton.getY() - 4
+                : this.height - FOOTER_HEIGHT - 6;
         this.banner.renderBottomCentered(guiGraphics, this.font, this.width / 2, bannerBottomY, Math.min(this.width - 40, 420));
         GuiBlit.footerSeparator(guiGraphics, this.height - this.layout.getFooterHeight() - 2, this.width);
     }
@@ -380,11 +373,12 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         if (this.contentArea == null || !this.localSaves.isEmpty()) {
             return;
         }
+        int listBottom = this.selectFolderButton != null ? this.selectFolderButton.getY() - 8 : this.height - FOOTER_HEIGHT - 34;
         guiGraphics.drawCenteredString(
                 this.font,
                 Component.translatable("screen.sharedworld.no_local_worlds"),
                 this.width / 2,
-                this.contentArea.top() + CONTENT_MARGIN + this.pickListHeight / 2 - 4,
+                (PICK_LIST_TOP + listBottom) / 2 - 4,
                 0xFFFFFFFF
         );
     }
@@ -428,8 +422,6 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
             this.nameBox.setValue(save.displayName());
         }
         this.saveList.setSaves(this.localSaves, save.id());
-        // A folder pick can add an entry, and the list is sized to its content.
-        this.layoutStepWidgets();
         this.refreshPreview();
         this.updateButtons();
     }
