@@ -260,7 +260,9 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         if (this.contentArea != null) {
             this.renderActiveTabDecorations(guiGraphics);
         }
-        this.statusBanner.renderBottomCentered(guiGraphics, this.font, this.width / 2, this.height - FOOTER_HEIGHT - 6, Math.min(this.width - 40, 420));
+        // Anchored as low as the footer allows: the centered preview card ends
+        // just above this strip, and the loading line must not touch it.
+        this.statusBanner.renderBottomCentered(guiGraphics, this.font, this.width / 2, this.height - FOOTER_HEIGHT - 2, Math.min(this.width - 40, 420));
     }
 
     void onSnapshotSelected(WorldSnapshotSummaryDto snapshot) {
