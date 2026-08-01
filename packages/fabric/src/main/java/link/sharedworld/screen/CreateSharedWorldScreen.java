@@ -84,6 +84,7 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
     private boolean clearCustomIcon;
     private boolean submitting;
     private boolean iconHovered;
+    private boolean restoreErrorVisible;
 
     public CreateSharedWorldScreen(SharedWorldScreen parent) {
         this(parent, null, null);
@@ -94,11 +95,14 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         this.parent = parent;
         this.restoredDraft = restoredDraft;
         this.restoreState = restoreState;
-        if (restoredDraft != null && restoredDraft.selectedSaveId() != null) {
-            this.selectedSave = this.localSaves.stream()
-                    .filter(save -> restoredDraft.selectedSaveId().equals(save.id()))
-                    .findFirst()
-                    .orElse(null);
+        if (restoredDraft != null && restoredDraft.selectedSave() != null) {
+            // The draft carries the full option, not just an id: a folder-picked
+            // save lives outside saves/ and is absent from discovery, and a
+            // retry must never silently substitute a different world.
+            LocalSaveCatalog.LocalSaveOption restoredSave = restoredDraft.selectedSave();
+            this.localSaves.removeIf(save -> save.directory().equals(restoredSave.directory()));
+            this.localSaves.add(0, restoredSave);
+            this.selectedSave = restoredSave;
         }
         if (this.selectedSave == null && !this.localSaves.isEmpty()) {
             this.selectedSave = this.localSaves.get(0);
@@ -162,6 +166,10 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         }
         if (this.restoreState != null && this.restoreState.message() != null && !this.restoreState.message().isBlank()) {
             this.banner.set(SharedWorldStatusBanner.Kind.ERROR, Component.literal(this.restoreState.message()));
+            // Survives updateStorageBanner()'s off-connect-step clearSticky;
+            // without this flag every create failure was wiped before the
+            // first frame rendered and the user saw nothing at all.
+            this.restoreErrorVisible = true;
         }
 
         this.beginStorageAccountCheckOnce();
@@ -699,39 +707,66 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         });
     }
 
-    /** Storage progress/error messaging on the connect step, via the shared banner. */
     private void updateStorageBanner() {
-        if (this.wizard.step() != CreateWizardModel.Step.CONNECT_DRIVE) {
+        this.restoreErrorVisible = updateStorageBanner(
+                this.banner,
+                this.wizard.step() == CreateWizardModel.Step.CONNECT_DRIVE,
+                this.restoreErrorVisible,
+                this.driveLinkController.currentAttempt(),
+                this.wizard.storageState(),
+                this.storageLink
+        );
+    }
+
+    /**
+     * Storage progress/error messaging via the shared banner, extracted for
+     * tests. Returns whether a restored create-failure error still owns the
+     * banner: off the connect step that error must survive this method's
+     * sticky-clearing (it used to be wiped in the same init() that set it, so
+     * every create failure bounced the user back with no message at all); on
+     * the connect step link messaging takes over.
+     */
+    static boolean updateStorageBanner(
+            SharedWorldStatusBanner banner,
+            boolean onConnectStep,
+            boolean restoreErrorVisible,
+            DriveLinkAttempt attempt,
+            CreateWizardModel.StorageState storageState,
+            StorageLinkSessionDto storageLink
+    ) {
+        if (!onConnectStep) {
             // Leaving the connect step must not strand its sticky messages
             // (e.g. "Checking your Google Drive connection..."); transient
             // successes keep their own expiry.
-            this.banner.clearSticky();
-            return;
+            if (!restoreErrorVisible) {
+                banner.clearSticky();
+            }
+            return restoreErrorVisible;
         }
-        DriveLinkAttempt attempt = this.driveLinkController.currentAttempt();
         if (attempt != null && attempt.phase() == DriveLinkUiPhase.OPENING_BROWSER) {
-            this.banner.set(SharedWorldStatusBanner.Kind.WARNING, Component.translatable("screen.sharedworld.storage_waiting_for_browser"));
-            return;
+            banner.set(SharedWorldStatusBanner.Kind.WARNING, Component.translatable("screen.sharedworld.storage_waiting_for_browser"));
+            return false;
         }
         if (attempt != null && attempt.phase() == DriveLinkUiPhase.WAITING_FOR_AUTH) {
-            this.banner.set(SharedWorldStatusBanner.Kind.WARNING, Component.translatable(attempt.copiedFallback()
+            banner.set(SharedWorldStatusBanner.Kind.WARNING, Component.translatable(attempt.copiedFallback()
                     ? "screen.sharedworld.storage_link_copied"
                     : "screen.sharedworld.storage_waiting_authorization"));
-            return;
+            return false;
         }
-        if (this.wizard.storageState() == CreateWizardModel.StorageState.CHECKING) {
-            this.banner.set(SharedWorldStatusBanner.Kind.INFO, Component.translatable("screen.sharedworld.storage_checking_account"));
-            return;
+        if (storageState == CreateWizardModel.StorageState.CHECKING) {
+            banner.set(SharedWorldStatusBanner.Kind.INFO, Component.translatable("screen.sharedworld.storage_checking_account"));
+            return false;
         }
-        if (this.storageLink != null
-                && !"cancelled".equalsIgnoreCase(this.storageLink.status())
-                && !"linked".equalsIgnoreCase(this.storageLink.status())
-                && this.storageLink.errorMessage() != null
-                && !this.storageLink.errorMessage().isBlank()) {
-            this.banner.set(SharedWorldStatusBanner.Kind.ERROR, Component.literal(this.storageLink.errorMessage()));
-            return;
+        if (storageLink != null
+                && !"cancelled".equalsIgnoreCase(storageLink.status())
+                && !"linked".equalsIgnoreCase(storageLink.status())
+                && storageLink.errorMessage() != null
+                && !storageLink.errorMessage().isBlank()) {
+            banner.set(SharedWorldStatusBanner.Kind.ERROR, Component.literal(storageLink.errorMessage()));
+            return false;
         }
-        this.banner.clearSticky();
+        banner.clearSticky();
+        return false;
     }
 
     private void submitCreate() {
@@ -785,7 +820,7 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
 
     private CreateDraft buildDraft() {
         return new CreateDraft(
-                this.selectedSave == null ? null : this.selectedSave.id(),
+                this.selectedSave,
                 this.worldName(),
                 this.motdBox.getValue(),
                 this.selectedIcon,
@@ -864,7 +899,7 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
     }
 
     record CreateDraft(
-            String selectedSaveId,
+            LocalSaveCatalog.LocalSaveOption selectedSave,
             String name,
             String motd,
             SelectedIcon selectedIcon,

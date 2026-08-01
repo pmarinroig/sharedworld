@@ -102,7 +102,22 @@ export class StorageLinkDomainService {
     }
     requireMatchingState(session, request.state);
 
-    const account = await this.exchangeGoogleAuth(session, request, now);
+    let account: StorageAccountRecord;
+    try {
+      account = await this.exchangeGoogleAuth(session, request, now);
+    } catch (error) {
+      // A consent-shaped rejection (Drive checkbox unticked, or no lasting
+      // grant) marks the session failed so the client shows the reason and
+      // offers the forced-consent retry.
+      if (error instanceof HttpError && error.code === "storage_link_needs_consent") {
+        await this.repository.updateStorageLinkSession(sessionId, {
+          status: "failed",
+          errorMessage: error.message,
+          completedAt: now.toISOString()
+        });
+      }
+      throw error;
+    }
     if (account.refreshToken == null) {
       // Google granted a session but no refresh token (an account we have never
       // seen through the consent screen, or one whose grant was revoked). The
@@ -224,12 +239,13 @@ export class StorageLinkDomainService {
     if (!tokenResponse.ok) {
       throw new HttpError(401, "oauth_exchange_failed", "Failed to exchange Google OAuth code.");
     }
-    let tokenPayload: { access_token: string; refresh_token?: string; expires_in: number };
+    let tokenPayload: { access_token: string; refresh_token?: string; expires_in: number; scope?: string };
     try {
-      tokenPayload = await tokenResponse.json() as { access_token: string; refresh_token?: string; expires_in: number };
+      tokenPayload = await tokenResponse.json() as { access_token: string; refresh_token?: string; expires_in: number; scope?: string };
     } catch {
       throw new HttpError(401, "oauth_exchange_failed", "Failed to exchange Google OAuth code.");
     }
+    requireDriveAppDataScope(tokenPayload.scope);
     const userResponse = await fetch("https://openidconnect.googleapis.com/v1/userinfo", {
       headers: {
         authorization: `Bearer ${tokenPayload.access_token}`
@@ -278,6 +294,30 @@ export class StorageLinkDomainService {
       updatedAt: now.toISOString()
     });
   }
+}
+
+const DRIVE_APPDATA_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
+
+/**
+ * Google's granular consent makes the Drive permission an optional checkbox:
+ * a user can finish the OAuth flow without granting it, leaving a link that
+ * looks healthy (valid refresh token) while every Drive call fails with 403.
+ * Per RFC 6749 the token response's `scope` is omitted when it equals the
+ * request, so an absent field means granted; a present field must contain the
+ * Drive scope.
+ */
+function requireDriveAppDataScope(grantedScope: string | undefined): void {
+  if (grantedScope === undefined) {
+    return;
+  }
+  if (grantedScope.split(/\s+/).includes(DRIVE_APPDATA_SCOPE)) {
+    return;
+  }
+  throw new HttpError(
+    409,
+    "storage_link_needs_consent",
+    "Google didn't grant SharedWorld access to its app folder in your Drive. Return to Minecraft, connect again, and tick the Drive access checkbox on the Google screen."
+  );
 }
 
 /**

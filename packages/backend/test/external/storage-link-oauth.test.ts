@@ -81,6 +81,61 @@ describe("StorageLinkDomainService Google OAuth exchange", () => {
     expect(account?.refreshToken).toBe("rt-1");
   });
 
+  test("a grant whose scope field includes drive.appdata links normally", async () => {
+    const { repository, service } = freshService();
+    const { sessionId, state } = await createPendingSession(service, repository);
+    stubGoogleFetch({
+      token: () =>
+        new Response(JSON.stringify({
+          access_token: "at-1",
+          refresh_token: "rt-1",
+          expires_in: 3600,
+          scope: "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/drive.appdata"
+        }), { status: 200 }),
+      userinfo: () =>
+        new Response(JSON.stringify({ sub: "google-sub-1", email: "owner@gmail.com", name: "Owner" }), { status: 200 })
+    });
+
+    const linked = await service.completeStorageLink(sessionId, { sessionId, code: "auth-code-1", state }, new Date());
+    expect(linked.status).toBe("linked");
+  });
+
+  test("a grant missing the Drive scope fails the session and asks for the checkbox", async () => {
+    // Google's granular consent lets the user finish OAuth with the Drive
+    // permission checkbox unticked: refresh token valid, link "healthy",
+    // every Drive write 403s. Catch it at the callback instead.
+    const { repository, service } = freshService();
+    const { sessionId, state } = await createPendingSession(service, repository);
+    stubGoogleFetch({
+      token: () =>
+        new Response(JSON.stringify({
+          access_token: "at-1",
+          refresh_token: "rt-1",
+          expires_in: 3600,
+          scope: "openid https://www.googleapis.com/auth/userinfo.email"
+        }), { status: 200 }),
+      userinfo: () =>
+        new Response(JSON.stringify({ sub: "google-sub-1", email: "owner@gmail.com", name: "Owner" }), { status: 200 })
+    });
+
+    let caught: unknown = null;
+    try {
+      await service.completeStorageLink(sessionId, { sessionId, code: "auth-code-1", state }, new Date());
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(HttpError);
+    expect((caught as HttpError).status).toBe(409);
+    expect((caught as HttpError).code).toBe("storage_link_needs_consent");
+    expect((caught as HttpError).message).toContain("checkbox");
+
+    const session = await repository.getStorageLinkSession(sessionId);
+    expect(session?.status).toBe("failed");
+    expect(session?.errorMessage).toContain("checkbox");
+    // The useless grant is never stored as an account.
+    expect(await repository.findStorageAccountByExternalId("google-drive", "google-sub-1")).toBeNull();
+  });
+
   test("a failed token exchange maps to oauth_exchange_failed", async () => {
     const { repository, service } = freshService();
     const { sessionId, state } = await createPendingSession(service, repository);

@@ -146,6 +146,73 @@ describe("GoogleDriveStorageProvider", () => {
     expect(requests).toHaveLength(5);
   });
 
+  test("a rate-limit 403 is retried like a 429", async () => {
+    const fixture = freshProviderFixture();
+    await fixture.seedAccount();
+    script = [{
+      status: 403,
+      body: JSON.stringify({ error: { code: 403, errors: [{ domain: "usageLimits", reason: "userRateLimitExceeded" }] } })
+    }];
+
+    await fixture.provider.put(fixture.binding, "worlds/w1/a.bin", "data", "application/octet-stream");
+
+    expect(requests).toHaveLength(2);
+  });
+
+  test("a permanent 403 (storage quota) fails fast without burning the retry ladder", async () => {
+    const fixture = freshProviderFixture();
+    await fixture.seedAccount();
+    script = [{
+      status: 403,
+      body: JSON.stringify({ error: { code: 403, errors: [{ domain: "usageLimits", reason: "storageQuotaExceeded" }] } })
+    }];
+
+    let caught: unknown = null;
+    try {
+      await fixture.provider.put(fixture.binding, "worlds/w1/a.bin", "data", "application/octet-stream");
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(HttpError);
+    expect((caught as HttpError).code).toBe("drive_upload_failed");
+    expect((caught as HttpError).upstreamStatus).toBe(403);
+    expect(requests).toHaveLength(1);
+  });
+
+  test("a missing-consent 403 tombstones the refresh token and demands a re-link", async () => {
+    // Granular consent: OAuth completed without the Drive checkbox. The link
+    // looks healthy until the first real Drive write lands here; nulling the
+    // refresh token flips the account to unhealthy so the wizard shows the
+    // connect step again.
+    const fixture = freshProviderFixture();
+    await fixture.seedAccount();
+    script = [{
+      status: 403,
+      body: JSON.stringify({
+        error: {
+          code: 403,
+          message: "Request had insufficient authentication scopes.",
+          errors: [{ domain: "global", reason: "insufficientPermissions" }]
+        }
+      })
+    }];
+
+    let caught: unknown = null;
+    try {
+      await fixture.provider.put(fixture.binding, "worlds/w1/a.bin", "data", "application/octet-stream");
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(HttpError);
+    expect((caught as HttpError).status).toBe(401);
+    expect((caught as HttpError).code).toBe("drive_reauth_required");
+    expect((caught as HttpError).message).toContain("checkbox");
+    expect(requests).toHaveLength(1);
+
+    const account = await fixture.repository.getStorageAccount(fixture.accountId);
+    expect(account?.refreshToken).toBeNull();
+  });
+
   test("put does not retry a non-retryable client error", async () => {
     const fixture = freshProviderFixture();
     await fixture.seedAccount();

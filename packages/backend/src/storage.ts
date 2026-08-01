@@ -205,8 +205,7 @@ export class GoogleDriveStorageProvider implements StorageProvider {
       body
     });
     if (!response.ok) {
-      const details = await safeErrorDetails(response);
-      throw new HttpError(response.status, "drive_upload_failed", `Google Drive upload failed. ${details}`);
+      throw await driveError(response, "drive_upload_failed", "Google Drive upload failed.");
     }
     return await response.json() as { id: string };
   }
@@ -220,8 +219,7 @@ export class GoogleDriveStorageProvider implements StorageProvider {
       body: copyArrayBuffer(bytes)
     });
     if (!response.ok) {
-      const details = await safeErrorDetails(response);
-      throw new HttpError(response.status, "drive_upload_failed", `Google Drive upload failed. ${details}`);
+      throw await driveError(response, "drive_upload_failed", "Google Drive upload failed.");
     }
     return await response.json() as { id: string };
   }
@@ -300,8 +298,7 @@ export class GoogleDriveStorageProvider implements StorageProvider {
       return null;
     }
     if (!response.ok) {
-      const details = await safeErrorDetails(response);
-      throw new HttpError(response.status, options.code, `${options.label} ${details}`);
+      throw await driveError(response, options.code, options.label);
     }
     return response;
   }
@@ -333,8 +330,8 @@ export class GoogleDriveStorageProvider implements StorageProvider {
       } catch (error) {
         lastError = error;
         const status = driveStatusCode(error);
-        if (!isRetryableDriveStatus(status) || attempt >= maxAttempts) {
-          throw error;
+        if (!isRetryableDriveFailure(error) || attempt >= maxAttempts) {
+          throw await this.finalDriveFailure(error, operation, account, attempt);
         }
         const delayMs = Math.min(maxDelayMs, baseDelayMs * (1 << (attempt - 1))) + Math.floor(Math.random() * Math.max(50, baseDelayMs / 2));
         console.warn("SharedWorld retrying Google Drive request", {
@@ -349,6 +346,47 @@ export class GoogleDriveStorageProvider implements StorageProvider {
     }
 
     throw lastError instanceof Error ? lastError : new Error("Google Drive request failed.");
+  }
+
+  /**
+   * Terminal handling for a Drive failure: log it (4xx here never reaches
+   * errorResponse's >=500 logging, so this is the only record), and turn a
+   * missing-consent 403 into the re-link path — null the refresh token so the
+   * account reports unhealthy and the wizard shows the connect step, and tell
+   * the user about the checkbox. Google's granular consent lets a user finish
+   * OAuth without granting Drive access, which is invisible until the first
+   * real Drive call lands here.
+   */
+  private async finalDriveFailure(
+    error: unknown,
+    operation: "upload" | "download" | "delete",
+    account: StorageAccountRecord,
+    attempt: number
+  ): Promise<unknown> {
+    const status = driveStatusCode(error);
+    const bodyHead = error instanceof HttpError ? error.upstreamBody : undefined;
+    console.warn("SharedWorld Google Drive request failed", {
+      operation,
+      accountId: account.id,
+      attempt,
+      status,
+      bodyHead
+    });
+    if (status === 403 && isInsufficientScopeBody(bodyHead)) {
+      await this.repository.createOrUpdateStorageAccount({
+        ...account,
+        refreshToken: null,
+        updatedAt: new Date().toISOString()
+      });
+      const reauth = new HttpError(
+        401,
+        "drive_reauth_required",
+        "Google Drive was connected without the Drive access permission. Reconnect Google Drive from Minecraft and tick the Drive access checkbox on the Google screen."
+      );
+      reauth.upstreamStatus = 403;
+      return reauth;
+    }
+    return error;
   }
 }
 
@@ -415,16 +453,22 @@ function driveObjectName(storageKey: string): string {
   return `sharedworld-${base64}`;
 }
 
-async function safeErrorDetails(response: Response): Promise<string> {
+/** Builds the thrown HttpError for a non-OK Drive response, keeping the body head for reason checks and logs. */
+async function driveError(response: Response, code: string, label: string): Promise<HttpError> {
+  let text = "";
   try {
-    const text = await response.text();
-    if (!text) {
-      return `HTTP ${response.status}.`;
-    }
-    return `HTTP ${response.status}: ${text}`;
+    text = await response.text();
   } catch {
-    return `HTTP ${response.status}.`;
+    // Body unavailable; the status alone still identifies the failure.
   }
+  const error = new HttpError(
+    response.status,
+    code,
+    text ? `${label} HTTP ${response.status}: ${text}` : `${label} HTTP ${response.status}.`
+  );
+  error.upstreamStatus = response.status;
+  error.upstreamBody = text.slice(0, 400);
+  return error;
 }
 
 function driveStatusCode(error: unknown): number | null {
@@ -433,8 +477,30 @@ function driveStatusCode(error: unknown): number | null {
   return error instanceof HttpError ? error.status : null;
 }
 
-function isRetryableDriveStatus(status: number | null): boolean {
-  return status === 403 || status === 429 || (status !== null && status >= 500);
+/**
+ * Google answers 403 for both transient rate limiting and permanent
+ * conditions (missing consent scope, storage quota, daily caps). Only the
+ * rate-limit reasons deserve a retry; a permanent 403 must fail fast instead
+ * of burning the whole ladder against a condition that cannot change.
+ */
+function isRetryableDriveFailure(error: unknown): boolean {
+  const status = driveStatusCode(error);
+  if (status === 429 || (status !== null && status >= 500)) {
+    return true;
+  }
+  if (status !== 403) {
+    return false;
+  }
+  const body = (error instanceof HttpError ? error.upstreamBody ?? "" : "").toLowerCase();
+  return body.includes("ratelimitexceeded");
+}
+
+function isInsufficientScopeBody(bodyHead: string | undefined): boolean {
+  const body = (bodyHead ?? "").toLowerCase();
+  return body.includes("insufficientpermissions")
+    || body.includes("insufficient_scope")
+    || body.includes("access_token_scope_insufficient")
+    || body.includes("insufficient authentication scopes");
 }
 
 function sleep(delayMs: number): Promise<void> {

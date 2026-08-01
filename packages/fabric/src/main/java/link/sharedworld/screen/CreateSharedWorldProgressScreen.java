@@ -180,10 +180,13 @@ public final class CreateSharedWorldProgressScreen extends link.sharedworld.vers
                             return;
                         }
                         Throwable cause = error.getCause() == null ? error : error.getCause();
+                        // The only durable record of a failed create: the restored
+                        // screen's banner is transient and users rarely quote it.
+                        link.sharedworld.SharedWorldClient.LOGGER.warn("SharedWorld world create failed", cause);
                         link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, CreateSharedWorldScreen.restored(
                                 this.parent,
                                 this.draft,
-                                SharedWorldMetadataFormat.friendlyMessage(cause)
+                                link.sharedworld.api.SharedWorldApiClient.friendlyErrorMessage(cause)
                         ));
                         return;
                     }
