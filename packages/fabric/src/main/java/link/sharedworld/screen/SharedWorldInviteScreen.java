@@ -101,7 +101,7 @@ public final class SharedWorldInviteScreen extends link.sharedworld.versioned.Ve
                         throw new RuntimeException(exception);
                     }
                 }, SharedWorldClient.ioExecutor())
-                .whenComplete((result, error) -> Minecraft.getInstance().execute(() -> {
+                .whenComplete((result, error) -> ScreenGuards.runIfCurrent(this, () -> {
                     this.actionInFlight = false;
                     if (error != null) {
                         Throwable cause = error.getCause() != null ? error.getCause() : error;
@@ -131,7 +131,7 @@ public final class SharedWorldInviteScreen extends link.sharedworld.versioned.Ve
                         throw new RuntimeException(exception);
                     }
                 }, SharedWorldClient.ioExecutor())
-                .whenComplete((result, error) -> Minecraft.getInstance().execute(() -> {
+                .whenComplete((result, error) -> ScreenGuards.runIfCurrent(this, () -> {
                     this.actionInFlight = false;
                     if (error != null) {
                         Throwable cause = error.getCause() != null ? error.getCause() : error;

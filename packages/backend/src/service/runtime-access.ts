@@ -2,13 +2,8 @@ import type { WorldDetails } from "../../../shared/src/index.ts";
 
 import { HttpError } from "../http.ts";
 import type { RequestContext, WorldStorageBinding } from "../repository.ts";
-import {
-  choosePreferredCandidate,
-  matchesHostAuthorization,
-  resolveRuntimeTimeout,
-  timedOutUncleanShutdownWarning,
-  type WorldRuntimeRecord
-} from "../runtime-protocol.ts";
+import { matchesHostAuthorization, type WorldRuntimeRecord } from "../runtime-protocol.ts";
+import { reconcileRuntimeState } from "../runtime-reconciliation.ts";
 import type { AuthorizedRuntime, ResolvedRuntimeState } from "../runtime-service-support.ts";
 import type { ServiceContext } from "./context.ts";
 
@@ -24,37 +19,7 @@ import type { ServiceContext } from "./context.ts";
  * Timeout and candidate reconciliation happen before any caller reasons about the runtime.
  */
 export async function resolveRuntimeState(svc: ServiceContext, worldId: string, now: Date): Promise<ResolvedRuntimeState> {
-  const memberships = await svc.repository.listMemberships(worldId);
-  const waiters = await svc.repository.listActiveWaiters(worldId, now);
-  const candidate = choosePreferredCandidate(waiters.filter((waiter) => waiter.waiting), memberships);
-  const before = await svc.repository.getRuntimeRecord(worldId, now);
-  const timeoutWarning = timedOutUncleanShutdownWarning(before, now);
-  if (timeoutWarning != null && before != null) {
-    await svc.repository.setUncleanShutdownWarning(worldId, timeoutWarning);
-    await svc.repository.deleteRuntimeRecord(worldId, { runtimeEpoch: before.runtimeEpoch, runtimeToken: before.runtimeToken });
-    await svc.repository.clearWaiters(worldId);
-    await svc.repository.clearWorldPresence(worldId);
-    return {
-      runtime: null,
-      candidate: null,
-      warning: timeoutWarning,
-      retiredRuntimeEpoch: before.runtimeEpoch
-    };
-  }
-  const afterTimeout = resolveRuntimeTimeout(before, candidate, now);
-  if (before != null && afterTimeout == null) {
-    await svc.repository.deleteRuntimeRecord(worldId, { runtimeEpoch: before.runtimeEpoch, runtimeToken: before.runtimeToken });
-  }
-  const warning = await svc.repository.getUncleanShutdownWarning(worldId);
-  const retiredRuntimeEpoch = afterTimeout == null
-    ? before?.runtimeEpoch ?? warning?.runtimeEpoch ?? await svc.repository.getLastRuntimeEpoch(worldId)
-    : null;
-  return {
-    runtime: afterTimeout,
-    candidate,
-    warning,
-    retiredRuntimeEpoch
-  };
+  return reconcileRuntimeState(svc.repository, worldId, now);
 }
 
 /**

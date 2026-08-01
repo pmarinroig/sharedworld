@@ -489,10 +489,6 @@ public final class SharedWorldHostingManager {
         );
     }
 
-    public boolean isSavingOrReleasing() {
-        return this.phase == Phase.SAVING || this.phase == Phase.RELEASING || this.phase == Phase.CANCELLING;
-    }
-
     public boolean isReleaseComplete() {
         return this.phase == Phase.IDLE;
     }
@@ -632,10 +628,6 @@ public final class SharedWorldHostingManager {
 
     public String activeWorldName() {
         return this.world == null ? "" : this.world.name();
-    }
-
-    public String activeWorldId() {
-        return this.world == null ? "" : this.world.id();
     }
 
     public void cancelStartup() {
@@ -1218,7 +1210,7 @@ public final class SharedWorldHostingManager {
         this.startupMode = StartupMode.NORMAL;
         this.startupRecoveringLocalCrash = false;
         E4mcDomainTracker.clear();
-        SharedWorldDevSessionBridge.clear();
+        SharedWorldDevSessionBridge.clearHostingSession();
         this.events.onHostStateCleared(clearedWorldId);
     }
 

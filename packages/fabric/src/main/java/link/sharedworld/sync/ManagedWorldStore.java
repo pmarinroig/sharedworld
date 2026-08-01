@@ -151,15 +151,6 @@ public final class ManagedWorldStore {
         deleteRecursively(stagingDirectory);
     }
 
-    public void replaceWorkingCopyWithSnapshot(String worldId, Path snapshotDirectory) throws IOException {
-        Path workingCopy = this.workingCopy(worldId);
-        if (Files.exists(workingCopy)) {
-            deleteRecursively(workingCopy);
-        }
-        Files.createDirectories(workingCopy);
-        copyTree(snapshotDirectory, workingCopy, false);
-    }
-
     public String regionBaselineSnapshotId(String worldId) throws IOException {
         Path marker = this.regionBaselineSnapshotFile(worldId);
         if (!Files.exists(marker)) {

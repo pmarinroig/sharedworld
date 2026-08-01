@@ -113,14 +113,15 @@ export class GoogleDriveStorageProvider implements StorageProvider {
     const response = await this.withDriveRetries(
       account,
       "download",
-      () => this.driveRequest(account, `${apiBase(this.env)}/files/${encodeURIComponent(object.objectId)}?alt=media`)
+      () => this.driveRequestChecked(account, `${apiBase(this.env)}/files/${encodeURIComponent(object.objectId)}?alt=media`, {}, {
+        code: "drive_download_failed",
+        label: "Google Drive download failed.",
+        allowNotFound: true
+      })
     );
-    if (response.status === 404) {
+    if (response == null) {
       await this.repository.deleteStorageObject(this.provider, account.id, storageKey);
       return null;
-    }
-    if (!response.ok) {
-      throw new HttpError(response.status, "drive_download_failed", `Google Drive download failed. HTTP ${response.status}.`);
     }
 
     const blob = await response.arrayBuffer();
@@ -146,8 +147,15 @@ export class GoogleDriveStorageProvider implements StorageProvider {
       return;
     }
 
-    await this.withDriveRetries(account, "delete", () => this.driveRequest(account, `${apiBase(this.env)}/files/${encodeURIComponent(object.objectId)}`, {
+    // A failed Drive delete must keep the local object row: dropping the row
+    // on error would orphan the Drive file forever, while keeping it lets blob
+    // GC retry the delete later. 404 means the file is already gone.
+    await this.withDriveRetries(account, "delete", () => this.driveRequestChecked(account, `${apiBase(this.env)}/files/${encodeURIComponent(object.objectId)}`, {
       method: "DELETE"
+    }, {
+      code: "drive_delete_failed",
+      label: "Google Drive delete failed.",
+      allowNotFound: true
     }));
     await this.repository.deleteStorageObject(this.provider, account.id, storageKey);
   }
@@ -276,6 +284,28 @@ export class GoogleDriveStorageProvider implements StorageProvider {
     return response;
   }
 
+  /**
+   * driveRequest that turns any non-OK response into a thrown HttpError so
+   * withDriveRetries can see (and retry) transient failures. Callers that
+   * treat 404 as a tombstone opt in via allowNotFound and receive null.
+   */
+  private async driveRequestChecked(
+    account: StorageAccountRecord,
+    url: string,
+    init: RequestInit,
+    options: { code: string; label: string; allowNotFound?: boolean }
+  ): Promise<Response | null> {
+    const response = await this.driveRequest(account, url, init);
+    if (options.allowNotFound && response.status === 404) {
+      return null;
+    }
+    if (!response.ok) {
+      const details = await safeErrorDetails(response);
+      throw new HttpError(response.status, options.code, `${options.label} ${details}`);
+    }
+    return response;
+  }
+
   private accountLimiter(accountId: string): AccountRequestLimiter {
     let limiter = GoogleDriveStorageProvider.ACCOUNT_LIMITERS.get(accountId);
     if (!limiter) {
@@ -398,14 +428,9 @@ async function safeErrorDetails(response: Response): Promise<string> {
 }
 
 function driveStatusCode(error: unknown): number | null {
-  if (error instanceof HttpError) {
-    const match = /\bHTTP\s+(\d{3})\b/.exec(error.message);
-    if (match) {
-      return Number.parseInt(match[1], 10);
-    }
-    return error.status;
-  }
-  return null;
+  // Every Drive failure is thrown as HttpError(status = response status), so
+  // the status field is authoritative; never parse it out of message text.
+  return error instanceof HttpError ? error.status : null;
 }
 
 function isRetryableDriveStatus(status: number | null): boolean {

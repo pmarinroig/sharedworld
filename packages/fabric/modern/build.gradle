@@ -9,22 +9,15 @@ base {
     archivesName = project.archives_base_name
 }
 
-// Buckets for the unobfuscated Minecraft generation; same idea as mcBuckets in the
-// classic project, but built without mappings or remapping. Select with
-// -PsharedworldMcBucket=, defaulting to the newest.
-def mcBuckets = [
-        "26.1": [
-                minecraftVersion: "26.1.2",
-                fabricApiVersion: "0.151.0+26.1.2",
-                minecraftRange  : ">=26.1- <26.2",
-        ],
-        "26.2": [
-                minecraftVersion: "26.2",
-                fabricApiVersion: "0.156.0+26.2",
-                minecraftRange  : ">=26.2- <27",
-        ],
-]
-def mcBucketName = providers.gradleProperty("sharedworldMcBucket").getOrElse("26.1")
+// Buckets for the unobfuscated Minecraft generation; same idea as the classic project,
+// but built without mappings or remapping. Select with -PsharedworldMcBucket=,
+// defaulting per buckets.json — the single source of truth shared with the classic
+// project and the workspace verify scripts.
+def bucketConfig = new groovy.json.JsonSlurper().parse(file("../buckets.json"))
+def mcBuckets = bucketConfig.buckets.findAll { it.project == "modern" }.collectEntries {
+    [(it.name): it]
+}
+def mcBucketName = providers.gradleProperty("sharedworldMcBucket").getOrElse(bucketConfig.defaults.modern)
 def mcBucket = mcBuckets[mcBucketName]
 if (mcBucket == null) {
     throw new GradleException("Unknown sharedworldMcBucket '${mcBucketName}'. Known buckets: ${mcBuckets.keySet()}")
@@ -101,11 +94,13 @@ def prepareSharedDevHelperSources = tasks.register("prepareSharedDevHelperSource
 
 sourceSets {
     main {
-        java.srcDirs = [prepareSharedSources, "../src/versioned/${mcBucketName}/java"]
+        java.srcDirs = [prepareSharedSources, "../src/versioned/${mcBucketName}/java"] \
+                + (mcBucket.sharedVersionedDirs ?: []).collect { "../src/versioned/common/${it}/java" }
         resources.srcDirs = ["../src/main/resources", "../src/versioned/${mcBucketName}/resources"]
     }
     test {
-        java.srcDirs = ["../src/test/java", "../src/versionedTest/${mcBucketName}/java"]
+        java.srcDirs = ["../src/test/java", "../src/versionedTest/${mcBucketName}/java"] \
+                + (mcBucket.sharedVersionedTestDirs ?: []).collect { "../src/versionedTest/common/${it}/java" }
         resources.srcDirs = ["../src/test/resources"]
     }
     devHelper {

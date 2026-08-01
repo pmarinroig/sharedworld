@@ -593,4 +593,22 @@ describe("SharedWorldService world management", () => {
     expect(worlds[0].onlinePlayerCount).toBe(2);
     expect(worlds[0].onlinePlayerNames).toEqual(["Owner", "Guest"]);
   });
+
+  test("[S15 fixed] [P8] a create whose runtime seed loses leaves no orphaned world behind", async () => {
+    const repository = createSqliteRepository();
+    // Force the initial-upload runtime claim to lose, as a concurrent claimant
+    // would make it: the world/membership rows exist by then, and P8 requires
+    // the failed create to compensate rather than strand them.
+    const failingClaim: SharedWorldRepository = Object.assign(
+      Object.create(repository) as SharedWorldRepository,
+      { claimRuntimeAssignment: async () => false }
+    );
+    const { signer } = createBlobSigner();
+    const instance = createTestService(failingClaim, authVerifier, signer, {});
+    const ctx = { playerUuid: "player-owner", playerName: "Owner" };
+
+    await expect(instance.createWorld(ctx, { name: "Doomed World" })).rejects.toMatchObject({ code: "world_busy" });
+
+    expect(await instance.listWorlds(ctx)).toEqual([]);
+  });
 });

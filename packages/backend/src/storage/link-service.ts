@@ -100,6 +100,7 @@ export class StorageLinkDomainService {
     if (new Date(session.expiresAt).getTime() < now.getTime()) {
       throw new HttpError(410, "storage_link_expired", "The Google Drive sign-in took too long. Start it again from Minecraft.");
     }
+    requireMatchingState(session, request.state);
 
     const account = await this.exchangeGoogleAuth(session, request, now);
     if (account.refreshToken == null) {
@@ -276,6 +277,22 @@ export class StorageLinkDomainService {
       createdAt: existing?.createdAt ?? now.toISOString(),
       updatedAt: now.toISOString()
     });
+  }
+}
+
+/**
+ * The OAuth `state` round-trips through the provider as `<sessionId>:<nonce>`
+ * (or the bare nonce on the dev-mock flow). The callback is unauthenticated,
+ * so the nonce is the only proof the caller actually came from the auth URL
+ * this session issued — without it, anyone who learns a pending sessionId
+ * could drive the callback.
+ */
+function requireMatchingState(session: StorageLinkSessionRecord, presentedState: string | null | undefined): void {
+  const nonce = presentedState != null && presentedState.startsWith(`${session.id}:`)
+    ? presentedState.slice(session.id.length + 1)
+    : presentedState;
+  if (nonce == null || nonce.length === 0 || nonce !== session.state) {
+    throw new HttpError(403, "storage_link_state_mismatch", "This Google Drive sign-in could not be verified. Start it again from Minecraft.");
   }
 }
 

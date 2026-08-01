@@ -5,6 +5,12 @@ export class HttpError extends Error {
   code: string;
   /** When set, errorResponse emits a Retry-After header with this value. */
   retryAfterSeconds?: number;
+  /**
+   * HTTP status an upstream dependency (e.g. Mojang) answered with, when this
+   * error wraps an upstream failure. Never serialized to clients; lets callers
+   * branch on the upstream cause (429 vs outage) without parsing messages.
+   */
+  upstreamStatus?: number;
 
   constructor(status: number, code: string, message: string) {
     super(message);

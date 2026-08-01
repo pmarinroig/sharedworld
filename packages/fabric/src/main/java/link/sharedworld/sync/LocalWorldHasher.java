@@ -22,17 +22,6 @@ public final class LocalWorldHasher {
     private LocalWorldHasher() {
     }
 
-    public static List<LocalWorldFile> scan(Path worldDirectory) throws IOException {
-        List<LocalWorldFile> files = new ArrayList<>();
-        try (Stream<Path> stream = Files.walk(worldDirectory)) {
-            stream.filter(Files::isRegularFile)
-                    .filter(LocalWorldHasher::shouldSyncPath)
-                    .sorted(Comparator.naturalOrder())
-                    .forEach(path -> files.add(hashFile(worldDirectory, path)));
-        }
-        return files;
-    }
-
     private static LocalWorldFile hashFile(Path worldDirectory, Path file) {
         try {
             String hash = hashSha256(file);

@@ -1,0 +1,206 @@
+{
+  "//": "Single source of truth for the version-bucket matrix. Consumed by build.gradle (classic), modern/build.gradle, and scripts/verify/buckets.ts in the workspace repo. Adding a bucket means editing THIS file plus creating src/versioned/<name>/.",
+  "defaults": {
+    "classic": "1.21.11",
+    "modern": "26.1"
+  },
+  "testedE4mc": {
+    "classic": "6.2.1",
+    "modern": "6.2.1-fabric-modern"
+  },
+  "buckets": [
+    {
+      "name": "1.21.11",
+      "project": "classic",
+      "minecraftVersion": "1.21.11",
+      "fabricApiVersion": "0.141.3+1.21.11",
+      "minecraftRange": ">=1.21.11 <1.22",
+      "claimedVersions": [
+        "1.21.11"
+      ],
+      "sharedVersionedDirs": [
+        "1.20.1-to-1.21.11",
+        "1.20.1-to-26.1",
+        "1.21.1-plus",
+        "1.21.11-plus",
+        "1.21.6-plus",
+        "1.21.6-to-1.21.11",
+        "1.21.6-to-26.1",
+        "1.21.9-plus",
+        "1.21.9-to-1.21.11",
+        "all"
+      ],
+      "sharedVersionedTestDirs": [
+        "1.21.1-plus",
+        "1.21.11-plus",
+        "1.21.6-plus",
+        "all"
+      ]
+    },
+    {
+      "name": "1.21.9",
+      "project": "classic",
+      "minecraftVersion": "1.21.9",
+      "fabricApiVersion": "0.134.1+1.21.9",
+      "minecraftRange": ">=1.21.9 <1.21.11",
+      "claimedVersions": [
+        "1.21.9",
+        "1.21.10"
+      ],
+      "sharedVersionedDirs": [
+        "1.20.1-to-1.21.11",
+        "1.20.1-to-1.21.9",
+        "1.20.1-to-26.1",
+        "1.21.1-plus",
+        "1.21.6-plus",
+        "1.21.6-to-1.21.11",
+        "1.21.6-to-1.21.9",
+        "1.21.6-to-26.1",
+        "1.21.9-plus",
+        "1.21.9-to-1.21.11",
+        "all"
+      ],
+      "sharedVersionedTestDirs": [
+        "1.20.1-to-1.21.9",
+        "1.21.1-plus",
+        "1.21.6-plus",
+        "all"
+      ]
+    },
+    {
+      "name": "1.21.6",
+      "project": "classic",
+      "minecraftVersion": "1.21.6",
+      "fabricApiVersion": "0.128.2+1.21.6",
+      "minecraftRange": ">=1.21.6 <1.21.9",
+      "claimedVersions": [
+        "1.21.6",
+        "1.21.7",
+        "1.21.8"
+      ],
+      "sharedVersionedDirs": [
+        "1.20.1-to-1.21.11",
+        "1.20.1-to-1.21.6",
+        "1.20.1-to-1.21.9",
+        "1.20.1-to-26.1",
+        "1.21.1-plus",
+        "1.21.6-plus",
+        "1.21.6-to-1.21.11",
+        "1.21.6-to-1.21.9",
+        "1.21.6-to-26.1",
+        "all"
+      ],
+      "sharedVersionedTestDirs": [
+        "1.20.1-to-1.21.9",
+        "1.21.1-plus",
+        "1.21.6-plus",
+        "all"
+      ]
+    },
+    {
+      "name": "1.21.1",
+      "project": "classic",
+      "minecraftVersion": "1.21",
+      "fabricApiVersion": "0.102.0+1.21",
+      "minecraftRange": ">=1.21 <1.21.2",
+      "claimedVersions": [
+        "1.21",
+        "1.21.1"
+      ],
+      "sharedVersionedDirs": [
+        "1.20.1-to-1.21.1",
+        "1.20.1-to-1.21.11",
+        "1.20.1-to-1.21.6",
+        "1.20.1-to-1.21.9",
+        "1.20.1-to-26.1",
+        "1.21.1-plus",
+        "all"
+      ],
+      "sharedVersionedTestDirs": [
+        "1.20.1-to-1.21.1",
+        "1.20.1-to-1.21.9",
+        "1.21.1-plus",
+        "all"
+      ]
+    },
+    {
+      "name": "1.20.1",
+      "project": "classic",
+      "minecraftVersion": "1.20",
+      "fabricApiVersion": "0.92.11+1.20.1",
+      "minecraftRange": ">=1.20 <1.20.2",
+      "claimedVersions": [
+        "1.20",
+        "1.20.1"
+      ],
+      "javaRelease": 17,
+      "sharedVersionedDirs": [
+        "1.20.1-to-1.21.1",
+        "1.20.1-to-1.21.11",
+        "1.20.1-to-1.21.6",
+        "1.20.1-to-1.21.9",
+        "1.20.1-to-26.1",
+        "all"
+      ],
+      "sharedVersionedTestDirs": [
+        "1.20.1-to-1.21.1",
+        "1.20.1-to-1.21.9",
+        "all"
+      ]
+    },
+    {
+      "name": "26.1",
+      "project": "modern",
+      "minecraftVersion": "26.1.2",
+      "fabricApiVersion": "0.151.0+26.1.2",
+      "minecraftRange": ">=26.1- <26.2",
+      "claimedVersions": [
+        "26.1",
+        "26.1.1",
+        "26.1.2"
+      ],
+      "javaRelease": 25,
+      "sharedVersionedDirs": [
+        "1.20.1-to-26.1",
+        "1.21.1-plus",
+        "1.21.11-plus",
+        "1.21.6-plus",
+        "1.21.6-to-26.1",
+        "1.21.9-plus",
+        "26.1-plus",
+        "all"
+      ],
+      "sharedVersionedTestDirs": [
+        "1.21.1-plus",
+        "1.21.11-plus",
+        "1.21.6-plus",
+        "all"
+      ]
+    },
+    {
+      "name": "26.2",
+      "project": "modern",
+      "minecraftVersion": "26.2",
+      "fabricApiVersion": "0.156.0+26.2",
+      "minecraftRange": ">=26.2- <27",
+      "claimedVersions": [
+        "26.2"
+      ],
+      "javaRelease": 25,
+      "sharedVersionedDirs": [
+        "1.21.1-plus",
+        "1.21.11-plus",
+        "1.21.6-plus",
+        "1.21.9-plus",
+        "26.1-plus",
+        "all"
+      ],
+      "sharedVersionedTestDirs": [
+        "1.21.1-plus",
+        "1.21.11-plus",
+        "1.21.6-plus",
+        "all"
+      ]
+    }
+  ]
+}

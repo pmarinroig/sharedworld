@@ -55,6 +55,22 @@ export class SqliteD1Database implements D1Database {
   prepare(query: string): D1PreparedStatement {
     return new SqliteD1PreparedStatement(this.db, query);
   }
+
+  /** Mirrors D1's transactional batch: all statements land or none do. */
+  async batch(statements: D1PreparedStatement[]): Promise<Array<{ success: boolean; meta?: Record<string, unknown> }>> {
+    const results: Array<{ success: boolean; meta?: Record<string, unknown> }> = [];
+    this.db.exec("BEGIN");
+    try {
+      for (const statement of statements) {
+        results.push(await statement.run());
+      }
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+    return results;
+  }
 }
 
 class SqliteD1PreparedStatement implements D1PreparedStatement {

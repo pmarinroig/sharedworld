@@ -10,7 +10,7 @@ To use it, install:
 
 - SharedWorld
 - Fabric API
-- `e4mc 6.1.2`
+- `e4mc 6.2.1` (Minecraft 26.x needs the `-fabric-modern` variant)
 
 If you create a SharedWorld, you will also need to link Google Drive so the mod
 can store that world's backups and handoff data in the app data folder.

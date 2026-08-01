@@ -171,6 +171,7 @@
   "screen.sharedworld.settings_hint": "Els canvis arriben a qui estigui hostatjant en mig minut aproximadament i es desen amb el món.",
   "screen.sharedworld.settings_owner_only": "Només el propietari pot canviar la configuració del món.",
   "screen.sharedworld.edit_status_saving_settings": "S'està desant la configuració...",
+  "screen.sharedworld.edit_settings_unreadable": "No s'ha pogut llegir la configuració local d'aquest món, així que es mostren els valors per defecte. Desar la configuració està desactivat fins que el món es torni a sincronitzar.",
   "screen.sharedworld.edit_status_settings_saved": "Configuració desada.",
   "screen.sharedworld.storage_waiting_for_browser": "S'està obrint el navegador...",
   "screen.sharedworld.storage_waiting_authorization": "Acaba d'iniciar sessió amb Google al navegador. Ho detectarem tan bon punt acabis.",

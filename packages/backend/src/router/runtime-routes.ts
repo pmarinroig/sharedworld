@@ -8,7 +8,6 @@ import type {
   HostStartupProgressRequest,
   ObserveWaitingRequest,
   PresenceHeartbeatRequest,
-  RefreshWaitingRequest,
   ReleaseHostRequest
 } from "../../../shared/src/index.ts";
 
@@ -26,7 +25,6 @@ export function runtimeRoutes(
     | "enterSession"
     | "heartbeatHost"
     | "observeWaiting"
-    | "refreshWaiting"
     | "releaseHost"
     | "runtimeStatus"
     | "setHostStartupProgress"
@@ -45,12 +43,6 @@ export function runtimeRoutes(
       pattern: new UrlPattern({ pathname: "/worlds/:worldId/runtime" }),
       auth: true,
       handler: async (_request, params, ctx) => json(await service.runtimeStatus(ctx, requireParam(params.worldId, "worldId"), new Date()))
-    },
-    {
-      method: "POST",
-      pattern: new UrlPattern({ pathname: "/worlds/:worldId/session/waiting/refresh" }),
-      auth: true,
-      handler: async (request, params, ctx) => json(await service.refreshWaiting(ctx, requireParam(params.worldId, "worldId"), await readJson<RefreshWaitingRequest>(request), new Date()))
     },
     {
       method: "POST",

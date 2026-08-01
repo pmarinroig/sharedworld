@@ -112,7 +112,7 @@ public final class SharedWorldClient implements ClientModInitializer {
         guestCacheWarmer.onDisconnect(activeSession);
         SharedWorldReleaseCoordinator.ReleaseDisplay releaseDisplay = releaseCoordinator.onClientDisconnectReturnDisplay(client);
         SharedWorldPlaySessionTracker.RecoverySession recoverySession = PLAY_SESSION_TRACKER.onDisconnect(handler);
-        SharedWorldDevSessionBridge.clear();
+        SharedWorldDevSessionBridge.clearHostingSession();
         sessionCoordinator.onUnexpectedGuestDisconnect(recoverySession);
         if (releaseDisplay != null) {
             SharedWorldClientLifecycleRouter.ensureLifecycleScreenVisible(client, releaseCoordinator);
@@ -149,10 +149,6 @@ public final class SharedWorldClient implements ClientModInitializer {
 
     public static SharedWorldGuestCacheWarmer guestCacheWarmer() {
         return guestCacheWarmer;
-    }
-
-    public static SharedWorldPresenceManager presenceManager() {
-        return presenceManager;
     }
 
     public static boolean isE4mcInstalled() {
@@ -295,7 +291,9 @@ public final class SharedWorldClient implements ClientModInitializer {
 
         private static void refreshHostedPermissionLevels() {
             var server = Minecraft.getInstance().getSingleplayerServer();
-            if (server == null) {
+            // Same identity guard as onWorldSettingsChanged: permission
+            // re-sends must never touch a vanilla singleplayer server ([P9]).
+            if (server == null || !link.sharedworld.host.SharedWorldServerIdentity.isManagedWorldServer(server)) {
                 return;
             }
             var playerList = server.getPlayerList();

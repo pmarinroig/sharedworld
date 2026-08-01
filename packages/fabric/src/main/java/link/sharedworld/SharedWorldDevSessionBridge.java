@@ -79,6 +79,25 @@ public final class SharedWorldDevSessionBridge {
                 && current.hostingSharedWorld();
     }
 
+    /**
+     * Ends the hosting session (flag, owner, member grants) while keeping the
+     * auth-scoped flags. The bridge holds two lifetimes: hosting-session state
+     * ends on world/host teardown, but {@code currentSessionIsDev} and
+     * {@code backendAllowsInsecureE4mc} belong to the authenticated backend
+     * session and survive until re-auth ({@link #clear()}).
+     */
+    public static void clearHostingSession() {
+        State current = state;
+        state = new State(
+                current.currentSessionIsDev(),
+                current.backendAllowsInsecureE4mc(),
+                false,
+                null,
+                Map.of()
+        );
+    }
+
+    /** Full reset: auth teardown (session invalidation / re-auth) and client shutdown. */
     public static void clear() {
         state = new State(false, false, false, null, Map.of());
     }

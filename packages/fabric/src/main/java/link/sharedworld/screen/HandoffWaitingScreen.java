@@ -26,10 +26,6 @@ public final class HandoffWaitingScreen extends link.sharedworld.versioned.Versi
         this.worldName = worldName;
     }
 
-    public static HandoffWaitingScreen forDisconnectRecovery(Screen parent, String worldId, String worldName, String previousJoinTarget) {
-        return new HandoffWaitingScreen(parent, worldId, worldName, null);
-    }
-
     @Override
     protected void init() {
         int centerX = this.width / 2;
@@ -68,18 +64,6 @@ public final class HandoffWaitingScreen extends link.sharedworld.versioned.Versi
         if (view != null && view.discardErrorMessage() != null && !view.discardErrorMessage().isBlank()) {
             guiGraphics.drawCenteredString(this.font, Component.literal(view.discardErrorMessage()), this.width / 2, this.height - 44, 0xFF6666);
         }
-    }
-
-    public void suspendWaitingUnregister() {
-        this.unregisterSuspended = true;
-    }
-
-    public void resumeWaitingUnregister() {
-        this.unregisterSuspended = false;
-    }
-
-    public void refreshImmediately() {
-        SharedWorldClient.sessionCoordinator().refreshWaitingNow();
     }
 
     public void resumeAfterHostStartupCancel() {

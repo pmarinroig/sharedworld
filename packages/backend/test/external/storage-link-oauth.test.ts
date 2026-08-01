@@ -48,9 +48,10 @@ function stubGoogleFetch(script: FetchScript): { tokenRequests: URLSearchParams[
   return seen;
 }
 
-async function createPendingSession(service: StorageLinkDomainService) {
+async function createPendingSession(service: StorageLinkDomainService, repository: ReturnType<typeof createSqliteRepository>) {
   const session = await service.createStorageLink(ctx, {}, new Date());
-  return session.id;
+  const record = await repository.getStorageLinkSession(session.id);
+  return { sessionId: session.id, state: `${session.id}:${record!.state}` };
 }
 
 function freshService() {
@@ -61,7 +62,7 @@ function freshService() {
 describe("StorageLinkDomainService Google OAuth exchange", () => {
   test("happy path links the session and stores the account tokens", async () => {
     const { repository, service } = freshService();
-    const sessionId = await createPendingSession(service);
+    const { sessionId, state } = await createPendingSession(service, repository);
     const seen = stubGoogleFetch({
       token: () =>
         new Response(JSON.stringify({ access_token: "at-1", refresh_token: "rt-1", expires_in: 3600 }), { status: 200 }),
@@ -69,7 +70,7 @@ describe("StorageLinkDomainService Google OAuth exchange", () => {
         new Response(JSON.stringify({ sub: "google-sub-1", email: "owner@gmail.com", name: "Owner" }), { status: 200 })
     });
 
-    const linked = await service.completeStorageLink(sessionId, { sessionId, code: "auth-code-1" }, new Date());
+    const linked = await service.completeStorageLink(sessionId, { sessionId, code: "auth-code-1", state }, new Date());
 
     expect(linked.status).toBe("linked");
     expect(linked.linkedAccountEmail).toBe("owner@gmail.com");
@@ -81,13 +82,13 @@ describe("StorageLinkDomainService Google OAuth exchange", () => {
   });
 
   test("a failed token exchange maps to oauth_exchange_failed", async () => {
-    const { service } = freshService();
-    const sessionId = await createPendingSession(service);
+    const { repository, service } = freshService();
+    const { sessionId, state } = await createPendingSession(service, repository);
     stubGoogleFetch({ token: () => new Response("denied", { status: 400 }) });
 
     let caught: unknown = null;
     try {
-      await service.completeStorageLink(sessionId, { sessionId, code: "bad-code" }, new Date());
+      await service.completeStorageLink(sessionId, { sessionId, code: "bad-code", state }, new Date());
     } catch (error) {
       caught = error;
     }
@@ -97,8 +98,8 @@ describe("StorageLinkDomainService Google OAuth exchange", () => {
   });
 
   test("a failed userinfo lookup maps to oauth_profile_failed", async () => {
-    const { service } = freshService();
-    const sessionId = await createPendingSession(service);
+    const { repository, service } = freshService();
+    const { sessionId, state } = await createPendingSession(service, repository);
     stubGoogleFetch({
       token: () => new Response(JSON.stringify({ access_token: "at-1", expires_in: 3600 }), { status: 200 }),
       userinfo: () => new Response(null, { status: 403 })
@@ -106,7 +107,7 @@ describe("StorageLinkDomainService Google OAuth exchange", () => {
 
     let caught: unknown = null;
     try {
-      await service.completeStorageLink(sessionId, { sessionId, code: "auth-code-1" }, new Date());
+      await service.completeStorageLink(sessionId, { sessionId, code: "auth-code-1", state }, new Date());
     } catch (error) {
       caught = error;
     }
@@ -114,13 +115,13 @@ describe("StorageLinkDomainService Google OAuth exchange", () => {
   });
 
   test("a malformed token-endpoint body maps to oauth_exchange_failed", async () => {
-    const { service } = freshService();
-    const sessionId = await createPendingSession(service);
+    const { repository, service } = freshService();
+    const { sessionId, state } = await createPendingSession(service, repository);
     stubGoogleFetch({ token: () => new Response("<html>not json</html>", { status: 200 }) });
 
     let caught: unknown = null;
     try {
-      await service.completeStorageLink(sessionId, { sessionId, code: "auth-code-1" }, new Date());
+      await service.completeStorageLink(sessionId, { sessionId, code: "auth-code-1", state }, new Date());
     } catch (error) {
       caught = error;
     }
@@ -130,8 +131,8 @@ describe("StorageLinkDomainService Google OAuth exchange", () => {
   });
 
   test("a malformed userinfo body maps to oauth_profile_failed", async () => {
-    const { service } = freshService();
-    const sessionId = await createPendingSession(service);
+    const { repository, service } = freshService();
+    const { sessionId, state } = await createPendingSession(service, repository);
     stubGoogleFetch({
       token: () => new Response(JSON.stringify({ access_token: "at-1", expires_in: 3600 }), { status: 200 }),
       userinfo: () => new Response("<html>not json</html>", { status: 200 })
@@ -139,7 +140,7 @@ describe("StorageLinkDomainService Google OAuth exchange", () => {
 
     let caught: unknown = null;
     try {
-      await service.completeStorageLink(sessionId, { sessionId, code: "auth-code-1" }, new Date());
+      await service.completeStorageLink(sessionId, { sessionId, code: "auth-code-1", state }, new Date());
     } catch (error) {
       caught = error;
     }
@@ -147,13 +148,13 @@ describe("StorageLinkDomainService Google OAuth exchange", () => {
   });
 
   test("a missing callback code is rejected up front", async () => {
-    const { service } = freshService();
-    const sessionId = await createPendingSession(service);
+    const { repository, service } = freshService();
+    const { sessionId, state } = await createPendingSession(service, repository);
     stubGoogleFetch({});
 
     let caught: unknown = null;
     try {
-      await service.completeStorageLink(sessionId, { sessionId }, new Date());
+      await service.completeStorageLink(sessionId, { sessionId, state }, new Date());
     } catch (error) {
       caught = error;
     }
@@ -182,7 +183,7 @@ describe("StorageLinkDomainService Google OAuth exchange", () => {
 
   test("a grant without a refresh token for an unknown account fails the session with a consent retry", async () => {
     const { repository, service } = freshService();
-    const sessionId = await createPendingSession(service);
+    const { sessionId, state } = await createPendingSession(service, repository);
     stubGoogleFetch({
       token: () => new Response(JSON.stringify({ access_token: "at-1", expires_in: 3600 }), { status: 200 }),
       userinfo: () => new Response(JSON.stringify({ sub: "google-sub-new", email: "owner@gmail.com" }), { status: 200 })
@@ -190,7 +191,7 @@ describe("StorageLinkDomainService Google OAuth exchange", () => {
 
     let caught: unknown = null;
     try {
-      await service.completeStorageLink(sessionId, { sessionId, code: "auth-code-1" }, new Date());
+      await service.completeStorageLink(sessionId, { sessionId, code: "auth-code-1", state }, new Date());
     } catch (error) {
       caught = error;
     }
@@ -217,17 +218,47 @@ describe("StorageLinkDomainService Google OAuth exchange", () => {
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z"
     });
-    const sessionId = await createPendingSession(service);
+    const { sessionId, state } = await createPendingSession(service, repository);
     stubGoogleFetch({
       token: () => new Response(JSON.stringify({ access_token: "at-2", expires_in: 3600 }), { status: 200 }),
       userinfo: () => new Response(JSON.stringify({ sub: "google-sub-1", email: "owner@gmail.com" }), { status: 200 })
     });
 
-    const linked = await service.completeStorageLink(sessionId, { sessionId, code: "auth-code-1" }, new Date());
+    const linked = await service.completeStorageLink(sessionId, { sessionId, code: "auth-code-1", state }, new Date());
 
     expect(linked.status).toBe("linked");
     const account = await repository.findStorageAccountByExternalId("google-drive", "google-sub-1");
     expect(account?.accessToken).toBe("at-2");
     expect(account?.refreshToken).toBe("stored-rt");
+  });
+
+  test("[S3 fixed] a mismatched state is rejected before any token exchange", async () => {
+    const { repository, service } = freshService();
+    const { sessionId } = await createPendingSession(service, repository);
+    stubGoogleFetch({}); // any Google fetch would throw via the 500 default
+
+    expect(service.completeStorageLink(sessionId, { sessionId, code: "auth-code-1", state: `${sessionId}:wrong-nonce` }, new Date()))
+      .rejects.toMatchObject({ status: 403, code: "storage_link_state_mismatch" });
+    const session = await repository.getStorageLinkSession(sessionId);
+    expect(session?.status).toBe("pending");
+  });
+
+  test("[S3 fixed] a missing state is rejected", async () => {
+    const { repository, service } = freshService();
+    const { sessionId } = await createPendingSession(service, repository);
+    expect(service.completeStorageLink(sessionId, { sessionId, code: "auth-code-1" }, new Date()))
+      .rejects.toMatchObject({ status: 403, code: "storage_link_state_mismatch" });
+  });
+
+  test("the dev-mock bare nonce form of state is accepted", async () => {
+    const { repository, service } = freshService();
+    const { sessionId, state } = await createPendingSession(service, repository);
+    const bareNonce = state.slice(sessionId.length + 1);
+    stubGoogleFetch({
+      token: () => new Response(JSON.stringify({ access_token: "at-1", refresh_token: "rt-1", expires_in: 3600 }), { status: 200 }),
+      userinfo: () => new Response(JSON.stringify({ sub: "google-sub-9", email: "owner@gmail.com" }), { status: 200 })
+    });
+    const linked = await service.completeStorageLink(sessionId, { sessionId, code: "auth-code-1", state: bareNonce }, new Date());
+    expect(linked.status).toBe("linked");
   });
 });

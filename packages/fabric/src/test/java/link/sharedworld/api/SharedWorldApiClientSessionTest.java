@@ -198,6 +198,58 @@ final class SharedWorldApiClientSessionTest {
     }
 
     @Test
+    void anExpiredLookingPersistedTokenIsStillTriedAgainstTheServer() throws Exception {
+        // The server is the authority on token lifetime. Discarding sessions
+        // by the LOCAL clock meant a skewed clock re-ran the full Mojang
+        // handshake on every call — self-inflicted rate limiting. A genuinely
+        // expired token surfaces as a 401 that request() recovers from.
+        String baseUrl = startServer();
+        this.server.createContext("/worlds", exchange -> writeJson(exchange, 200, "[]"));
+        AtomicInteger joinCalls = new AtomicInteger();
+        FakePersistence persistence = new FakePersistence();
+        persistence.save(baseUrl, PLAYER_UUID,
+                new SessionTokenDto("token-old-clock", "1111", "HostA", "2020-01-01T00:00:00.000Z"));
+
+        var worlds = client(baseUrl, joinCalls, persistence).listWorlds();
+
+        assertTrue(worlds.isEmpty());
+        assertEquals(0, joinCalls.get(), "no Mojang handshake while the server still accepts the token");
+    }
+
+    @Test
+    void theVerificationRetryWaitsForTheBackendsRetryAfter() throws Exception {
+        String baseUrl = startServer();
+        this.server.createContext("/auth/challenge", exchange ->
+                writeJson(exchange, 200, "{\"serverId\":\"server-1\",\"expiresAt\":\"2099-01-01T00:00:00.000Z\"}"));
+        AtomicInteger completeCalls = new AtomicInteger();
+        this.server.createContext("/auth/complete", exchange -> {
+            completeCalls.incrementAndGet();
+            exchange.getResponseHeaders().set("retry-after", "1");
+            writeJson(exchange, 503,
+                    "{\"error\":\"identity_verification_unavailable\",\"message\":\"Minecraft's identity service is rate-limiting the SharedWorld server. Please wait a minute and try again.\",\"status\":503}");
+        });
+        AtomicInteger joinCalls = new AtomicInteger();
+
+        long startedAt = System.nanoTime();
+        SharedWorldApiException error = assertThrows(SharedWorldApiException.class,
+                () -> client(baseUrl, joinCalls, new FakePersistence()).ensureSession());
+        long elapsedMillis = (System.nanoTime() - startedAt) / 1_000_000L;
+
+        assertEquals("identity_verification_unavailable", error.error());
+        assertEquals(1, (int) error.retryAfterSeconds(), "the retry-after header rides on the exception");
+        assertEquals(2, completeCalls.get(), "exactly one full fresh re-attempt");
+        assertTrue(elapsedMillis >= 900L, "the re-attempt honors the backend's retry-after pause");
+    }
+
+    @Test
+    void verificationRetryDelayHonorsRetryAfterWithACap() {
+        assertEquals(2_000L, SharedWorldApiClient.verificationRetryDelayMillis(null), "no header: short default");
+        assertEquals(2_000L, SharedWorldApiClient.verificationRetryDelayMillis(0), "nonsense header: short default");
+        assertEquals(10_000L, SharedWorldApiClient.verificationRetryDelayMillis(10));
+        assertEquals(15_000L, SharedWorldApiClient.verificationRetryDelayMillis(60), "capped so the UI never sits for a minute");
+    }
+
+    @Test
     void malformedPersistedExpiryFallsBackToAFreshAuth() throws Exception {
         String baseUrl = startServer();
         this.server.createContext("/auth/challenge", exchange ->

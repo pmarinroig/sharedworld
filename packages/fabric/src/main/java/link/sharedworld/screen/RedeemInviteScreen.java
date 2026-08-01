@@ -83,7 +83,7 @@ public final class RedeemInviteScreen extends link.sharedworld.versioned.Version
                         throw new RuntimeException(exception);
                     }
                 }, SharedWorldClient.ioExecutor())
-                .whenComplete((result, error) -> Minecraft.getInstance().execute(() -> {
+                .whenComplete((result, error) -> ScreenGuards.runIfCurrent(this, () -> {
                     this.redeemInFlight = false;
                     if (this.doneButton != null) {
                         this.doneButton.active = true;

@@ -458,7 +458,12 @@ public final class SharedWorldCoordinatorHarness {
             return this.managedWorldOpen != null ? this.managedWorldOpen : this.hasSingleplayerServer;
         }
 
-        /** Overrides the default "any open local server is managed"; null restores mirroring. */
+        /**
+         * The harness mirrors "open local server = managed" as an explicit test
+         * choice (harness scenarios host managed worlds unless told otherwise);
+         * the production interface default fails closed. Pass false to simulate
+         * a vanilla world being open; null restores mirroring.
+         */
         public void setManagedWorldOpen(Boolean managedWorldOpen) {
             this.managedWorldOpen = managedWorldOpen;
         }

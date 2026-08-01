@@ -1,8 +1,9 @@
 package link.sharedworld.mixin;
 
-import link.sharedworld.SharedWorldDevSessionBridge;
+import link.sharedworld.host.SharedWorldHostServerGate;
 import link.sharedworld.host.SharedWorldPublishedJoinModePolicy;
 import net.minecraft.client.server.IntegratedServer;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.level.GameType;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -16,7 +17,7 @@ abstract class IntegratedServerForcedGameTypeMixin {
         cir.setReturnValue(
                 SharedWorldPublishedJoinModePolicy.forcedGameMode(
                         cir.getReturnValue(),
-                        SharedWorldDevSessionBridge.isHostingSharedWorld()
+                        SharedWorldHostServerGate.isManagedSharedWorldHost((MinecraftServer) (Object) this)
                 )
         );
     }

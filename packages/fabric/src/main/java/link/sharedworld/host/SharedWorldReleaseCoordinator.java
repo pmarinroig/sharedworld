@@ -247,7 +247,7 @@ public final class SharedWorldReleaseCoordinator {
      */
     public ReleaseDisplay beginGracefulDisconnect(Minecraft minecraft) {
         SharedWorldHostingManager.ActiveHostSession session = this.hostControl.activeHostSession();
-        LOGGER.info(
+        LOGGER.debug(
                 "SharedWorld release diagnostics [beginGracefulDisconnect]: hasSession={}, localServer={}, currentPhase={}",
                 session != null,
                 this.clientShell.isLocalServer(),
@@ -257,7 +257,7 @@ public final class SharedWorldReleaseCoordinator {
             return null;
         }
         if (this.state != null && SharedWorldReleasePolicy.isClosedTerminal(this.state.record.phase)) {
-            LOGGER.info(
+            LOGGER.debug(
                     "SharedWorld release diagnostics [beginGracefulDisconnect]: auto-clearing stale closed terminal state {} for {}",
                     this.state.record.phase,
                     this.state.record.worldId
@@ -265,7 +265,7 @@ public final class SharedWorldReleaseCoordinator {
             acknowledgeTerminal();
         }
         if (this.terminalState != null && !this.terminalState.blocking) {
-            LOGGER.info(
+            LOGGER.debug(
                     "SharedWorld release diagnostics [beginGracefulDisconnect]: auto-clearing stale terminal notice {} for {}",
                     this.terminalState.phase,
                     this.terminalState.worldId
@@ -273,7 +273,7 @@ public final class SharedWorldReleaseCoordinator {
             acknowledgeTerminal();
         }
         if (this.state != null) {
-            LOGGER.info(
+            LOGGER.debug(
                     "SharedWorld release diagnostics [beginGracefulDisconnect]: short-circuiting because active release state {} already exists for {}",
                     this.state.record.phase,
                     this.state.record.worldId
@@ -281,7 +281,7 @@ public final class SharedWorldReleaseCoordinator {
             return new ReleaseDisplay(this.state.record.worldId, this.state.record.worldName);
         }
         if (this.terminalState != null) {
-            LOGGER.info(
+            LOGGER.debug(
                     "SharedWorld release diagnostics [beginGracefulDisconnect]: short-circuiting because terminal state {} already exists for {}",
                     this.terminalState.phase,
                     this.terminalState.worldId
@@ -828,6 +828,10 @@ public final class SharedWorldReleaseCoordinator {
         if (current == null || current.localDisconnectObserved) {
             return;
         }
+        // The disconnect this attempt armed either already happened (and was
+        // consumed) or is never coming; a still-armed flag would swallow the
+        // next unrelated disconnect.
+        this.disconnectPassThroughArmed = false;
         current.localDisconnectObserved = true;
         clearTerminalOwnedHostSession(current);
         if (current.reasonResolved) {
@@ -949,6 +953,9 @@ public final class SharedWorldReleaseCoordinator {
     }
 
     private void markLocalDisconnectObserved(SharedWorldReleaseStore.ReleaseRecord record) {
+        // See observeForcedDisconnect: observation retires this attempt's
+        // armed pass-through so it cannot leak onto a later disconnect.
+        this.disconnectPassThroughArmed = false;
         SharedWorldReleaseStore.ReleaseRecord updated = record.copy();
         updated.localDisconnectObserved = true;
         updated.phase = updated.pendingTerminalPhase != null && SharedWorldReleasePolicy.shouldTransitionDirectlyToTerminal(updated)
@@ -957,7 +964,7 @@ public final class SharedWorldReleaseCoordinator {
                 ? SharedWorldReleasePhase.UPLOADING_FINAL_SNAPSHOT
                 : SharedWorldReleasePhase.BEGINNING_BACKEND_FINALIZATION;
         if (updated.phase == SharedWorldReleasePhase.UPLOADING_FINAL_SNAPSHOT) {
-            LOGGER.info(
+            LOGGER.debug(
                     "SharedWorld release diagnostics [transition]: moving {} to {} after local disconnect",
                     updated.worldId,
                     updated.phase

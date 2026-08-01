@@ -152,6 +152,40 @@ describe("SharedWorldService auth", () => {
     expect(attempts).toBe(5);
   });
 
+  test("a Mojang 429 short-circuits the ladder and carries Mojang's Retry-After", async () => {
+    let attempts = 0;
+    const instance = createTestService(
+      createSqliteRepository(),
+      {
+        async verifyJoin() {
+          attempts += 1;
+          const error = new HttpError(
+            503,
+            "identity_verification_unavailable",
+            "Minecraft's identity service is rate-limiting the SharedWorld server. Please wait a minute and try again."
+          );
+          error.upstreamStatus = 429;
+          error.retryAfterSeconds = 60;
+          throw error;
+        }
+      }
+    );
+
+    const challenge = await instance.createChallenge();
+    let caught: unknown = null;
+    try {
+      await instance.completeAuth({ serverId: challenge.serverId, playerName: "Owner" });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(HttpError);
+    expect((caught as HttpError).status).toBe(503);
+    expect((caught as HttpError).code).toBe("identity_verification_unavailable");
+    // Re-hitting a rate limiter within the ~2s ladder deepens the throttling.
+    expect(attempts).toBe(1);
+    expect((caught as HttpError).retryAfterSeconds).toBe(60);
+  });
+
   test("mixed propagation lag and transient unavailability prefers the retryable 503 over the terminal 403", async () => {
     let attempts = 0;
     const instance = createTestService(

@@ -27,40 +27,18 @@ base {
 // One source tree builds one jar per Minecraft "bucket": a range of Minecraft versions that
 // share the same API surface for everything SharedWorld touches. Version-specific code lives
 // in src/versioned/<bucket>/ and is swapped in per build. Select with -PsharedworldMcBucket=.
-def mcBuckets = [
-        "1.21.11": [
-                minecraftVersion: "1.21.11",
-                fabricApiVersion: "0.141.3+1.21.11",
-                minecraftRange  : ">=1.21.11 <1.22",
-        ],
-        "1.21.9" : [
-                minecraftVersion: "1.21.9",
-                fabricApiVersion: "0.134.1+1.21.9",
-                minecraftRange  : ">=1.21.9 <1.21.11",
-        ],
-        "1.21.6" : [
-                minecraftVersion: "1.21.6",
-                fabricApiVersion: "0.128.2+1.21.6",
-                minecraftRange  : ">=1.21.6 <1.21.9",
-        ],
-        "1.21.1" : [
-                minecraftVersion: "1.21",
-                fabricApiVersion: "0.102.0+1.21",
-                minecraftRange  : ">=1.21 <1.21.2",
-        ],
-        "1.20.1" : [
-                minecraftVersion: "1.20",
-                fabricApiVersion: "0.92.11+1.20.1",
-                minecraftRange  : ">=1.20 <1.20.2",
-                javaRelease     : 17,
-        ],
-]
-def mcBucketName = providers.gradleProperty("sharedworldMcBucket").getOrElse("1.21.11")
+// The bucket matrix lives in buckets.json — the single source of truth shared with the
+// modern project and the workspace verify scripts.
+def bucketConfig = new groovy.json.JsonSlurper().parse(file("buckets.json"))
+def mcBuckets = bucketConfig.buckets.findAll { it.project == "classic" }.collectEntries {
+    [(it.name): it]
+}
+def mcBucketName = providers.gradleProperty("sharedworldMcBucket").getOrElse(bucketConfig.defaults.classic)
 def mcBucket = mcBuckets[mcBucketName]
 if (mcBucket == null) {
     throw new GradleException("Unknown sharedworldMcBucket '${mcBucketName}'. Known buckets: ${mcBuckets.keySet()}")
 }
-def isDefaultMcBucket = mcBucketName == "1.21.11"
+def isDefaultMcBucket = mcBucketName == bucketConfig.defaults.classic
 // Ship jars target the oldest Java their players run (1.20.1 = stock launcher Java 17).
 def bucketJavaRelease = (mcBucket.javaRelease ?: 21) as int
 def bucketMixinCompatibilityLevel = "JAVA_${bucketJavaRelease}"
@@ -99,10 +77,18 @@ extractedLocalJijDir.mkdirs()
 sourceSets {
     main {
         java.srcDir("src/versioned/${mcBucketName}/java")
+        // Byte-identical seams shared across buckets live once under
+        // src/versioned/common/<group>/; buckets.json says which groups apply.
+        (mcBucket.sharedVersionedDirs ?: []).each { group ->
+            java.srcDir("src/versioned/common/${group}/java")
+        }
         resources.srcDir("src/versioned/${mcBucketName}/resources")
     }
     test {
         java.srcDir("src/versionedTest/${mcBucketName}/java")
+        (mcBucket.sharedVersionedTestDirs ?: []).each { group ->
+            java.srcDir("src/versionedTest/common/${group}/java")
+        }
     }
     devHelper {
         java.srcDir("src/devhelper/java")

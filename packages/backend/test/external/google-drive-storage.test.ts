@@ -202,6 +202,83 @@ describe("GoogleDriveStorageProvider", () => {
     expect(await fixture.repository.getStorageObject("google-drive", fixture.accountId, "worlds/w1/a.bin")).toBeNull();
   });
 
+  test("[S4 fixed] get retries retryable statuses and then succeeds", async () => {
+    const fixture = freshProviderFixture();
+    await fixture.seedAccount();
+    await fixture.provider.put(fixture.binding, "worlds/w1/a.bin", "data", "application/octet-stream");
+    requests.length = 0;
+    script = [{ status: 503 }, { status: 429 }];
+    defaultReply = () => new Response("payload", { status: 200 });
+
+    const blob = await fixture.provider.get(fixture.binding, "worlds/w1/a.bin");
+
+    expect(blob).not.toBeNull();
+    expect(new TextDecoder().decode(await blob!.arrayBuffer())).toBe("payload");
+    expect(requests.length).toBe(3);
+  });
+
+  test("[S4 fixed] get gives up after four attempts when the failure persists", async () => {
+    const fixture = freshProviderFixture();
+    await fixture.seedAccount();
+    await fixture.provider.put(fixture.binding, "worlds/w1/a.bin", "data", "application/octet-stream");
+    requests.length = 0;
+    defaultReply = () => new Response(null, { status: 503 });
+
+    expect(fixture.provider.get(fixture.binding, "worlds/w1/a.bin"))
+      .rejects.toMatchObject({ status: 503, code: "drive_download_failed" });
+  });
+
+  test("get does not retry a non-retryable client error", async () => {
+    const fixture = freshProviderFixture();
+    await fixture.seedAccount();
+    await fixture.provider.put(fixture.binding, "worlds/w1/a.bin", "data", "application/octet-stream");
+    requests.length = 0;
+    script = [{ status: 400 }];
+
+    await expect(fixture.provider.get(fixture.binding, "worlds/w1/a.bin"))
+      .rejects.toMatchObject({ status: 400, code: "drive_download_failed" });
+    expect(requests.length).toBe(1);
+  });
+
+  test("[S4 fixed] delete retries retryable statuses and then removes the local record", async () => {
+    const fixture = freshProviderFixture();
+    await fixture.seedAccount();
+    await fixture.provider.put(fixture.binding, "worlds/w1/a.bin", "data", "application/octet-stream");
+    requests.length = 0;
+    script = [{ status: 503 }];
+    defaultReply = () => new Response(null, { status: 204 });
+
+    await fixture.provider.delete(fixture.binding, "worlds/w1/a.bin");
+
+    expect(requests.length).toBe(2);
+    expect(await fixture.repository.getStorageObject("google-drive", fixture.accountId, "worlds/w1/a.bin")).toBeNull();
+  });
+
+  test("[S4 fixed] a persistently failing delete keeps the local record for later GC", async () => {
+    const fixture = freshProviderFixture();
+    await fixture.seedAccount();
+    await fixture.provider.put(fixture.binding, "worlds/w1/a.bin", "data", "application/octet-stream");
+    requests.length = 0;
+    defaultReply = () => new Response(null, { status: 500 });
+
+    await expect(fixture.provider.delete(fixture.binding, "worlds/w1/a.bin"))
+      .rejects.toMatchObject({ status: 500, code: "drive_delete_failed" });
+    expect(await fixture.repository.getStorageObject("google-drive", fixture.accountId, "worlds/w1/a.bin")).not.toBeNull();
+  });
+
+  test("delete treats a Drive 404 as already gone and removes the local record", async () => {
+    const fixture = freshProviderFixture();
+    await fixture.seedAccount();
+    await fixture.provider.put(fixture.binding, "worlds/w1/a.bin", "data", "application/octet-stream");
+    requests.length = 0;
+    script = [{ status: 404 }];
+
+    await fixture.provider.delete(fixture.binding, "worlds/w1/a.bin");
+
+    expect(requests.length).toBe(1);
+    expect(await fixture.repository.getStorageObject("google-drive", fixture.accountId, "worlds/w1/a.bin")).toBeNull();
+  });
+
   test("a 401 triggers one token refresh against the hard-coded Google endpoint and a retry", async () => {
     const fixture = freshProviderFixture();
     await fixture.seedAccount();

@@ -159,7 +159,7 @@ public final class ReplaceSharedWorldProgressScreen extends link.sharedworld.ver
                         throw new RuntimeException(exception);
                     }
                 }, SharedWorldClient.ioExecutor())
-                .whenComplete((message, error) -> Minecraft.getInstance().execute(() -> {
+                .whenComplete((message, error) -> ScreenGuards.runIfCurrent(this, () -> {
                     SharedWorldClient.guestCacheWarmer().resumeWorld(this.world.id());
                     if (error != null) {
                         Throwable cause = error.getCause() == null ? error : error.getCause();

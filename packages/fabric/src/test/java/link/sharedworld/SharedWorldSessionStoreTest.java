@@ -45,13 +45,19 @@ final class SharedWorldSessionStoreTest {
     }
 
     @Test
-    void expiredAndMalformedExpiriesAreTreatedAsAbsent() {
+    void expiredLookingTokensAreKeptButMalformedExpiriesAreTreatedAsAbsent() {
         Path file = tempDir.resolve("sessions.json");
         SharedWorldSessionStore store = new SharedWorldSessionStore(file);
-        store.save(BACKEND, PLAYER, session("token-old", "2001-01-01T00:00:00.000Z"));
-        assertNull(store.load(BACKEND, PLAYER), "expired tokens must not be returned");
 
-        // save() refuses malformed expiries outright.
+        // The server is the authority on token lifetime: judging expiry by the
+        // LOCAL clock made a skewed clock drop every session and forced a full
+        // Mojang handshake per launch. A truly expired token costs one 401.
+        store.save(BACKEND, PLAYER, session("token-old", "2001-01-01T00:00:00.000Z"));
+        assertEquals("token-old", store.load(BACKEND, PLAYER).token(),
+                "expiry is the server's call, not the local clock's");
+
+        // save() still refuses malformed expiries outright.
+        store.clear(BACKEND, PLAYER);
         store.save(BACKEND, PLAYER, session("token-bad", "not-a-timestamp"));
         assertNull(store.load(BACKEND, PLAYER));
     }

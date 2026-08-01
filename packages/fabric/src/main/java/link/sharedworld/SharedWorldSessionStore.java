@@ -84,13 +84,20 @@ public final class SharedWorldSessionStore implements SharedWorldApiClient.Sessi
                 && playerUuid != null && playerUuid.equals(entry.playerUuid);
     }
 
-    /** A malformed or missing expiry on disk means the entry is unusable. */
+    /**
+     * A malformed or missing expiry means the entry is unusable. Wall-clock
+     * expiry is deliberately NOT checked (here or in the ApiClient): the
+     * server is the authority on token lifetime, and trusting the local clock
+     * made a skewed clock silently drop (or refuse to save) every session —
+     * forcing a full Mojang handshake per launch or per call.
+     */
     private static boolean hasUsableExpiry(SessionTokenDto session) {
         if (session.token() == null || session.token().isBlank() || session.expiresAt() == null) {
             return false;
         }
         try {
-            return Instant.parse(session.expiresAt()).isAfter(Instant.now().plusSeconds(30));
+            Instant.parse(session.expiresAt());
+            return true;
         } catch (RuntimeException exception) {
             return false;
         }

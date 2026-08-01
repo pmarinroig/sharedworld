@@ -104,6 +104,10 @@ export interface SessionRepository {
   getChallenge(serverId: string): Promise<AuthChallengeRecord | null>;
   markChallengeUsed(serverId: string, usedAt: string): Promise<void>;
 
+  /** Single-row cache of Mojang's player-certificate key set (see auth/services-keys.ts). */
+  getMojangServicesKeys(): Promise<{ fetchedAt: string; keysJson: string } | null>;
+  putMojangServicesKeys(fetchedAt: string, keysJson: string): Promise<void>;
+
   upsertUser(user: UserRecord): Promise<void>;
   createSession(session: SessionToken): Promise<void>;
   getSession(token: string): Promise<SessionToken | null>;

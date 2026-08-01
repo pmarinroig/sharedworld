@@ -189,6 +189,10 @@ async function createSeededWorldResult(
   );
   await svc.repository.clearWaitersForPlayer(world.id, ctx.playerUuid);
   if (!await svc.repository.claimRuntimeAssignment(initialUpload.runtime)) {
+    // P8: a failed create must leave nothing behind. The world row and owner
+    // membership were already inserted, so compensate before rejecting.
+    // (Any hash-keyed icon blob stays: it may be shared with other worlds.)
+    await svc.repository.deleteWorldForPlayer(ctx, world.id, now);
     throw new HttpError(409, "world_busy", "SharedWorld is already being set up.");
   }
   return {

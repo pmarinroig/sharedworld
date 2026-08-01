@@ -14,16 +14,13 @@ import {
   type ObserveWaitingRequest,
   type ObserveWaitingResponse,
   type PresenceHeartbeatRequest,
-  type RefreshWaitingRequest,
   type ReleaseHostRequest,
   type WorldRuntimeStatus
 } from "../../../shared/src/index.ts";
 
 import { HttpError } from "../http.ts";
-import { randomId } from "../ids.ts";
 import type { RequestContext, UncleanShutdownWarning } from "../repository.ts";
 import {
-  assignHostStarting,
   matchesHostAuthorization,
   moveToFinalizing,
   refreshLiveRuntime,
@@ -34,8 +31,6 @@ import {
   type WorldRuntimeRecord
 } from "../runtime-protocol.ts";
 import {
-  hostAssignmentForCurrentRuntime,
-  runtimeAllowsDirectConnect,
   runtimeRequiresWaiting,
   type AuthorizedRuntime,
   type ResolvedRuntimeState
@@ -47,9 +42,14 @@ import {
   requireOwner,
   requireSessionAccess,
   requireWorldDetails,
-  resolveRuntimeState,
-  runtimeEpochBaseline
+  resolveRuntimeState
 } from "./runtime-access.ts";
+import {
+  immediateEntryKind,
+  registerWaiterAndResolve,
+  tryClaimFreshHost,
+  tryPromotePreferredCandidate
+} from "./session-entry.ts";
 import { getWorld } from "./worlds.ts";
 
 /**
@@ -74,112 +74,63 @@ export async function enterSession(
   const world = await getWorld(svc, ctx, worldId, now);
   const latestManifest = await svc.repository.getLatestSnapshot(worldId);
   const requestedWaiterSessionId = sanitizeWaiterSessionId(request.waiterSessionId);
+  const respond = (
+    action: EnterSessionResponse["action"],
+    resolvedOrRuntime: ResolvedRuntimeState | { runtime: WorldRuntimeRecord; resolved: ResolvedRuntimeState },
+    assignment: EnterSessionResponse["assignment"] = null,
+    waiterSessionId: string | null = null
+  ): EnterSessionResponse => {
+    const resolved = "resolved" in resolvedOrRuntime ? resolvedOrRuntime.resolved : resolvedOrRuntime;
+    const runtime = "runtime" in resolvedOrRuntime ? resolvedOrRuntime.runtime : resolved.runtime;
+    return {
+      action,
+      world,
+      latestManifest,
+      runtime: toRuntimeStatus(worldId, runtime, resolved.candidate, resolved.warning),
+      assignment,
+      waiterSessionId
+    };
+  };
+  const cancelRequestedWaiter = async () => {
+    if (requestedWaiterSessionId != null) {
+      await svc.repository.cancelWaiterSession(worldId, ctx, { waiterSessionId: requestedWaiterSessionId });
+    }
+  };
+
   const resolved = await resolveRuntimeState(svc, worldId, now);
-  if (runtimeAllowsDirectConnect(resolved)) {
-    if (requestedWaiterSessionId != null) {
-      await svc.repository.cancelWaiterSession(worldId, ctx, { waiterSessionId: requestedWaiterSessionId });
-    }
-    return {
-      action: "connect",
-      world,
-      latestManifest,
-      runtime: toRuntimeStatus(worldId, resolved.runtime, resolved.candidate, resolved.warning),
-      assignment: null,
-      waiterSessionId: null
-    };
-  }
-  const currentAssignment = hostAssignmentForCurrentRuntime(resolved, ctx.playerUuid);
-  if (currentAssignment != null) {
-    if (requestedWaiterSessionId != null) {
-      await svc.repository.cancelWaiterSession(worldId, ctx, { waiterSessionId: requestedWaiterSessionId });
-    }
-    return {
-      action: "host",
-      world,
-      latestManifest,
-      runtime: toRuntimeStatus(worldId, resolved.runtime, resolved.candidate, resolved.warning),
-      assignment: currentAssignment,
-      waiterSessionId: null
-    };
+  const immediate = immediateEntryKind(resolved, ctx.playerUuid);
+  if (immediate != null) {
+    await cancelRequestedWaiter();
+    return immediate.kind === "connect"
+      ? respond("connect", resolved)
+      : respond("host", resolved, immediate.assignment);
   }
   if (resolved.runtime == null && resolved.candidate == null) {
     if (resolved.warning != null && !request.acknowledgeUncleanShutdown) {
-      return {
-        action: "warn-host",
-        world,
-        latestManifest,
-        runtime: toRuntimeStatus(worldId, resolved.runtime, resolved.candidate, resolved.warning),
-        assignment: null,
-        waiterSessionId: null
-      };
+      return respond("warn-host", resolved);
     }
-    const assigned = assignHostStarting(
-      worldId,
-      { playerUuid: ctx.playerUuid, playerName: ctx.playerName },
-      runtimeEpochBaseline(resolved),
-      now,
-      () => randomId("rt")
-    );
-    if (await svc.repository.claimRuntimeAssignment(assigned.runtime)) {
-      if (requestedWaiterSessionId != null) {
-        await svc.repository.cancelWaiterSession(worldId, ctx, { waiterSessionId: requestedWaiterSessionId });
-      }
-      return {
-        action: "host",
-        world,
-        latestManifest,
-        runtime: toRuntimeStatus(worldId, assigned.runtime, resolved.candidate, resolved.warning),
-        assignment: assigned.assignment,
-        waiterSessionId: null
-      };
+    const claimed = await tryClaimFreshHost(svc, ctx, worldId, resolved, now);
+    if (claimed != null) {
+      await cancelRequestedWaiter();
+      return respond("host", { runtime: claimed.runtime, resolved }, claimed.assignment);
     }
     // Lost the acquire race to a concurrent claimant; fall through to the
     // waiting flow, which re-resolves against the winner's runtime.
   }
-  const waiterSessionId = requestedWaiterSessionId ?? randomId("wait");
-  const waiterSessionActive = requestedWaiterSessionId != null
-    ? await svc.repository.refreshWaiterSession(worldId, ctx, { waiterSessionId }, now)
-    : (await svc.repository.upsertWaiterSession(worldId, ctx, waiterSessionId, now), true);
-  const waitingResolved = await resolveRuntimeState(svc, worldId, now);
-  if (runtimeRequiresWaiting(waitingResolved)) {
-    return {
-      action: "wait",
-      world,
-      latestManifest,
-      runtime: toRuntimeStatus(worldId, waitingResolved.runtime, waitingResolved.candidate, waitingResolved.warning),
-      assignment: null,
-      waiterSessionId: waiterSessionActive ? waiterSessionId : null
-    };
+  const waiting = await registerWaiterAndResolve(svc, ctx, worldId, requestedWaiterSessionId, now);
+  const reportedWaiterSessionId = waiting.waiterSessionActive ? waiting.waiterSessionId : null;
+  if (runtimeRequiresWaiting(waiting.resolved)) {
+    return respond("wait", waiting.resolved, null, reportedWaiterSessionId);
   }
-  if (waitingResolved.runtime == null && waiterSessionActive && waitingResolved.candidate?.playerUuid === ctx.playerUuid) {
-    const assigned = assignHostStarting(
-      worldId,
-      waitingResolved.candidate,
-      runtimeEpochBaseline(waitingResolved),
-      now,
-      () => randomId("rt")
-    );
-    if (await svc.repository.claimRuntimeAssignment(assigned.runtime)) {
-      await svc.repository.cancelWaiterSession(worldId, ctx, { waiterSessionId });
-      return {
-        action: "host",
-        world,
-        latestManifest,
-        runtime: toRuntimeStatus(worldId, assigned.runtime, waitingResolved.candidate, waitingResolved.warning),
-        assignment: assigned.assignment,
-        waiterSessionId: null
-      };
+  if (waiting.waiterSessionActive) {
+    const promoted = await tryPromotePreferredCandidate(svc, ctx, worldId, waiting.resolved, now);
+    if (promoted != null) {
+      await svc.repository.cancelWaiterSession(worldId, ctx, { waiterSessionId: waiting.waiterSessionId });
+      return respond("host", { runtime: promoted.runtime, resolved: waiting.resolved }, promoted.assignment);
     }
     // Lost the promotion race; keep waiting against the winner's runtime.
   }
-  return {
-    action: "wait",
-    world,
-    latestManifest,
-    runtime: toRuntimeStatus(worldId, waitingResolved.runtime, waitingResolved.candidate, waitingResolved.warning),
-    assignment: null,
-    waiterSessionId: waiterSessionActive ? waiterSessionId : null
-  };
+  return respond("wait", waiting.resolved, null, reportedWaiterSessionId);
 }
 
 /**
@@ -207,95 +158,48 @@ export async function observeWaiting(
   }
   const waiterSessionActive = await svc.repository.refreshWaiterSession(worldId, ctx, { waiterSessionId }, now);
   const resolved = await resolveRuntimeState(svc, worldId, now);
-  const runtime = toRuntimeStatus(worldId, resolved.runtime, resolved.candidate, resolved.warning);
-  if (runtimeAllowsDirectConnect(resolved)) {
+  const respond = (
+    action: ObserveWaitingResponse["action"],
+    runtime: WorldRuntimeRecord | null = resolved.runtime,
+    reportedWaiterSessionId: string | null = null
+  ): ObserveWaitingResponse => ({
+    action,
+    runtime: toRuntimeStatus(worldId, runtime, resolved.candidate, resolved.warning),
+    assignment: null,
+    waiterSessionId: reportedWaiterSessionId
+  });
+  const cancelWaiter = async () => {
     if (waiterSessionActive) {
       await svc.repository.cancelWaiterSession(worldId, ctx, { waiterSessionId });
     }
-    return {
-      action: "connect",
-      runtime,
-      assignment: null,
-      waiterSessionId: null
-    };
-  }
-  const currentAssignment = hostAssignmentForCurrentRuntime(resolved, ctx.playerUuid);
-  if (currentAssignment != null) {
-    if (waiterSessionActive) {
-      await svc.repository.cancelWaiterSession(worldId, ctx, { waiterSessionId });
-    }
-    return {
-      action: "restart",
-      runtime,
-      assignment: null,
-      waiterSessionId: null
-    };
+  };
+
+  const immediate = immediateEntryKind(resolved, ctx.playerUuid);
+  if (immediate != null) {
+    await cancelWaiter();
+    return respond(immediate.kind === "connect" ? "connect" : "restart");
   }
   if (!waiterSessionActive) {
-    return {
-      action: "restart",
-      runtime,
-      assignment: null,
-      waiterSessionId: null
-    };
+    return respond("restart");
   }
-  if (resolved.runtime == null && resolved.candidate?.playerUuid === ctx.playerUuid) {
-    const assigned = assignHostStarting(
-      worldId,
-      resolved.candidate,
-      runtimeEpochBaseline(resolved),
-      now,
-      () => randomId("rt")
-    );
-    if (await svc.repository.claimRuntimeAssignment(assigned.runtime)) {
-      await svc.repository.cancelWaiterSession(worldId, ctx, { waiterSessionId });
-      return {
-        action: "restart",
-        runtime: toRuntimeStatus(worldId, assigned.runtime, resolved.candidate, resolved.warning),
-        assignment: null,
-        waiterSessionId: null
-      };
-    }
-    // Lost the promotion race; restart so the client re-enters against the
-    // winner's runtime instead of acting on a stale assignment.
-    return {
-      action: "restart",
-      runtime,
-      assignment: null,
-      waiterSessionId: null
-    };
+  const promoted = await tryPromotePreferredCandidate(svc, ctx, worldId, resolved, now);
+  if (promoted != null) {
+    await svc.repository.cancelWaiterSession(worldId, ctx, { waiterSessionId });
+    return respond("restart", promoted.runtime);
   }
-  if (resolved.runtime == null && resolved.candidate == null) {
-    return {
-      action: "restart",
-      runtime,
-      assignment: null,
-      waiterSessionId: null
-    };
+  if (resolved.runtime == null) {
+    // Either someone else is the preferred candidate (keep waiting) or the
+    // promotion race was lost / nobody is waiting (restart so the client
+    // re-enters against the authoritative state).
+    return resolved.candidate != null && resolved.candidate.playerUuid !== ctx.playerUuid
+      ? respond("wait", null, waiterSessionId)
+      : respond("restart");
   }
-  return {
-    action: "wait",
-    runtime,
-    assignment: null,
-    waiterSessionId
-  };
+  return respond("wait", resolved.runtime, waiterSessionId);
 }
 
 export async function runtimeStatus(svc: ServiceContext, ctx: RequestContext, worldId: string, now: Date): Promise<WorldRuntimeStatus> {
   await requireSessionAccess(svc, ctx, worldId, { allowRevokedHost: true });
-  const resolved = await resolveRuntimeState(svc, worldId, now);
-  return toRuntimeStatus(worldId, resolved.runtime, resolved.candidate, resolved.warning);
-}
-
-export async function refreshWaiting(
-  svc: ServiceContext,
-  ctx: RequestContext,
-  worldId: string,
-  request: RefreshWaitingRequest,
-  now: Date
-): Promise<WorldRuntimeStatus> {
-  await requireSessionAccess(svc, ctx, worldId);
-  await svc.repository.refreshWaiterSession(worldId, ctx, request, now);
   const resolved = await resolveRuntimeState(svc, worldId, now);
   return toRuntimeStatus(worldId, resolved.runtime, resolved.candidate, resolved.warning);
 }

@@ -16,6 +16,8 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 
 public final class SharedWorldSessionCoordinator {
+    private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger(SharedWorldSessionCoordinator.class);
+
     private static final long POLL_INTERVAL_MS = 1_000L;
     private static final int WAITING_FAILURES_BEFORE_NOTICE = 3;
 
@@ -344,49 +346,6 @@ public final class SharedWorldSessionCoordinator {
      * Authority source:
      * Backend finalization abandonment response, not the confirmation screen.
      */
-    public boolean requestDiscardPendingFinalization() {
-        WaitingFlowState state = this.waitingState;
-        if (state == null
-                || state.discardInFlight
-                || state.cancelInFlight
-                || !SharedWorldWaitingFlowLogic.canDiscardPendingFinalization(
-                        state.ownerUuid,
-                        this.playerIdentity.currentPlayerUuid(),
-                        state.lastRuntimeStatus,
-                        state.cancelInFlight || state.discardInFlight,
-                        this.clock.nowMillis()
-                )) {
-            return false;
-        }
-        state.discardInFlight = true;
-        state.discardErrorMessage = null;
-        this.asyncBridge.run(() -> this.backend.abandonFinalization(state.worldId), error -> {
-            if (this.waitingState != state) {
-                return;
-            }
-            state.discardInFlight = false;
-            if (error != null) {
-                if (SharedWorldApiClient.isDeletedWorldError(error)) {
-                    this.waitingState = null;
-                    clearPersistedRecovery();
-                    this.clientShell.setScreen(this.sessionUi.deleted(state.parent));
-                    return;
-                }
-                if (SharedWorldApiClient.isMembershipRevokedError(error)) {
-                    this.waitingState = null;
-                    clearPersistedRecovery();
-                    this.clientShell.openMembershipRevokedScreen(state.parent);
-                    return;
-                }
-                state.discardErrorMessage = SharedWorldApiClient.friendlyErrorMessage(error);
-                return;
-            }
-            state.discardErrorMessage = null;
-            state.lastPollAt = 0L;
-        });
-        return true;
-    }
-
     public void refreshWaitingNow() {
         WaitingFlowState state = this.waitingState;
         if (state != null) {
@@ -407,7 +366,10 @@ public final class SharedWorldSessionCoordinator {
                     recovery.previousJoinTarget(),
                     null
             ));
-        } catch (Exception ignored) {
+        } catch (Exception exception) {
+            // The crash-recovery path finds nothing if this write is lost;
+            // control flow is unchanged, but the loss must be visible.
+            LOGGER.warn("SharedWorld could not persist the disconnect-recovery record for {}", recovery.worldId(), exception);
         }
     }
 
@@ -606,7 +568,8 @@ public final class SharedWorldSessionCoordinator {
                         previousJoinTarget,
                         waiterSessionId
                 ));
-            } catch (Exception ignored) {
+            } catch (Exception exception) {
+                LOGGER.warn("SharedWorld could not persist the waiting recovery record for {}", worldId, exception);
             }
         }
         this.clientShell.setScreen(this.sessionUi.waiting(parent, worldId, worldName, ownerUuid));
@@ -748,7 +711,8 @@ public final class SharedWorldSessionCoordinator {
                     state.previousJoinTarget,
                     state.waiterSessionId
             ));
-        } catch (Exception ignored) {
+        } catch (Exception exception) {
+            LOGGER.warn("SharedWorld could not persist the waiting recovery record for {}", state.worldId, exception);
         }
     }
 

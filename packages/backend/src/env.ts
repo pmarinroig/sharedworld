@@ -6,6 +6,9 @@ export interface Env {
   PUBLIC_BASE_URL?: string;
   SIGNED_URL_TTL_SECONDS?: string;
   MOJANG_HAS_JOINED_ENDPOINT?: string;
+  MOJANG_SERVICES_PUBLICKEYS_ENDPOINT?: string;
+  /** Comma-separated base64 DER pins for the player-certificate key set (test hook / emergency lever). */
+  MOJANG_PLAYER_CERTIFICATE_KEYS?: string;
   SIGNING_SECRET?: string;
   ALLOW_DEV_AUTH?: string;
   ALLOW_DEV_INSECURE_E4MC?: string;
@@ -38,6 +41,7 @@ export interface D1PreparedStatement {
 
 export interface D1Database {
   prepare(query: string): D1PreparedStatement;
+  batch(statements: D1PreparedStatement[]): Promise<Array<{ success: boolean; meta?: Record<string, unknown> }>>;
 }
 
 export interface R2Bucket {

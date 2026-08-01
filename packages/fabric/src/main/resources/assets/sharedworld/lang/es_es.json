@@ -171,6 +171,7 @@
   "screen.sharedworld.settings_hint": "Los cambios llegan a quien esté hospedando en medio minuto aproximadamente y se guardan con el mundo.",
   "screen.sharedworld.settings_owner_only": "Solo el propietario puede cambiar los ajustes del mundo.",
   "screen.sharedworld.edit_status_saving_settings": "Guardando ajustes...",
+  "screen.sharedworld.edit_settings_unreadable": "No se pudo leer la configuración local de este mundo, así que se muestran los valores por defecto. Guardar la configuración está desactivado hasta que el mundo se vuelva a sincronizar.",
   "screen.sharedworld.edit_status_settings_saved": "Ajustes guardados.",
   "screen.sharedworld.storage_waiting_for_browser": "Abriendo tu navegador...",
   "screen.sharedworld.storage_waiting_authorization": "Termina de iniciar sesión con Google en tu navegador. Lo detectaremos en cuanto acabes.",

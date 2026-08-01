@@ -40,6 +40,32 @@ public final class SharedWorldIntegrationBackend {
         );
     }
 
+    /** The integration backend's fake Mojang services signing key (PKCS8 DER) for forging certificates. */
+    public static byte[] certSigningKeyPkcs8() throws IOException, InterruptedException {
+        HttpResponse<String> response = HTTP.send(
+                HttpRequest.newBuilder().uri(URI.create(backendUrl() + "/__test/cert-signing-key")).GET().build(),
+                HttpResponse.BodyHandlers.ofString()
+        );
+        Assertions.assertEquals(200, response.statusCode(), response.body());
+        com.google.gson.JsonObject payload = GSON.fromJson(response.body(), com.google.gson.JsonObject.class);
+        return java.util.Base64.getDecoder().decode(payload.get("privateKeyPkcs8").getAsString());
+    }
+
+    /** A premium-identity client whose only auth path is the certificate flow: joinServer fails the test. */
+    public static SharedWorldApiClient certApiClient(TestPlayer player, SharedWorldApiClient.ProfileCertificateProvider provider) {
+        return new SharedWorldApiClient(
+                backendUrl(),
+                HTTP,
+                () -> new SharedWorldApiClient.SessionIdentity(
+                        player.playerUuidHyphenated(),
+                        player.playerName(),
+                        "premium-access-token"
+                ),
+                (identity, serverId) -> Assertions.fail("certificate auth must not fall back to joinServer"),
+                provider
+        );
+    }
+
     public static void reset() throws IOException, InterruptedException {
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(backendUrl() + "/__test/reset"))

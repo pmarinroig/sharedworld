@@ -165,10 +165,6 @@ public final class SharedWorldPlaySessionTracker {
         );
     }
 
-    public synchronized boolean isActiveSharedWorld() {
-        return this.activeSession != null || this.pendingRecoverySession != null;
-    }
-
     /**
      * Whether the disconnect that is being shown (or is about to be shown) belongs to a SharedWorld
      * guest session. Non-consuming; used to gate the DisconnectedScreen recovery hijack so a vanilla

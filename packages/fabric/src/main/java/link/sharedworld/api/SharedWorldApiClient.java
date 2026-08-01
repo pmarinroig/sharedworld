@@ -54,11 +54,14 @@ import java.util.UUID;
 import java.util.zip.GZIPInputStream;
 
 public final class SharedWorldApiClient {
+    private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger("sharedworld");
+
     private final String baseUrl;
     private final HttpClient httpClient;
     private final Gson gson;
     private final SessionIdentityProvider sessionIdentityProvider;
     private final SessionJoiner sessionJoiner;
+    private final ProfileCertificateProvider certificateProvider;
     private SessionPersistence sessionPersistence;
     private SessionTokenDto cachedSession;
     private boolean cachedSessionIsDev;
@@ -69,12 +72,19 @@ public final class SharedWorldApiClient {
                 baseUrl,
                 defaultHttpClient(),
                 SharedWorldApiClient::resolveSessionIdentity,
-                SharedWorldApiClient::joinMinecraftSessionServer
+                SharedWorldApiClient::joinMinecraftSessionServer,
+                SharedWorldApiClient::resolveProfileCertificate
         );
     }
 
     public SharedWorldApiClient(String baseUrl, SessionIdentityProvider sessionIdentityProvider) {
-        this(baseUrl, defaultHttpClient(), sessionIdentityProvider, SharedWorldApiClient::joinMinecraftSessionServer);
+        this(
+                baseUrl,
+                defaultHttpClient(),
+                sessionIdentityProvider,
+                SharedWorldApiClient::joinMinecraftSessionServer,
+                SharedWorldApiClient::resolveProfileCertificate
+        );
     }
 
     public SharedWorldApiClient(String baseUrl, HttpClient httpClient) {
@@ -82,24 +92,43 @@ public final class SharedWorldApiClient {
                 baseUrl,
                 httpClient,
                 SharedWorldApiClient::resolveSessionIdentity,
-                SharedWorldApiClient::joinMinecraftSessionServer
+                SharedWorldApiClient::joinMinecraftSessionServer,
+                SharedWorldApiClient::resolveProfileCertificate
         );
     }
 
     public SharedWorldApiClient(String baseUrl, HttpClient httpClient, SessionIdentityProvider sessionIdentityProvider) {
-        this(baseUrl, httpClient, sessionIdentityProvider, SharedWorldApiClient::joinMinecraftSessionServer);
+        this(
+                baseUrl,
+                httpClient,
+                sessionIdentityProvider,
+                SharedWorldApiClient::joinMinecraftSessionServer,
+                SharedWorldApiClient::resolveProfileCertificate
+        );
     }
 
+    /** Certificate-less: harness constructors keep the historical join-only flow unless a provider is injected. */
     public SharedWorldApiClient(
             String baseUrl,
             HttpClient httpClient,
             SessionIdentityProvider sessionIdentityProvider,
             SessionJoiner sessionJoiner
     ) {
+        this(baseUrl, httpClient, sessionIdentityProvider, sessionJoiner, () -> java.util.Optional.empty());
+    }
+
+    public SharedWorldApiClient(
+            String baseUrl,
+            HttpClient httpClient,
+            SessionIdentityProvider sessionIdentityProvider,
+            SessionJoiner sessionJoiner,
+            ProfileCertificateProvider certificateProvider
+    ) {
         this.baseUrl = Objects.requireNonNull(baseUrl, "baseUrl");
         this.httpClient = Objects.requireNonNull(httpClient, "httpClient");
         this.sessionIdentityProvider = Objects.requireNonNull(sessionIdentityProvider, "sessionIdentityProvider");
         this.sessionJoiner = Objects.requireNonNull(sessionJoiner, "sessionJoiner");
+        this.certificateProvider = Objects.requireNonNull(certificateProvider, "certificateProvider");
         this.gson = new Gson();
     }
 
@@ -325,11 +354,6 @@ public final class SharedWorldApiClient {
     public FinalizationActionResultDto abandonFinalization(String worldId) throws IOException, InterruptedException {
         ensureSession();
         return request("POST", "/worlds/" + worldId + "/abandon-finalization", Map.of(), FinalizationActionResultDto.class, true);
-    }
-
-    public WorldRuntimeStatusDto refreshWaiting(String worldId, String waiterSessionId) throws IOException, InterruptedException {
-        ensureSession();
-        return request("POST", "/worlds/" + worldId + "/session/waiting/refresh", Map.of("waiterSessionId", waiterSessionId), WorldRuntimeStatusDto.class, true);
     }
 
     public ObserveWaitingResponseDto observeWaiting(String worldId, String waiterSessionId) throws IOException, InterruptedException {
@@ -609,13 +633,25 @@ public final class SharedWorldApiClient {
             session = establishMojangSession(identity);
         } catch (SharedWorldApiException exception) {
             if (!"identity_verification_unavailable".equals(exception.error())) {
+                LOGGER.warn("SharedWorld authentication failed: {} (HTTP {}) - {}",
+                        exception.error(), exception.status(), exception.getMessage());
                 throw exception;
             }
-            // The backend already retried Mojang for a couple of seconds; one
+            // The backend already retried Mojang inside its own window; one
             // full fresh attempt (new challenge + new joinServer proof) after
-            // a short pause covers blips that outlast its window.
-            Thread.sleep(2_000L);
-            session = establishMojangSession(identity);
+            // the pause the backend asked for covers blips and rate-limit
+            // windows that outlast it.
+            long delayMillis = verificationRetryDelayMillis(exception.retryAfterSeconds());
+            LOGGER.warn("SharedWorld identity verification unavailable (HTTP {}); retrying once in {} ms - {}",
+                    exception.status(), delayMillis, exception.getMessage());
+            Thread.sleep(delayMillis);
+            try {
+                session = establishMojangSession(identity);
+            } catch (SharedWorldApiException retryFailure) {
+                LOGGER.warn("SharedWorld authentication failed after retry: {} (HTTP {}) - {}",
+                        retryFailure.error(), retryFailure.status(), retryFailure.getMessage());
+                throw retryFailure;
+            }
         }
         cacheSession(session, false, false);
         if (this.sessionPersistence != null) {
@@ -624,7 +660,26 @@ public final class SharedWorldApiClient {
         return cachedSession;
     }
 
+    /**
+     * Certificate-first: the Mojang-signed profile keypair proves the account
+     * offline on the backend, avoiding the sessionserver hasJoined call that
+     * Mojang blocks for the backend's Cloudflare egress. Clients without a
+     * certificate (offline profiles, certificate-blocking mods) and pre-cert
+     * backends fall back to the historical joinServer/hasJoined flow.
+     */
     private SessionTokenDto establishMojangSession(SessionIdentity identity) throws IOException, InterruptedException {
+        java.util.Optional<ProfileCertificateData> certificate = this.certificateProvider.currentCertificate();
+        if (certificate.isPresent()) {
+            try {
+                return establishCertificateSession(identity, certificate.get());
+            } catch (SharedWorldApiException exception) {
+                if (!isCertificateFallbackError(exception)) {
+                    throw exception;
+                }
+                LOGGER.warn("SharedWorld certificate auth rejected ({} HTTP {}); falling back to the Mojang join flow",
+                        exception.error(), exception.status());
+            }
+        }
         AuthChallengeDto challenge = request("POST", "/auth/challenge", Map.of(), AuthChallengeDto.class, false);
         this.sessionJoiner.joinServer(identity, challenge.serverId());
         return request(
@@ -639,15 +694,104 @@ public final class SharedWorldApiClient {
         );
     }
 
-    /** Invalid or unparseable expiry means the session is not usable. */
+    private SessionTokenDto establishCertificateSession(SessionIdentity identity, ProfileCertificateData certificate)
+            throws IOException, InterruptedException {
+        AuthChallengeDto challenge = request("POST", "/auth/challenge", Map.of(), AuthChallengeDto.class, false);
+        java.util.Base64.Encoder base64 = java.util.Base64.getEncoder();
+        return request(
+                "POST",
+                "/auth/complete-cert",
+                Map.of(
+                        "serverId", challenge.serverId(),
+                        "playerUuid", identity.playerUuid().replace("-", "").toLowerCase(java.util.Locale.ROOT),
+                        "playerName", identity.playerName(),
+                        "publicKey", base64.encodeToString(certificate.publicKeyDer()),
+                        "publicKeyExpiresAtMs", certificate.expiresAtEpochMillis(),
+                        "keySignature", base64.encodeToString(certificate.keySignature()),
+                        "nonceSignature", base64.encodeToString(signNonce(certificate.privateKey(), challenge.serverId()))
+                ),
+                SessionTokenDto.class,
+                false
+        );
+    }
+
+    private static byte[] signNonce(java.security.PrivateKey privateKey, String serverId) throws IOException {
+        try {
+            java.security.Signature signature = java.security.Signature.getInstance("SHA256withRSA");
+            signature.initSign(privateKey);
+            signature.update(serverId.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return signature.sign();
+        } catch (java.security.GeneralSecurityException exception) {
+            throw new IOException("Failed to sign the SharedWorld challenge with the Minecraft profile key.", exception);
+        }
+    }
+
+    /**
+     * Rejections that the join flow can still recover from: a backend without
+     * the cert route ("not_found") or a certificate the backend will not
+     * accept. Transport failures and unavailability propagate — the join flow
+     * shares the same backend, so retrying there cannot help.
+     */
+    private static boolean isCertificateFallbackError(SharedWorldApiException exception) {
+        return "not_found".equals(exception.error())
+                || "certificate_invalid".equals(exception.error())
+                || "certificate_expired".equals(exception.error())
+                || "signature_invalid".equals(exception.error());
+    }
+
+    private static java.util.Optional<ProfileCertificateData> resolveProfileCertificate() {
+        try {
+            return link.sharedworld.versioned.ClientCompat.profileCertificate(Minecraft.getInstance());
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            return java.util.Optional.empty();
+        } catch (Exception exception) {
+            LOGGER.debug("SharedWorld profile certificate unavailable; using the Mojang join flow", exception);
+            return java.util.Optional.empty();
+        }
+    }
+
+    /**
+     * A session is usable when it is structurally sound; wall-clock expiry is
+     * deliberately NOT checked. The server is the authority on token lifetime:
+     * a genuinely expired token comes back as a 401 that request() already
+     * recovers from with one automatic re-auth. Trusting the local clock here
+     * turned a skewed clock into a full Mojang handshake on every API call —
+     * and from there into self-inflicted session-server rate limiting. An
+     * unparseable expiry still marks the record as corrupt.
+     */
     private static boolean isUsableSession(SessionTokenDto session) {
         if (session == null || session.token() == null || session.expiresAt() == null) {
             return false;
         }
         try {
-            return Instant.parse(session.expiresAt()).isAfter(Instant.now().plusSeconds(30));
+            Instant.parse(session.expiresAt());
+            return true;
         } catch (RuntimeException exception) {
             return false;
+        }
+    }
+
+    /**
+     * How long to pause before the single fresh verification re-attempt: the
+     * backend's Retry-After when present (capped so a UI spinner never sits
+     * for a minute), a short default otherwise.
+     */
+    static long verificationRetryDelayMillis(Integer retryAfterSeconds) {
+        if (retryAfterSeconds == null || retryAfterSeconds <= 0) {
+            return 2_000L;
+        }
+        return Math.min(retryAfterSeconds, 15L) * 1_000L;
+    }
+
+    private static Integer parseRetryAfterSeconds(String headerValue) {
+        if (headerValue == null) {
+            return null;
+        }
+        try {
+            return Integer.valueOf(headerValue.trim());
+        } catch (NumberFormatException exception) {
+            return null;
         }
     }
 
@@ -733,6 +877,7 @@ public final class SharedWorldApiClient {
         });
         try {
             join.get(JOIN_SERVER_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS);
+            LOGGER.debug("Proved the Minecraft session to Mojang for SharedWorld challenge {}", serverId);
         } catch (java.util.concurrent.TimeoutException exception) {
             join.cancel(true);
             throw new IOException("Timed out proving the Minecraft session to SharedWorld. Check your connection and try again.");
@@ -748,10 +893,6 @@ public final class SharedWorldApiClient {
         }
     }
 
-    public static String currentPlayerUuidWithHyphens() {
-        return currentBackendPlayerUuidWithHyphens();
-    }
-
     public static String currentBackendPlayerUuidWithHyphens() {
         User user = Minecraft.getInstance().getUser();
         return RuntimePlayerIdentity.resolveBackendPlayerUuidWithHyphens(user);
@@ -765,13 +906,6 @@ public final class SharedWorldApiClient {
         return CanonicalPlayerIdentity.normalizeUuidWithHyphens(
                 currentBackendPlayerUuidWithHyphens(),
                 "current backend player UUID"
-        );
-    }
-
-    public static String canonicalPlayerUuidWithHyphens(String backendAssignedPlayerUuid) {
-        return CanonicalPlayerIdentity.canonicalUuidForAssignment(
-                backendAssignedPlayerUuid,
-                currentBackendPlayerUuidWithHyphens()
         );
     }
 
@@ -887,7 +1021,12 @@ public final class SharedWorldApiClient {
         HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() >= 400) {
             ErrorDto error = tryParseError(response.body(), response.statusCode());
-            throw new SharedWorldApiException(error.error(), error.message(), error.status());
+            throw new SharedWorldApiException(
+                    error.error(),
+                    error.message(),
+                    error.status(),
+                    parseRetryAfterSeconds(response.headers().firstValue("retry-after").orElse(null))
+            );
         }
 
         if (responseType == null) {
@@ -966,11 +1105,17 @@ public final class SharedWorldApiClient {
     public static final class SharedWorldApiException extends IOException {
         private final String error;
         private final int status;
+        private final Integer retryAfterSeconds;
 
         public SharedWorldApiException(String error, String message, int status) {
+            this(error, message, status, null);
+        }
+
+        public SharedWorldApiException(String error, String message, int status, Integer retryAfterSeconds) {
             super(message);
             this.error = error;
             this.status = status;
+            this.retryAfterSeconds = retryAfterSeconds;
         }
 
         public String error() {
@@ -979,6 +1124,11 @@ public final class SharedWorldApiClient {
 
         public int status() {
             return this.status;
+        }
+
+        /** The backend's Retry-After header in seconds, or null when absent. */
+        public Integer retryAfterSeconds() {
+            return this.retryAfterSeconds;
         }
     }
 
@@ -1003,6 +1153,11 @@ public final class SharedWorldApiClient {
     @FunctionalInterface
     public interface SessionJoiner {
         void joinServer(SessionIdentity identity, String serverId) throws IOException;
+    }
+
+    /** Supplies the Mojang-signed profile certificate for cert auth, or empty to use the join flow. */
+    public interface ProfileCertificateProvider {
+        java.util.Optional<ProfileCertificateData> currentCertificate();
     }
 
     private static String blankToNull(String value) {

@@ -33,12 +33,11 @@ import type {
   UncleanShutdownWarning
 } from "./repository.ts";
 import {
-  resolveRuntimeTimeout,
   runtimePhaseToWorldStatus,
-  timedOutUncleanShutdownWarning,
   type RuntimeWaiter,
   type WorldRuntimeRecord
 } from "./runtime-protocol.ts";
+import { reconcileRuntimeState } from "./runtime-reconciliation.ts";
 import {
   mapInvite,
   mapRuntimeRow,
@@ -84,6 +83,27 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
 
   async markChallengeUsed(serverId: string, usedAt: string): Promise<void> {
     await this.run("UPDATE auth_challenges SET used_at = ? WHERE nonce = ?", usedAt, serverId);
+  }
+
+  async getMojangServicesKeys(): Promise<{ fetchedAt: string; keysJson: string } | null> {
+    const row = await this.first<Row>("SELECT fetched_at, keys_json FROM mojang_services_keys WHERE id = 1");
+    if (!row) {
+      return null;
+    }
+    return {
+      fetchedAt: String(row.fetched_at),
+      keysJson: String(row.keys_json)
+    };
+  }
+
+  async putMojangServicesKeys(fetchedAt: string, keysJson: string): Promise<void> {
+    await this.run(
+      `INSERT INTO mojang_services_keys (id, fetched_at, keys_json)
+       VALUES (1, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET fetched_at = excluded.fetched_at, keys_json = excluded.keys_json`,
+      fetchedAt,
+      keysJson
+    );
   }
 
   async upsertUser(user: UserRecord): Promise<void> {
@@ -277,12 +297,7 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
         deletedAt,
         worldId
       );
-      await this.run("UPDATE worlds SET deleted_at = ? WHERE id = ?", deletedAt, worldId);
-      await this.run("DELETE FROM invite_codes WHERE world_id = ?", worldId);
-      await this.run("DELETE FROM handoff_waiters WHERE world_id = ?", worldId);
-      await this.retireWorldRuntime(worldId, null);
-      await this.run("DELETE FROM world_presence WHERE world_id = ?", worldId);
-      return { worldDeleted: true, deletedCustomIconStorageKey: asNullableString(world.custom_icon_storage_key) };
+      return this.tearDownWorld(worldId, deletedAt, asNullableString(world.custom_icon_storage_key));
     }
 
     await this.run(
@@ -302,15 +317,20 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       worldId
     );
     if (Number(count?.count ?? 0) === 0) {
-      await this.run("UPDATE worlds SET deleted_at = ? WHERE id = ?", deletedAt, worldId);
-      await this.run("DELETE FROM invite_codes WHERE world_id = ?", worldId);
-      await this.run("DELETE FROM handoff_waiters WHERE world_id = ?", worldId);
-      await this.retireWorldRuntime(worldId, null);
-      await this.run("DELETE FROM world_presence WHERE world_id = ?", worldId);
-      return { worldDeleted: true, deletedCustomIconStorageKey: asNullableString(world.custom_icon_storage_key) };
+      return this.tearDownWorld(worldId, deletedAt, asNullableString(world.custom_icon_storage_key));
     }
 
     return { worldDeleted: false, deletedCustomIconStorageKey: null };
+  }
+
+  /** Full-world teardown once the last (or owner) membership is gone. */
+  private async tearDownWorld(worldId: string, deletedAt: string, deletedCustomIconStorageKey: string | null): Promise<DeleteWorldResult> {
+    await this.run("UPDATE worlds SET deleted_at = ? WHERE id = ?", deletedAt, worldId);
+    await this.run("DELETE FROM invite_codes WHERE world_id = ?", worldId);
+    await this.run("DELETE FROM handoff_waiters WHERE world_id = ?", worldId);
+    await this.retireWorldRuntime(worldId, null);
+    await this.run("DELETE FROM world_presence WHERE world_id = ?", worldId);
+    return { worldDeleted: true, deletedCustomIconStorageKey };
   }
 
   /**
@@ -491,16 +511,20 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     if (!current) {
       return;
     }
+    // Present-but-null fields are explicit clears; only absent fields keep
+    // their current value.
+    const pick = <K extends keyof typeof update>(key: K, fallback: StorageLinkSessionRecord[K & keyof StorageLinkSessionRecord]) =>
+      key in update ? update[key] ?? null : fallback;
     await this.run(
       `UPDATE storage_link_sessions
        SET status = ?, linked_account_email = ?, account_display_name = ?, error_message = ?, storage_account_id = ?, completed_at = ?
        WHERE id = ?`,
-      update.status ?? current.status,
-      update.linkedAccountEmail ?? current.linkedAccountEmail,
-      update.accountDisplayName ?? current.accountDisplayName,
-      update.errorMessage ?? current.errorMessage,
-      update.storageAccountId ?? current.storageAccountId,
-      update.completedAt ?? current.completedAt,
+      pick("status", current.status),
+      pick("linkedAccountEmail", current.linkedAccountEmail),
+      pick("accountDisplayName", current.accountDisplayName),
+      pick("errorMessage", current.errorMessage),
+      pick("storageAccountId", current.storageAccountId),
+      pick("completedAt", current.completedAt),
       sessionId
     );
   }
@@ -779,55 +803,7 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
    * can never overwrite a newer runtime epoch.
    */
   async upsertRuntimeRecord(runtime: WorldRuntimeRecord): Promise<void> {
-    await this.run(
-      `INSERT INTO world_runtime (
-         world_id, host_uuid, host_player_name, runtime_phase, runtime_epoch, runtime_token,
-         claimed_at, expires_at, join_target, candidate_uuid, revoked_at,
-         startup_deadline_at, runtime_token_issued_at, last_progress_at,
-         startup_progress_label, startup_progress_mode, startup_progress_fraction, startup_progress_updated_at, updated_at,
-         host_minecraft_version
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(world_id) DO UPDATE SET
-         host_uuid = excluded.host_uuid,
-         host_player_name = excluded.host_player_name,
-         runtime_phase = excluded.runtime_phase,
-         runtime_epoch = excluded.runtime_epoch,
-         runtime_token = excluded.runtime_token,
-         claimed_at = excluded.claimed_at,
-         expires_at = excluded.expires_at,
-         join_target = excluded.join_target,
-         candidate_uuid = excluded.candidate_uuid,
-         revoked_at = excluded.revoked_at,
-         startup_deadline_at = excluded.startup_deadline_at,
-         runtime_token_issued_at = excluded.runtime_token_issued_at,
-         last_progress_at = excluded.last_progress_at,
-         startup_progress_label = excluded.startup_progress_label,
-         startup_progress_mode = excluded.startup_progress_mode,
-         startup_progress_fraction = excluded.startup_progress_fraction,
-         startup_progress_updated_at = excluded.startup_progress_updated_at,
-         updated_at = excluded.updated_at,
-         host_minecraft_version = excluded.host_minecraft_version`,
-      runtime.worldId,
-      runtime.hostUuid,
-      runtime.hostPlayerName,
-      runtime.phase,
-      runtime.runtimeEpoch,
-      runtime.runtimeToken ?? null,
-      runtime.claimedAt ?? runtime.updatedAt,
-      runtime.expiresAt ?? null,
-      runtime.joinTarget,
-      runtime.candidateUuid,
-      runtime.revokedAt ?? null,
-      runtime.startupDeadlineAt ?? null,
-      runtime.runtimeTokenIssuedAt ?? null,
-      runtime.lastProgressAt ?? null,
-      runtime.startupProgress?.label ?? null,
-      runtime.startupProgress?.mode ?? null,
-      runtime.startupProgress?.fraction ?? null,
-      runtime.startupProgress?.updatedAt ?? null,
-      runtime.updatedAt,
-      runtime.hostMinecraftVersion ?? null
-    );
+    await this.run(RUNTIME_INSERT_SQL, ...runtimeInsertValues(runtime));
   }
 
   /**
@@ -837,54 +813,9 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
    */
   async claimRuntimeAssignment(runtime: WorldRuntimeRecord): Promise<boolean> {
     const changes = await this.runWithChanges(
-      `INSERT INTO world_runtime (
-         world_id, host_uuid, host_player_name, runtime_phase, runtime_epoch, runtime_token,
-         claimed_at, expires_at, join_target, candidate_uuid, revoked_at,
-         startup_deadline_at, runtime_token_issued_at, last_progress_at,
-         startup_progress_label, startup_progress_mode, startup_progress_fraction, startup_progress_updated_at, updated_at,
-         host_minecraft_version
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(world_id) DO UPDATE SET
-         host_uuid = excluded.host_uuid,
-         host_player_name = excluded.host_player_name,
-         runtime_phase = excluded.runtime_phase,
-         runtime_epoch = excluded.runtime_epoch,
-         runtime_token = excluded.runtime_token,
-         claimed_at = excluded.claimed_at,
-         expires_at = excluded.expires_at,
-         join_target = excluded.join_target,
-         candidate_uuid = excluded.candidate_uuid,
-         revoked_at = excluded.revoked_at,
-         startup_deadline_at = excluded.startup_deadline_at,
-         runtime_token_issued_at = excluded.runtime_token_issued_at,
-         last_progress_at = excluded.last_progress_at,
-         startup_progress_label = excluded.startup_progress_label,
-         startup_progress_mode = excluded.startup_progress_mode,
-         startup_progress_fraction = excluded.startup_progress_fraction,
-         startup_progress_updated_at = excluded.startup_progress_updated_at,
-         updated_at = excluded.updated_at,
-         host_minecraft_version = excluded.host_minecraft_version
+      `${RUNTIME_INSERT_SQL}
        WHERE world_runtime.runtime_epoch < excluded.runtime_epoch`,
-      runtime.worldId,
-      runtime.hostUuid,
-      runtime.hostPlayerName,
-      runtime.phase,
-      runtime.runtimeEpoch,
-      runtime.runtimeToken ?? null,
-      runtime.claimedAt ?? runtime.updatedAt,
-      runtime.expiresAt ?? null,
-      runtime.joinTarget,
-      runtime.candidateUuid,
-      runtime.revokedAt ?? null,
-      runtime.startupDeadlineAt ?? null,
-      runtime.runtimeTokenIssuedAt ?? null,
-      runtime.lastProgressAt ?? null,
-      runtime.startupProgress?.label ?? null,
-      runtime.startupProgress?.mode ?? null,
-      runtime.startupProgress?.fraction ?? null,
-      runtime.startupProgress?.updatedAt ?? null,
-      runtime.updatedAt,
-      runtime.hostMinecraftVersion ?? null
+      ...runtimeInsertValues(runtime)
     );
     return changes > 0;
   }
@@ -899,64 +830,32 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     if (runtime.runtimeToken == null) {
       return false;
     }
-    const changes = await this.runWithChanges(
-      `UPDATE world_runtime SET
-         host_uuid = ?,
-         host_player_name = ?,
-         runtime_phase = ?,
-         claimed_at = ?,
-         expires_at = ?,
-         join_target = ?,
-         candidate_uuid = ?,
-         revoked_at = ?,
-         startup_deadline_at = ?,
-         runtime_token_issued_at = ?,
-         last_progress_at = ?,
-         startup_progress_label = ?,
-         startup_progress_mode = ?,
-         startup_progress_fraction = ?,
-         startup_progress_updated_at = ?,
-         updated_at = ?,
-         host_minecraft_version = ?
-       WHERE world_id = ? AND runtime_epoch = ? AND runtime_token = ?`,
-      runtime.hostUuid,
-      runtime.hostPlayerName,
-      runtime.phase,
-      runtime.claimedAt ?? runtime.updatedAt,
-      runtime.expiresAt ?? null,
-      runtime.joinTarget,
-      runtime.candidateUuid,
-      runtime.revokedAt ?? null,
-      runtime.startupDeadlineAt ?? null,
-      runtime.runtimeTokenIssuedAt ?? null,
-      runtime.lastProgressAt ?? null,
-      runtime.startupProgress?.label ?? null,
-      runtime.startupProgress?.mode ?? null,
-      runtime.startupProgress?.fraction ?? null,
-      runtime.startupProgress?.updatedAt ?? null,
-      runtime.updatedAt,
-      runtime.hostMinecraftVersion ?? null,
-      runtime.worldId,
-      runtime.runtimeEpoch,
-      runtime.runtimeToken
-    );
+    const changes = await this.runWithChanges(RUNTIME_UPDATE_SQL, ...runtimeUpdateValues(runtime));
     return changes > 0;
   }
 
   async deleteRuntimeRecord(worldId: string, expected: { runtimeEpoch: number; runtimeToken: string | null }): Promise<boolean> {
-    await this.run(
-      `UPDATE worlds
-       SET last_runtime_epoch = MAX(COALESCE(last_runtime_epoch, 0), ?)
-       WHERE id = ?`,
-      expected.runtimeEpoch,
-      worldId
-    );
     const changes = await this.runWithChanges(
       `DELETE FROM world_runtime
        WHERE world_id = ? AND runtime_epoch = ? AND COALESCE(runtime_token, '') = COALESCE(?, '')`,
       worldId,
       expected.runtimeEpoch,
       expected.runtimeToken
+    );
+    // The epoch high-water mark feeds release-replay detection ([P1]/[I3]).
+    // A successful fenced delete records its own epoch. A delete that lost the
+    // fence may still record its epoch as retired history, but only strictly
+    // below the currently active runtime's epoch — a stale or hostile caller
+    // must never move the mark past (or up to) the active authority.
+    await this.run(
+      `UPDATE worlds
+       SET last_runtime_epoch = MAX(COALESCE(last_runtime_epoch, 0), ?)
+       WHERE id = ?
+         AND (? > 0 OR ? < COALESCE((SELECT runtime_epoch FROM world_runtime WHERE world_id = worlds.id), 0))`,
+      expected.runtimeEpoch,
+      worldId,
+      changes,
+      expected.runtimeEpoch
     );
     return changes > 0;
   }
@@ -1270,22 +1169,28 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
 
   async finalizeSnapshot(worldId: string, ctx: RequestContext, request: FinalizeSnapshotRequest, now: Date): Promise<SnapshotManifest> {
     const snapshotId = `snapshot_${crypto.randomUUID().replace(/-/g, "")}`;
-    await this.run(
-      `INSERT INTO snapshots (id, world_id, created_at, created_by_uuid, base_snapshot_id, data_version, minecraft_version)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      snapshotId,
-      worldId,
-      now.toISOString(),
-      ctx.playerUuid,
-      request.baseSnapshotId ?? null,
-      request.dataVersion ?? null,
-      request.minecraftVersion ?? null
-    );
-    for (const file of request.files) {
-      await this.run(
-        `INSERT INTO snapshot_files (
+    // One transactional batch: a failure mid-write must not leave a partial
+    // snapshot behind, because a partial row would become the world's
+    // "latest" manifest.
+    const statements = [
+      this.prepared(
+        `INSERT INTO snapshots (id, world_id, created_at, created_by_uuid, base_snapshot_id, data_version, minecraft_version)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        snapshotId,
+        worldId,
+        now.toISOString(),
+        ctx.playerUuid,
+        request.baseSnapshotId ?? null,
+        request.dataVersion ?? null,
+        request.minecraftVersion ?? null
+      )
+    ];
+    const fileInsert = `INSERT INTO snapshot_files (
           snapshot_id, path, hash, size, compressed_size, pack_id, storage_key, content_type, transfer_mode, base_snapshot_id, base_hash, chain_depth
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+    for (const file of request.files) {
+      statements.push(this.prepared(
+        fileInsert,
         snapshotId,
         file.path,
         file.hash,
@@ -1298,10 +1203,10 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
         file.baseSnapshotId ?? null,
         file.baseHash ?? null,
         file.chainDepth ?? null
-      );
+      ));
     }
     for (const pack of request.packs ?? []) {
-      await this.run(
+      statements.push(this.prepared(
         `INSERT INTO snapshot_packs (
           snapshot_id, pack_id, hash, size, storage_key, transfer_mode, base_snapshot_id, base_hash, chain_depth
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1314,12 +1219,10 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
         pack.baseSnapshotId ?? null,
         pack.baseHash ?? null,
         pack.chainDepth ?? null
-      );
+      ));
       for (const file of pack.files) {
-        await this.run(
-          `INSERT INTO snapshot_files (
-            snapshot_id, path, hash, size, compressed_size, pack_id, storage_key, content_type, transfer_mode, base_snapshot_id, base_hash, chain_depth
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        statements.push(this.prepared(
+          fileInsert,
           snapshotId,
           file.path,
           file.hash,
@@ -1332,9 +1235,10 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
           pack.baseSnapshotId ?? null,
           pack.baseHash ?? null,
           pack.chainDepth ?? null
-        );
+        ));
       }
     }
+    await this.batch(statements);
     return this.loadSnapshot(snapshotId, worldId, now.toISOString(), ctx.playerUuid);
   }
 
@@ -1569,6 +1473,18 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     await this.db.prepare(query).bind(...normalizeBoundValues(values)).run();
   }
 
+  private prepared(query: string, ...values: unknown[]) {
+    return this.db.prepare(query).bind(...normalizeBoundValues(values));
+  }
+
+  /** All statements land or none do (D1 batches are transactional). */
+  private async batch(statements: ReturnType<D1Database["prepare"]>[]): Promise<void> {
+    if (statements.length === 0) {
+      return;
+    }
+    await this.db.batch(statements);
+  }
+
   private async runWithChanges(query: string, ...values: unknown[]): Promise<number> {
     const result = await this.db.prepare(query).bind(...normalizeBoundValues(values)).run();
     return Number(result.meta?.changes ?? 0);
@@ -1582,50 +1498,23 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     return asNullableString(row?.custom_icon_storage_key);
   }
 
-  private async preferredWaiterCandidate(worldId: string): Promise<{ playerUuid: string; playerName: string } | null> {
-    await this.run(
-      "DELETE FROM handoff_waiters WHERE world_id = ? AND updated_at < ?",
-      worldId,
-      new Date(Date.now() - HANDOFF_WAITER_TIMEOUT_MS).toISOString()
-    );
-    const row = await this.first<Row>(
-      `SELECT wm.player_uuid, wm.player_name
-       FROM world_memberships wm
-       JOIN handoff_waiters hw ON hw.world_id = wm.world_id AND hw.player_uuid = wm.player_uuid
-       WHERE wm.world_id = ? AND wm.deleted_at IS NULL AND hw.waiting = 1
-       ORDER BY CASE WHEN wm.role = 'owner' THEN 0 ELSE 1 END,
-                wm.joined_at ASC,
-                wm.player_uuid ASC
-       LIMIT 1`,
-      worldId
-    );
-    if (!row) {
-      return null;
-    }
-    return {
-      playerUuid: String(row.player_uuid),
-      playerName: String(row.player_name)
-    };
-  }
-
   private async summaryLifecycle(worldId: string, now: Date): Promise<{
     status: WorldSummary["status"];
     activeHostUuid: string | null;
     activeHostPlayerName: string | null;
     activeJoinTarget: string | null;
   }> {
-    const runtime = await this.getDisplayRuntimeRecord(worldId, now);
-    if (runtime != null) {
+    const resolved = await reconcileRuntimeState(this, worldId, now);
+    if (resolved.runtime != null) {
       return {
-        status: runtimePhaseToWorldStatus(runtime.phase),
-        activeHostUuid: runtime.hostUuid,
-        activeHostPlayerName: runtime.hostPlayerName,
-        activeJoinTarget: runtime.joinTarget
+        status: runtimePhaseToWorldStatus(resolved.runtime.phase),
+        activeHostUuid: resolved.runtime.hostUuid,
+        activeHostPlayerName: resolved.runtime.hostPlayerName,
+        activeJoinTarget: resolved.runtime.joinTarget
       };
     }
-    const candidate = await this.preferredWaiterCandidate(worldId);
     return {
-      status: candidate == null ? "idle" : "handoff",
+      status: resolved.candidate == null ? "idle" : "handoff",
       activeHostUuid: null,
       activeHostPlayerName: null,
       activeJoinTarget: null
@@ -1640,7 +1529,7 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     );
 
     const players = new Map<string, string>();
-    const runtime = await this.getDisplayRuntimeRecord(worldId, now);
+    const runtime = (await reconcileRuntimeState(this, worldId, now)).runtime;
     if ((runtime?.phase === "host-starting" || runtime?.phase === "host-live")
       && runtime.hostUuid != null
       && runtime.hostPlayerName != null) {
@@ -1665,25 +1554,6 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     return [...players.entries()].map(([playerUuid, playerName]) => ({ playerUuid, playerName }));
   }
 
-  private async getDisplayRuntimeRecord(worldId: string, now: Date): Promise<WorldRuntimeRecord | null> {
-    const runtime = await this.getRuntimeRecord(worldId, now);
-    if (!runtime) {
-      return null;
-    }
-    const warning = timedOutUncleanShutdownWarning(runtime, now);
-    if (warning != null) {
-      await this.setUncleanShutdownWarning(worldId, warning);
-      await this.deleteRuntimeRecord(worldId, { runtimeEpoch: runtime.runtimeEpoch, runtimeToken: runtime.runtimeToken });
-      await this.clearWaiters(worldId);
-      await this.clearWorldPresence(worldId);
-      return null;
-    }
-    if (resolveRuntimeTimeout(runtime, null, now) == null) {
-      await this.deleteRuntimeRecord(worldId, { runtimeEpoch: runtime.runtimeEpoch, runtimeToken: runtime.runtimeToken });
-      return null;
-    }
-    return runtime;
-  }
 }
 
 function parseWorldSettings(raw: unknown): WorldSettings | null {
@@ -1697,4 +1567,84 @@ function parseWorldSettings(raw: unknown): WorldSettings | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Single source of truth for the world_runtime column set. All three runtime
+ * writes (seed upsert, fenced claim, fenced refresh) are generated from this
+ * list, so adding a runtime column means editing it, runtimeRowValues, and
+ * mapRuntimeRow — nowhere else.
+ */
+const RUNTIME_COLUMNS = [
+  "world_id",
+  "host_uuid",
+  "host_player_name",
+  "runtime_phase",
+  "runtime_epoch",
+  "runtime_token",
+  "claimed_at",
+  "expires_at",
+  "join_target",
+  "candidate_uuid",
+  "revoked_at",
+  "startup_deadline_at",
+  "runtime_token_issued_at",
+  "last_progress_at",
+  "startup_progress_label",
+  "startup_progress_mode",
+  "startup_progress_fraction",
+  "startup_progress_updated_at",
+  "updated_at",
+  "host_minecraft_version"
+] as const;
+
+const RUNTIME_FENCE_COLUMNS: ReadonlyArray<string> = ["world_id", "runtime_epoch", "runtime_token"];
+
+const RUNTIME_INSERT_SQL = `INSERT INTO world_runtime (${RUNTIME_COLUMNS.join(", ")})
+       VALUES (${RUNTIME_COLUMNS.map(() => "?").join(", ")})
+       ON CONFLICT(world_id) DO UPDATE SET
+         ${RUNTIME_COLUMNS.filter((column) => column !== "world_id").map((column) => `${column} = excluded.${column}`).join(",\n         ")}`;
+
+const RUNTIME_UPDATE_SQL = `UPDATE world_runtime SET
+         ${RUNTIME_COLUMNS.filter((column) => !RUNTIME_FENCE_COLUMNS.includes(column)).map((column) => `${column} = ?`).join(",\n         ")}
+       WHERE world_id = ? AND runtime_epoch = ? AND runtime_token = ?`;
+
+function runtimeRowValues(runtime: WorldRuntimeRecord): Record<(typeof RUNTIME_COLUMNS)[number], unknown> {
+  return {
+    world_id: runtime.worldId,
+    host_uuid: runtime.hostUuid,
+    host_player_name: runtime.hostPlayerName,
+    runtime_phase: runtime.phase,
+    runtime_epoch: runtime.runtimeEpoch,
+    runtime_token: runtime.runtimeToken ?? null,
+    claimed_at: runtime.claimedAt ?? runtime.updatedAt,
+    expires_at: runtime.expiresAt ?? null,
+    join_target: runtime.joinTarget,
+    candidate_uuid: runtime.candidateUuid,
+    revoked_at: runtime.revokedAt ?? null,
+    startup_deadline_at: runtime.startupDeadlineAt ?? null,
+    runtime_token_issued_at: runtime.runtimeTokenIssuedAt ?? null,
+    last_progress_at: runtime.lastProgressAt ?? null,
+    startup_progress_label: runtime.startupProgress?.label ?? null,
+    startup_progress_mode: runtime.startupProgress?.mode ?? null,
+    startup_progress_fraction: runtime.startupProgress?.fraction ?? null,
+    startup_progress_updated_at: runtime.startupProgress?.updatedAt ?? null,
+    updated_at: runtime.updatedAt,
+    host_minecraft_version: runtime.hostMinecraftVersion ?? null
+  };
+}
+
+function runtimeInsertValues(runtime: WorldRuntimeRecord): unknown[] {
+  const values = runtimeRowValues(runtime);
+  return RUNTIME_COLUMNS.map((column) => values[column]);
+}
+
+function runtimeUpdateValues(runtime: WorldRuntimeRecord): unknown[] {
+  const values = runtimeRowValues(runtime);
+  return [
+    ...RUNTIME_COLUMNS.filter((column) => !RUNTIME_FENCE_COLUMNS.includes(column)).map((column) => values[column]),
+    values.world_id,
+    values.runtime_epoch,
+    values.runtime_token
+  ];
 }

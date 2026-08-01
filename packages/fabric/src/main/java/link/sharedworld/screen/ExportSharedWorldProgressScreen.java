@@ -117,7 +117,7 @@ public final class ExportSharedWorldProgressScreen extends link.sharedworld.vers
                         Thread.interrupted();
                     }
                 }, SharedWorldClient.ioExecutor())
-                .whenComplete((result, error) -> Minecraft.getInstance().execute(() -> {
+                .whenComplete((result, error) -> ScreenGuards.runIfCurrent(this, () -> {
                     SharedWorldClient.guestCacheWarmer().resumeWorld(this.world.id());
                     if (error != null) {
                         if (this.cancelRequested) {

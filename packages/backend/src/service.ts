@@ -1,5 +1,6 @@
 import type {
   AbandonFinalizationRequest,
+  AuthCompleteCertRequest,
   AuthCompleteRequest,
   BeginFinalizationRequest,
   CancelWaitingRequest,
@@ -21,7 +22,6 @@ import type {
   ObserveWaitingResponse,
   PresenceHeartbeatRequest,
   RedeemInviteRequest,
-  RefreshWaitingRequest,
   ReleaseHostRequest,
   ResetInviteResponse,
   SnapshotActionResult,
@@ -92,6 +92,10 @@ export class SharedWorldService {
     return this.authDomain.completeAuth(request, now);
   }
 
+  async completeCertAuth(request: AuthCompleteCertRequest, now = new Date()) {
+    return this.authDomain.completeCertAuth(request, now);
+  }
+
   async completeDevAuth(request: DevAuthCompleteRequest, now = new Date()) {
     return this.authDomain.completeDevAuth(request, now);
   }
@@ -148,6 +152,10 @@ export class SharedWorldService {
     return worlds.deleteWorld(this.svc, ctx, worldId, now);
   }
 
+  /**
+   * Not routed since 0.1.3 removed the mod-side caller; retained as a
+   * service-level query used by the storage/retention test suites.
+   */
   async getStorageUsage(ctx: RequestContext, worldId: string): Promise<StorageUsageSummary> {
     return worlds.getStorageUsage(this.svc, ctx, worldId);
   }
@@ -243,10 +251,6 @@ export class SharedWorldService {
     return session.runtimeStatus(this.svc, ctx, worldId, now);
   }
 
-  async refreshWaiting(ctx: RequestContext, worldId: string, request: RefreshWaitingRequest, now = new Date()): Promise<WorldRuntimeStatus> {
-    return session.refreshWaiting(this.svc, ctx, worldId, request, now);
-  }
-
   async cancelWaiting(ctx: RequestContext, worldId: string, request: CancelWaitingRequest, now = new Date()): Promise<WorldRuntimeStatus> {
     return session.cancelWaiting(this.svc, ctx, worldId, request, now);
   }
@@ -300,16 +304,31 @@ export class MinecraftSessionServerAuthVerifier implements AuthVerifier {
         signal: AbortSignal.timeout(this.attemptTimeoutMs)
       });
     } catch (error) {
-      console.warn("SharedWorld Mojang hasJoined request failed", { playerName, cause: String(error) });
-      throw new HttpError(503, "identity_verification_unavailable", "Minecraft identity verification is unavailable.");
+      console.warn("SharedWorld Mojang hasJoined request failed", { playerName, serverId, cause: String(error) });
+      throw new HttpError(
+        503,
+        "identity_verification_unavailable",
+        "Minecraft's identity service is unreachable right now. Please try again in a minute."
+      );
     }
 
     if (response.status === 204 || response.status === 404) {
       return null;
     }
     if (!response.ok) {
-      console.warn("SharedWorld Mojang hasJoined returned an error status", { playerName, status: response.status });
-      throw new HttpError(503, "identity_verification_unavailable", "Minecraft identity verification is unavailable.");
+      const bodyHead = (await response.text().catch(() => "")).slice(0, 200);
+      console.warn("SharedWorld Mojang hasJoined returned an error status", {
+        playerName,
+        serverId,
+        status: response.status,
+        bodyHead
+      });
+      const error = new HttpError(503, "identity_verification_unavailable", unavailableMessageForStatus(response.status));
+      error.upstreamStatus = response.status;
+      if (response.status === 429) {
+        error.retryAfterSeconds = clampRetryAfterSeconds(response.headers.get("retry-after"));
+      }
+      throw error;
     }
 
     const text = await response.text();
@@ -331,6 +350,29 @@ export class MinecraftSessionServerAuthVerifier implements AuthVerifier {
       playerName: payload.name
     };
   }
+}
+
+/**
+ * Shipped clients render these messages verbatim, so each upstream cause gets
+ * an actionable text while the error code stays identity_verification_unavailable
+ * (shipped retry handling and parity tests key on the code, never the text).
+ */
+function unavailableMessageForStatus(status: number): string {
+  if (status === 429) {
+    return "Minecraft's identity service is rate-limiting the SharedWorld server. Please wait a minute and try again.";
+  }
+  if (status === 403) {
+    return "Minecraft's identity service refused the verification request. Please try again in a few minutes; if it keeps failing, please report it along with your Minecraft name.";
+  }
+  return "Minecraft identity verification is unavailable.";
+}
+
+function clampRetryAfterSeconds(header: string | null): number {
+  const seconds = header !== null && /^\d+$/.test(header.trim()) ? Number(header.trim()) : Number.NaN;
+  if (Number.isNaN(seconds)) {
+    return 10;
+  }
+  return Math.min(120, Math.max(10, seconds));
 }
 
 /**

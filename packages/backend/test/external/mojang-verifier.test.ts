@@ -4,16 +4,17 @@ import { HttpError } from "../../src/http.ts";
 import { MinecraftSessionServerAuthVerifier } from "../../src/service.ts";
 
 /**
- * Characterization tests for the real Mojang hasJoined HTTP client against a
- * local fake session server. Several assertions document current behavior that
- * is a known product defect (no retry, no timeout); those are marked with
- * KNOWN-DEFECT comments and must be flipped when the fix lands, not deleted.
+ * Tests for the real Mojang hasJoined HTTP client against a local fake
+ * session server. Every upstream cause maps to the single retryable code
+ * identity_verification_unavailable (shipped clients key on the code), but
+ * the user-facing message and retry metadata differ per cause.
  */
 
 type FakeResponse = {
   status: number;
   body?: string;
   contentType?: string;
+  retryAfter?: string;
 };
 
 let nextResponse: FakeResponse = { status: 204 };
@@ -25,9 +26,16 @@ const server = Bun.serve({
   fetch(request) {
     hits += 1;
     lastRequestUrl = new URL(request.url);
+    const headers: Record<string, string> = {};
+    if (nextResponse.contentType) {
+      headers["content-type"] = nextResponse.contentType;
+    }
+    if (nextResponse.retryAfter) {
+      headers["retry-after"] = nextResponse.retryAfter;
+    }
     return new Response(nextResponse.body ?? null, {
       status: nextResponse.status,
-      headers: nextResponse.contentType ? { "content-type": nextResponse.contentType } : {}
+      headers
     });
   }
 });
@@ -87,13 +95,14 @@ describe("MinecraftSessionServerAuthVerifier", () => {
     expect(await verifier.verifyJoin("HostA", "server-id-1")).toBeNull();
   });
 
-  for (const status of [429, 500, 502, 503]) {
+  for (const status of [400, 500, 502, 503]) {
     test(`maps HTTP ${status} to identity_verification_unavailable after exactly one attempt`, async () => {
       nextResponse = { status };
-      await expectUnavailable(
+      const error = await expectUnavailable(
         verifier.verifyJoin("HostA", "server-id-1"),
         "Minecraft identity verification is unavailable."
       );
+      expect(error.upstreamStatus).toBe(status);
       // The verifier itself is single-attempt by design; the retry ladder
       // lives in AuthDomainService.verifyJoinedIdentity, which treats this
       // 503 as a retriable attempt (see test/service/auth.test.ts).
@@ -101,15 +110,63 @@ describe("MinecraftSessionServerAuthVerifier", () => {
     });
   }
 
-  test("maps a connection failure to identity_verification_unavailable", async () => {
+  test("maps HTTP 429 to the rate-limit message and defaults Retry-After to 10s", async () => {
+    nextResponse = { status: 429 };
+    const error = await expectUnavailable(
+      verifier.verifyJoin("HostA", "server-id-1"),
+      "Minecraft's identity service is rate-limiting the SharedWorld server. Please wait a minute and try again."
+    );
+    expect(error.upstreamStatus).toBe(429);
+    expect(error.retryAfterSeconds).toBe(10);
+  });
+
+  test("clamps Mojang's Retry-After on 429 into [10, 120] seconds", async () => {
+    nextResponse = { status: 429, retryAfter: "60" };
+    expect((await expectUnavailable(
+      verifier.verifyJoin("HostA", "server-id-1"),
+      "Minecraft's identity service is rate-limiting the SharedWorld server. Please wait a minute and try again."
+    )).retryAfterSeconds).toBe(60);
+
+    nextResponse = { status: 429, retryAfter: "3" };
+    expect((await expectUnavailable(
+      verifier.verifyJoin("HostA", "server-id-1"),
+      "Minecraft's identity service is rate-limiting the SharedWorld server. Please wait a minute and try again."
+    )).retryAfterSeconds).toBe(10);
+
+    nextResponse = { status: 429, retryAfter: "86400" };
+    expect((await expectUnavailable(
+      verifier.verifyJoin("HostA", "server-id-1"),
+      "Minecraft's identity service is rate-limiting the SharedWorld server. Please wait a minute and try again."
+    )).retryAfterSeconds).toBe(120);
+
+    // HTTP-date form (not delta-seconds) falls back to the default.
+    nextResponse = { status: 429, retryAfter: "Fri, 01 Aug 2026 00:00:00 GMT" };
+    expect((await expectUnavailable(
+      verifier.verifyJoin("HostA", "server-id-1"),
+      "Minecraft's identity service is rate-limiting the SharedWorld server. Please wait a minute and try again."
+    )).retryAfterSeconds).toBe(10);
+  });
+
+  test("maps HTTP 403 to the refused-verification message", async () => {
+    nextResponse = { status: 403 };
+    const error = await expectUnavailable(
+      verifier.verifyJoin("HostA", "server-id-1"),
+      "Minecraft's identity service refused the verification request. Please try again in a few minutes; if it keeps failing, please report it along with your Minecraft name."
+    );
+    expect(error.upstreamStatus).toBe(403);
+    expect(error.retryAfterSeconds).toBeUndefined();
+  });
+
+  test("maps a connection failure to the unreachable message", async () => {
     const closedPortServer = Bun.serve({ port: 0, fetch: () => new Response(null) });
     const closedPort = closedPortServer.port;
     closedPortServer.stop(true);
     const unreachable = new MinecraftSessionServerAuthVerifier(`http://127.0.0.1:${closedPort}/hasJoined`);
-    await expectUnavailable(
+    const error = await expectUnavailable(
       unreachable.verifyJoin("HostA", "server-id-1"),
-      "Minecraft identity verification is unavailable."
+      "Minecraft's identity service is unreachable right now. Please try again in a minute."
     );
+    expect(error.upstreamStatus).toBeUndefined();
   });
 
   test("maps a non-JSON body to the invalid-response variant", async () => {
@@ -141,7 +198,7 @@ describe("MinecraftSessionServerAuthVerifier", () => {
       const startedAt = Date.now();
       await expectUnavailable(
         impatient.verifyJoin("HostA", "server-id-1"),
-        "Minecraft identity verification is unavailable."
+        "Minecraft's identity service is unreachable right now. Please try again in a minute."
       );
       expect(Date.now() - startedAt).toBeLessThan(5_000);
     } finally {

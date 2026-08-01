@@ -1,6 +1,7 @@
 package link.sharedworld.mixin.versioned;
 
 import link.sharedworld.SharedWorldDevSessionBridge;
+import link.sharedworld.host.SharedWorldHostServerGate;
 import link.sharedworld.versioned.HostPermissionsCompat;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.players.NameAndId;
@@ -16,7 +17,7 @@ abstract class MinecraftServerHostPermissionMixin {
         cir.setReturnValue(
                 HostPermissionsCompat.effectivePermissions(
                         cir.getReturnValueI(),
-                        SharedWorldDevSessionBridge.isHostingSharedWorld(),
+                        SharedWorldHostServerGate.isManagedSharedWorldHost((MinecraftServer) (Object) this),
                         profile.id() == null ? null : profile.id().toString(),
                         SharedWorldDevSessionBridge.hostingSharedWorldOwnerUuid()
                 )

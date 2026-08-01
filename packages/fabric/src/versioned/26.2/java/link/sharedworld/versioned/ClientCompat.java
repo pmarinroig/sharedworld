@@ -26,6 +26,22 @@ public final class ClientCompat {
         sessionService(minecraft).joinServer(profileId, accessToken, serverId);
     }
 
+    /**
+     * The Mojang-signed profile keypair (chat-signing certificate) backing
+     * SharedWorld certificate auth, or empty when the account has none
+     * (offline profile, certificate-blocking mods).
+     */
+    public static java.util.Optional<link.sharedworld.api.ProfileCertificateData> profileCertificate(Minecraft minecraft)
+            throws InterruptedException, java.util.concurrent.ExecutionException, java.util.concurrent.TimeoutException {
+        return minecraft.getProfileKeyPairManager().prepareKeyPair()
+                .get(10, java.util.concurrent.TimeUnit.SECONDS)
+                .map(pair -> new link.sharedworld.api.ProfileCertificateData(
+                        pair.privateKey(),
+                        pair.publicKey().data().key().getEncoded(),
+                        pair.publicKey().data().expiresAt().toEpochMilli(),
+                        pair.publicKey().data().keySignature()));
+    }
+
     public static java.util.UUID profileId(com.mojang.authlib.GameProfile profile) {
         return profile.id();
     }

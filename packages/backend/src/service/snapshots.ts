@@ -254,34 +254,70 @@ async function validateFinalizeSnapshotRequest(svc: ServiceContext, worldId: str
   }
 }
 
+/**
+ * Shared delta-base validation for the two artifact families (manifest files
+ * and snapshot packs). The rules are identical; only the lookup into the base
+ * snapshot and the human-readable labels differ.
+ */
+type DeltaBaseArtifact = {
+  kind: "file" | "pack";
+  ref: string;
+  isDelta: boolean;
+  baseSnapshotId: string | null | undefined;
+  baseHash: string | null | undefined;
+  chainDepth: number | null | undefined;
+  findBase(base: SnapshotManifest): { hash: string; expectedChainDepth: number } | null;
+};
+
+async function validateDeltaArtifactBase(
+  svc: ServiceContext,
+  worldId: string,
+  artifact: DeltaBaseArtifact,
+  snapshotCache: Map<string, SnapshotManifest | null>
+): Promise<void> {
+  const hashRef = artifact.kind === "pack" ? `pack ${artifact.ref}` : artifact.ref;
+  if (artifact.isDelta) {
+    if (!artifact.baseSnapshotId || !artifact.baseHash || artifact.chainDepth == null || artifact.chainDepth < 1) {
+      throw new HttpError(400, "invalid_snapshot_delta", `Snapshot delta ${artifact.kind} ${artifact.ref} is missing base metadata.`);
+    }
+    const baseSnapshot = await requireSnapshotForValidation(svc, worldId, artifact.baseSnapshotId, snapshotCache);
+    const base = artifact.findBase(baseSnapshot);
+    if (base == null) {
+      throw new HttpError(400, "snapshot_base_not_found", `Snapshot base ${artifact.kind} ${artifact.ref} was not found in '${artifact.baseSnapshotId}'.`);
+    }
+    if (artifact.baseHash !== base.hash) {
+      throw new HttpError(400, "snapshot_base_hash_mismatch", `Snapshot base hash for ${hashRef} does not match '${artifact.baseSnapshotId}'.`);
+    }
+    if (artifact.chainDepth !== base.expectedChainDepth) {
+      throw new HttpError(400, "snapshot_chain_depth_mismatch", `Snapshot chain depth for ${hashRef} does not match its base artifact.`);
+    }
+    return;
+  }
+  if (artifact.baseSnapshotId != null || artifact.baseHash != null || !isZeroOrNullChainDepth(artifact.chainDepth ?? null)) {
+    throw new HttpError(400, "invalid_snapshot_base", `Non-delta ${artifact.kind} ${artifact.ref} cannot declare base snapshot metadata.`);
+  }
+}
+
 async function validateManifestFileBase(
   svc: ServiceContext,
   worldId: string,
   file: ManifestFile,
   snapshotCache: Map<string, SnapshotManifest | null>
 ): Promise<void> {
-  const transferMode = normalizeFileTransferMode(file.transferMode);
-  if (transferMode === REGION_DELTA_TRANSFER_MODE) {
-    if (!file.baseSnapshotId || !file.baseHash || file.chainDepth == null || file.chainDepth < 1) {
-      throw new HttpError(400, "invalid_snapshot_delta", `Snapshot delta file '${file.path}' is missing base metadata.`);
+  await validateDeltaArtifactBase(svc, worldId, {
+    kind: "file",
+    ref: `'${file.path}'`,
+    isDelta: normalizeFileTransferMode(file.transferMode) === REGION_DELTA_TRANSFER_MODE,
+    baseSnapshotId: file.baseSnapshotId,
+    baseHash: file.baseHash,
+    chainDepth: file.chainDepth,
+    findBase(base) {
+      const baseFile = base.files.find((entry) => entry.path === file.path);
+      return baseFile == null
+        ? null
+        : { hash: baseFile.hash, expectedChainDepth: nextChainDepth(normalizeFileTransferMode(baseFile.transferMode), baseFile.chainDepth ?? null) };
     }
-    const baseSnapshot = await requireSnapshotForValidation(svc, worldId, file.baseSnapshotId, snapshotCache);
-    const baseFile = baseSnapshot.files.find((entry) => entry.path === file.path);
-    if (!baseFile) {
-      throw new HttpError(400, "snapshot_base_not_found", `Snapshot base file '${file.path}' was not found in '${file.baseSnapshotId}'.`);
-    }
-    if (file.baseHash !== baseFile.hash) {
-      throw new HttpError(400, "snapshot_base_hash_mismatch", `Snapshot base hash for '${file.path}' does not match '${file.baseSnapshotId}'.`);
-    }
-    const expectedChainDepth = nextChainDepth(normalizeFileTransferMode(baseFile.transferMode), baseFile.chainDepth ?? null);
-    if (file.chainDepth !== expectedChainDepth) {
-      throw new HttpError(400, "snapshot_chain_depth_mismatch", `Snapshot chain depth for '${file.path}' does not match its base artifact.`);
-    }
-    return;
-  }
-  if (file.baseSnapshotId != null || file.baseHash != null || !isZeroOrNullChainDepth(file.chainDepth ?? null)) {
-    throw new HttpError(400, "invalid_snapshot_base", `Non-delta file '${file.path}' cannot declare base snapshot metadata.`);
-  }
+  }, snapshotCache);
 }
 
 async function validateSnapshotPackBase(
@@ -290,28 +326,22 @@ async function validateSnapshotPackBase(
   pack: SnapshotPack,
   snapshotCache: Map<string, SnapshotManifest | null>
 ): Promise<void> {
-  if (isDeltaPackTransferMode(pack.transferMode)) {
-    if (!pack.baseSnapshotId || !pack.baseHash || pack.chainDepth == null || pack.chainDepth < 1) {
-      throw new HttpError(400, "invalid_snapshot_delta", `Snapshot delta pack '${pack.packId}' is missing base metadata.`);
+  await validateDeltaArtifactBase(svc, worldId, {
+    kind: "pack",
+    ref: `'${pack.packId}'`,
+    isDelta: isDeltaPackTransferMode(pack.transferMode),
+    baseSnapshotId: pack.baseSnapshotId,
+    baseHash: pack.baseHash,
+    chainDepth: pack.chainDepth,
+    findBase(base) {
+      const basePack = base.packs.find((entry) => entry.packId === pack.packId);
+      return basePack == null
+        ? null
+        : { hash: basePack.hash, expectedChainDepth: nextChainDepth(basePack.transferMode, basePack.chainDepth ?? null) };
     }
-    const baseSnapshot = await requireSnapshotForValidation(svc, worldId, pack.baseSnapshotId, snapshotCache);
-    const basePack = baseSnapshot.packs.find((entry) => entry.packId === pack.packId);
-    if (!basePack) {
-      throw new HttpError(400, "snapshot_base_not_found", `Snapshot base pack '${pack.packId}' was not found in '${pack.baseSnapshotId}'.`);
-    }
-    if (pack.baseHash !== basePack.hash) {
-      throw new HttpError(400, "snapshot_base_hash_mismatch", `Snapshot base hash for pack '${pack.packId}' does not match '${pack.baseSnapshotId}'.`);
-    }
-    const expectedChainDepth = nextChainDepth(basePack.transferMode, basePack.chainDepth ?? null);
-    if (pack.chainDepth !== expectedChainDepth) {
-      throw new HttpError(400, "snapshot_chain_depth_mismatch", `Snapshot chain depth for pack '${pack.packId}' does not match its base artifact.`);
-    }
-    return;
-  }
-  if (pack.baseSnapshotId != null || pack.baseHash != null || !isZeroOrNullChainDepth(pack.chainDepth ?? null)) {
-    throw new HttpError(400, "invalid_snapshot_base", `Non-delta pack '${pack.packId}' cannot declare base snapshot metadata.`);
-  }
+  }, snapshotCache);
 }
+
 
 async function requireSnapshotForValidation(
   svc: ServiceContext,

@@ -17,8 +17,6 @@ export type StorageProviderType = "google-drive" | "r2";
 export type StorageLinkStatus = "pending" | "linked" | "expired" | "failed" | "cancelled";
 export type StartupProgressMode = "determinate" | "indeterminate";
 export type FileTransferMode = "whole-gzip" | "region-full" | "region-delta" | "pack-full" | "pack-delta";
-export type RecoveryFlowKind = "join" | "handoff" | "disconnect-recovery";
-
 export interface AuthChallenge {
   serverId: string;
   expiresAt: string;
@@ -27,6 +25,32 @@ export interface AuthChallenge {
 export interface AuthCompleteRequest {
   serverId: string;
   playerName: string;
+}
+
+/**
+ * Body for POST /auth/complete-cert: proves account ownership with the
+ * Mojang-signed profile certificate (the 1.19+ chat-signing keypair) instead
+ * of the sessionserver hasJoined flow, so the backend never has to reach
+ * Mojang's sessionserver (which blocks Cloudflare Workers egress).
+ */
+export interface AuthCompleteCertRequest {
+  serverId: string;
+  /** 32 lowercase hex chars, no hyphens. Must match the certified profile. */
+  playerUuid: string;
+  /** Client-claimed display name (the certificate binds only the UUID). */
+  playerName: string;
+  /** Base64 X.509 SPKI DER of the profile public key. */
+  publicKey: string;
+  /**
+   * Certificate expiry as epoch milliseconds — exactly the value Mojang's
+   * signature covers (vanilla signs Instant.toEpochMilli, so an ISO string
+   * round-trip could lose the signed precision).
+   */
+  publicKeyExpiresAtMs: number;
+  /** Base64 Mojang signature (SHA1withRSA) over (uuid, expiry, publicKey). */
+  keySignature: string;
+  /** Base64 client signature (SHA256withRSA) over the serverId nonce bytes. */
+  nonceSignature: string;
 }
 
 export interface DevAuthCompleteRequest {
@@ -292,14 +316,6 @@ export interface ObserveWaitingResponse {
   waiterSessionId: string | null;
 }
 
-export interface RecoveryRecord {
-  worldId: string;
-  worldName: string;
-  runtimeEpoch: number;
-  flowKind: RecoveryFlowKind;
-  previousJoinTarget: string | null;
-}
-
 export interface HeartbeatRequest {
   runtimeEpoch?: number | null;
   hostToken?: string | null;
@@ -348,11 +364,6 @@ export interface FinalizationActionResult {
   nextHostUuid: string | null;
   nextHostPlayerName: string | null;
   status: WorldStatus;
-}
-
-export interface SnapshotPublisherAuth {
-  runtimeEpoch: number;
-  hostToken: string;
 }
 
 export interface ManifestFile {

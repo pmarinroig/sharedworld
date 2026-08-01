@@ -599,27 +599,23 @@ public final class WorldSyncCoordinator {
                         if (target.getParent() != null) {
                             Files.createDirectories(target.getParent());
                         }
-                        try {
-                            Path tempFile = downloadEntryToTempFile(
-                                    worldId,
-                                    worldDirectory,
-                                    target,
-                                    download,
-                                    downloadedBytes,
-                                    totalDownloadBytes,
-                                    perFileDownloadedBytes,
-                                    downloadFileSizes[fileIndex],
-                                    downloadFileSizes,
-                                    fileIndex,
-                                    progressListener
-                            );
-                            if (LocalWorldHasher.hashFile(tempFile).equals(download.hash())) {
-                                return new DownloadedFile(download.path(), target, tempFile);
-                            }
-                            throw new IOException("SharedWorld reconstructed region file hash mismatch for " + download.path() + ".");
-                        } catch (Exception exception) {
-                            throw exception;
+                        Path tempFile = downloadEntryToTempFile(
+                                worldId,
+                                worldDirectory,
+                                target,
+                                download,
+                                downloadedBytes,
+                                totalDownloadBytes,
+                                perFileDownloadedBytes,
+                                downloadFileSizes[fileIndex],
+                                downloadFileSizes,
+                                fileIndex,
+                                progressListener
+                        );
+                        if (LocalWorldHasher.hashFile(tempFile).equals(download.hash())) {
+                            return new DownloadedFile(download.path(), target, tempFile);
                         }
+                        throw new IOException("SharedWorld reconstructed region file hash mismatch for " + download.path() + ".");
                     }));
                 }
 

@@ -66,7 +66,7 @@ public final class DeleteSharedWorldProgressScreen extends link.sharedworld.vers
                         throw new RuntimeException(exception);
                     }
                 }, SharedWorldClient.ioExecutor())
-                .whenComplete((ignored, error) -> Minecraft.getInstance().execute(() -> {
+                .whenComplete((ignored, error) -> ScreenGuards.runIfCurrent(this, () -> {
                     if (error != null) {
                         Throwable cause = error.getCause() != null ? error.getCause() : error;
                         link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, new SharedWorldErrorScreen(

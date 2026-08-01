@@ -11,6 +11,11 @@ database_id = "9375862a-5ace-47ec-8e2f-5b1bad12cf34"
 #binding = "BLOBS"
 #bucket_name = "sharedworld-blobs"
 
+# Persist console logs as queryable Workers Logs — without this, the auth
+# path's Mojang-status warnings only exist inside a live `wrangler tail`.
+[observability]
+enabled = true
+
 [vars]
 ALLOW_DEV_AUTH = "false"
 ALLOW_DEV_INSECURE_E4MC = "false"

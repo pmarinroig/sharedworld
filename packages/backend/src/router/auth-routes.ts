@@ -1,11 +1,11 @@
-import type { AuthCompleteRequest, DevAuthCompleteRequest } from "../../../shared/src/index.ts";
+import type { AuthCompleteCertRequest, AuthCompleteRequest, DevAuthCompleteRequest } from "../../../shared/src/index.ts";
 
 import { json, readJson } from "../http.ts";
 import type { RouterService } from "./shared.ts";
 import { RouteDefinition, UrlPattern } from "./shared.ts";
 
 export function authRoutes(
-  service: Pick<RouterService, "completeAuth" | "completeDevAuth" | "createChallenge">
+  service: Pick<RouterService, "completeAuth" | "completeCertAuth" | "completeDevAuth" | "createChallenge">
 ): RouteDefinition[] {
   return [
     {
@@ -17,6 +17,11 @@ export function authRoutes(
       method: "POST",
       pattern: new UrlPattern({ pathname: "/auth/complete" }),
       handler: async (request) => json(await service.completeAuth(await readJson<AuthCompleteRequest>(request)))
+    },
+    {
+      method: "POST",
+      pattern: new UrlPattern({ pathname: "/auth/complete-cert" }),
+      handler: async (request) => json(await service.completeCertAuth(await readJson<AuthCompleteCertRequest>(request)))
     },
     {
       method: "POST",

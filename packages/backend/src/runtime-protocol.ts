@@ -102,7 +102,6 @@ export interface RuntimeMembership {
  */
 export function resolveRuntimeTimeout(
   runtime: WorldRuntimeRecord | null,
-  nextCandidate: RuntimeCandidate | null,
   now: Date
 ): WorldRuntimeRecord | null {
   if (!runtime) {

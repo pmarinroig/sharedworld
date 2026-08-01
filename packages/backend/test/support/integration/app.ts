@@ -1,3 +1,5 @@
+import { generateKeyPairSync } from "node:crypto";
+
 import { createRouter } from "../../../src/router.ts";
 import { createSqliteRepository } from "../sqlite-d1.ts";
 import { SharedWorldService, WorkerSignedUrlSigner, type AuthVerifier } from "../../../src/service.ts";
@@ -5,38 +7,6 @@ import type { SharedWorldRepository } from "../../../src/repository.ts";
 import type { Env } from "../../../src/env.ts";
 import type { StorageBinding, StorageProvider, StorageQuota, StoredBlob } from "../../../src/storage.ts";
 
-class SimpleURLPattern {
-  private readonly regex: RegExp;
-  private readonly groupNames: string[];
-
-  constructor(init: { pathname: string }) {
-    const { regex, groupNames } = compilePathPattern(init.pathname);
-    this.regex = regex;
-    this.groupNames = groupNames;
-  }
-
-  exec(input: string) {
-    const url = new URL(input);
-    const match = this.regex.exec(url.pathname);
-    if (!match) {
-      return null;
-    }
-    const groups: Record<string, string> = {};
-    for (const [index, name] of this.groupNames.entries()) {
-      groups[name] = match[index + 1] ?? "";
-    }
-    return {
-      pathname: {
-        groups
-      }
-    };
-  }
-}
-
-const globalScope = globalThis as typeof globalThis & { URLPattern?: typeof SimpleURLPattern };
-if (globalScope.URLPattern === undefined) {
-  globalScope.URLPattern = SimpleURLPattern;
-}
 
 interface StoredEntry {
   bytes: Uint8Array;
@@ -140,6 +110,14 @@ interface IntegrationState {
 
 const DEV_AUTH_SECRET = "test-dev-auth-secret";
 
+// A stand-in for Mojang's player-certificate services key: the public half is
+// pinned via MOJANG_PLAYER_CERTIFICATE_KEYS, the private half is served on a
+// __test route so the Java integration test can forge a realistic certificate
+// — the one place a Java-signed request meets the real TS verifier.
+const servicesKeyPair = generateKeyPairSync("rsa", { modulusLength: 2048 });
+const servicesPublicKeyB64 = servicesKeyPair.publicKey.export({ type: "spki", format: "der" }).toString("base64");
+const servicesPrivateKeyPkcs8B64 = servicesKeyPair.privateKey.export({ type: "pkcs8", format: "der" }).toString("base64");
+
 export function createIntegrationTestApp(publicBaseUrl: string) {
   let state = createState(publicBaseUrl);
 
@@ -164,6 +142,9 @@ export function createIntegrationTestApp(publicBaseUrl: string) {
       if (url.pathname === "/__test/storage") {
         return Response.json(this.storageSnapshot());
       }
+      if (url.pathname === "/__test/cert-signing-key") {
+        return Response.json({ privateKeyPkcs8: servicesPrivateKeyPkcs8B64 });
+      }
 
       return createRouter(state.service)(request);
     }
@@ -179,7 +160,8 @@ function createState(publicBaseUrl: string): IntegrationState {
     ALLOW_DEV_INSECURE_E4MC: "true",
     DEV_AUTH_SECRET,
     ALLOW_DEV_GOOGLE_OAUTH: "true",
-    DEV_GOOGLE_EMAIL: "integration-drive@example.com"
+    DEV_GOOGLE_EMAIL: "integration-drive@example.com",
+    MOJANG_PLAYER_CERTIFICATE_KEYS: servicesPublicKeyB64
   };
   const repository = createSqliteRepository();
   const storageProvider = new FakeGoogleDriveStorageProvider(repository);
@@ -215,25 +197,3 @@ async function toUint8Array(body: ReadableStream | ArrayBuffer | Uint8Array | st
   return new Uint8Array(await response.arrayBuffer());
 }
 
-function compilePathPattern(pathname: string): { regex: RegExp; groupNames: string[] } {
-  const groupNames: string[] = [];
-  const escapedSegments = pathname
-    .split("/")
-    .map((segment) => {
-      if (!segment.startsWith(":")) {
-        return escapeRegex(segment);
-      }
-      const wildcard = segment.endsWith("*");
-      const name = wildcard ? segment.slice(1, -1) : segment.slice(1);
-      groupNames.push(name);
-      return wildcard ? "(.*)" : "([^/]+)";
-    });
-  return {
-    regex: new RegExp(`^${escapedSegments.join("/")}$`),
-    groupNames
-  };
-}
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}

@@ -19,6 +19,12 @@ CREATE TABLE IF NOT EXISTS auth_challenges (
   used_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS mojang_services_keys (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  fetched_at TEXT NOT NULL,
+  keys_json TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS worlds (
   id TEXT PRIMARY KEY,
   slug TEXT NOT NULL UNIQUE,
@@ -209,3 +215,8 @@ CREATE TABLE IF NOT EXISTS storage_objects (
   updated_at TEXT NOT NULL,
   PRIMARY KEY (provider, storage_account_id, storage_key)
 );
+
+CREATE INDEX IF NOT EXISTS idx_snapshot_files_storage_key ON snapshot_files (storage_key);
+CREATE INDEX IF NOT EXISTS idx_snapshot_packs_storage_key ON snapshot_packs (storage_key);
+CREATE INDEX IF NOT EXISTS idx_snapshots_world_created ON snapshots (world_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_world_memberships_player ON world_memberships (player_uuid);

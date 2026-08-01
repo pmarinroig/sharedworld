@@ -14,58 +14,6 @@ import type {
 
 import { createRouter, type RouterService } from "../../src/router.ts";
 
-class TestUrlPattern {
-  private readonly pathname: string;
-
-  constructor(init: { pathname: string }) {
-    this.pathname = init.pathname;
-  }
-
-  exec(input: string) {
-    const url = new URL(input);
-    const actualSegments = url.pathname.split("/").filter(Boolean);
-    const expectedSegments = this.pathname.split("/").filter(Boolean);
-    const groups: Record<string, string> = {};
-    for (let i = 0; i < expectedSegments.length; i += 1) {
-      const expected = expectedSegments[i];
-      if (expected == null) {
-        return null;
-      }
-      if (expected.startsWith(":") && expected.endsWith("*")) {
-        groups[expected.slice(1, -1)] = actualSegments.slice(i).join("/");
-        return {
-          pathname: {
-            groups
-          }
-        };
-      }
-      const actual = actualSegments[i];
-      if (actual == null) {
-        return null;
-      }
-      if (expected.startsWith(":")) {
-        groups[expected.slice(1)] = actual;
-        continue;
-      }
-      if (expected !== actual) {
-        return null;
-      }
-    }
-    if (actualSegments.length !== expectedSegments.length) {
-      return null;
-    }
-    return {
-      pathname: {
-        groups
-      }
-    };
-  }
-}
-
-const globalScope = globalThis as typeof globalThis & { URLPattern?: typeof TestUrlPattern };
-if (globalScope.URLPattern === undefined) {
-  globalScope.URLPattern = TestUrlPattern;
-}
 
 const DEFAULT_SESSION: SessionToken = {
   token: "session-token",
@@ -229,6 +177,9 @@ const defaultRouterService = {
   async completeAuth(_request) {
     return unexpectedRouteCall("completeAuth");
   },
+  async completeCertAuth(_request) {
+    return unexpectedRouteCall("completeCertAuth");
+  },
   async completeDevAuth(_request) {
     return unexpectedRouteCall("completeDevAuth");
   },
@@ -306,9 +257,6 @@ const defaultRouterService = {
   },
   async redeemInvite(_ctx, _request, _now) {
     return unexpectedRouteCall("redeemInvite");
-  },
-  async refreshWaiting(_ctx, _worldId, _request, _nowArg) {
-    return unexpectedRouteCall("refreshWaiting");
   },
   async releaseHost(_ctx, _worldId, _request, _now) {
     return unexpectedRouteCall("releaseHost");

@@ -88,6 +88,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
     private final java.util.EnumMap<link.sharedworld.host.SharedWorldGameRule, Boolean> settingsRules =
             new java.util.EnumMap<>(link.sharedworld.host.SharedWorldGameRule.class);
     private link.sharedworld.api.SharedWorldModels.WorldSettingsDto loadedSettings;
+    private boolean settingsPrefillFailed;
     private boolean savingSettings;
 
     private SelectedIcon selectedIcon;
@@ -110,7 +111,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
                 SharedWorldClient.apiClient(),
                 SharedWorldClient.customIconStore(),
                 SharedWorldClient.ioExecutor(),
-                runnable -> Minecraft.getInstance().execute(runnable)
+                runnable -> ScreenGuards.runIfCurrent(this, runnable)
         );
     }
 
@@ -648,14 +649,19 @@ public final class EditSharedWorldScreen extends VersionedScreen {
             }
         }
         this.loadedSettings = this.currentSettingsDto();
+        if (this.settingsPrefillFailed) {
+            this.setStatusError(SharedWorldText.string("screen.sharedworld.edit_settings_unreadable"));
+        }
     }
 
     private void prefillSettingsFromLevelDat() {
+        boolean levelDatExists = false;
         try {
             Path levelDat = this.worldStore.workingCopy(this.world.id()).resolve("level.dat");
             if (!java.nio.file.Files.isRegularFile(levelDat)) {
                 return;
             }
+            levelDatExists = true;
             var data = link.sharedworld.versioned.NbtCompat.getCompoundOrEmpty(
                     link.sharedworld.versioned.NbtCompat.readCompressed(levelDat), "Data");
             byte difficulty = link.sharedworld.versioned.NbtCompat.getByteOr(data, "Difficulty", (byte) 2);
@@ -671,8 +677,15 @@ public final class EditSharedWorldScreen extends VersionedScreen {
                 case 2 -> "adventure";
                 default -> "survival";
             };
-        } catch (Exception ignored) {
-            // No local copy yet (never synced here): vanilla defaults stand.
+        } catch (Exception exception) {
+            if (levelDatExists) {
+                // An existing level.dat that cannot be read is NOT "defaults":
+                // flag it so the settings tab warns and refuses to save what
+                // would silently replace the world's real values.
+                this.settingsPrefillFailed = true;
+                SharedWorldClient.LOGGER.warn("SharedWorld could not read level.dat for {}", this.world.id(), exception);
+            }
+            // Otherwise: no local copy yet (never synced here), defaults stand.
         }
     }
 
@@ -766,6 +779,10 @@ public final class EditSharedWorldScreen extends VersionedScreen {
 
     private void saveSettings() {
         if (!this.isOwner() || this.savingSettings || !this.settingsDirty()) {
+            return;
+        }
+        if (this.settingsPrefillFailed) {
+            this.setStatusError(SharedWorldText.string("screen.sharedworld.edit_settings_unreadable"));
             return;
         }
         this.savingSettings = true;

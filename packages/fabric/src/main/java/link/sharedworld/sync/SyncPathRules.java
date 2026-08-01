@@ -15,10 +15,6 @@ public final class SyncPathRules {
     private SyncPathRules() {
     }
 
-    public static boolean isMcaFile(String relativePath) {
-        return relativePath.toLowerCase(Locale.ROOT).endsWith(".mca");
-    }
-
     public static boolean isTerrainRegionFile(String relativePath) {
         return regionFileMatcher(relativePath).matches();
     }

@@ -49,10 +49,12 @@ public final class SharedWorldCoordinatorSupport {
 
         /**
          * Whether the open singleplayer server is running a SharedWorld-managed world.
-         * Shells that cannot tell treat any open local server as managed.
+         * Fails closed ([P9]): a shell that cannot tell must treat the world as
+         * NOT managed, so lifecycle machinery never touches a vanilla world.
+         * Shells that do run managed worlds must override this.
          */
         default boolean isManagedWorldOpen() {
-            return hasSingleplayerServer();
+            return false;
         }
     }
 
@@ -142,7 +144,12 @@ public final class SharedWorldCoordinatorSupport {
 
             @Override
             public void disconnectFromWorld() {
-                link.sharedworld.versioned.ClientCompat.disconnectFromWorld(Minecraft.getInstance());
+                Minecraft minecraft = Minecraft.getInstance();
+                if (minecraft.isSameThread()) {
+                    link.sharedworld.versioned.ClientCompat.disconnectFromWorld(minecraft);
+                    return;
+                }
+                minecraft.execute(() -> link.sharedworld.versioned.ClientCompat.disconnectFromWorld(minecraft));
             }
 
             @Override
@@ -178,7 +185,7 @@ public final class SharedWorldCoordinatorSupport {
             @Override
             public void clearPlaySession() {
                 SharedWorldClient.playSessionTracker().clear();
-                SharedWorldDevSessionBridge.clear();
+                SharedWorldDevSessionBridge.clearHostingSession();
             }
 
             @Override

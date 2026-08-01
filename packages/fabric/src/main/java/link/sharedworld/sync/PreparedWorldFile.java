@@ -18,8 +18,4 @@ public record PreparedWorldFile(
     public LocalFileDescriptorDto toDescriptor() {
         return new LocalFileDescriptorDto(this.relativePath, this.hash, this.size, this.compressedSize, this.contentType, this.deltaCapable);
     }
-
-    public ManifestFileDto toManifestFile(String storageKey, String transferMode, String baseSnapshotId, String baseHash, Integer chainDepth) {
-        return new ManifestFileDto(this.relativePath, this.hash, this.size, this.compressedSize, storageKey, this.contentType, transferMode, baseSnapshotId, baseHash, chainDepth);
-    }
 }

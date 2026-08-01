@@ -140,6 +140,48 @@ final class SharedWorldReleaseCoordinatorTest {
     }
 
     @Test
+    void observedDisconnectDisarmsThePassThroughSoALaterUnrelatedDisconnectIsNotSwallowed() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            harness.hostControl.setActiveHostSession("world-1", "World", 7L, "token-7", "join.example");
+            harness.releaseBackend.setRuntime(SharedWorldCoordinatorHarness.runtime("world-1", "host-live", 7L, null, "join.example"));
+            harness.clientShell.setLocalServerState(true, true, true);
+
+            assertNotNull(harness.releaseCoordinator.beginGracefulDisconnect(null));
+            for (int i = 0; i < 4; i++) {
+                harness.tickRelease();
+                harness.runUntilIdle();
+            }
+            // Past the vanilla-disconnect timeout the coordinator arms the
+            // pass-through and requests its own disconnect.
+            harness.advanceTime(10_000L);
+            harness.tickRelease();
+            harness.runUntilIdle();
+            harness.advanceTime(25_000L);
+            harness.tickRelease();
+            harness.runUntilIdle();
+            harness.tickRelease();
+            harness.runUntilIdle();
+            assertTrue(harness.clientShell.disconnectCalls() > 0,
+                    "the coordinator requested a local disconnect: " + harness.clientShell.actions());
+
+            // The world then closes through a path that never consults the
+            // disconnect hook — the race that used to leave the flag armed.
+            harness.clientShell.setLocalServerState(false, false, false);
+            harness.tickRelease();
+            harness.runUntilIdle();
+
+            assertFalse(harness.releaseCoordinator.consumeDisconnectPassThrough(),
+                    "an observed disconnect must retire the armed pass-through; a leaked flag would swallow the next unrelated disconnect");
+
+            driveRelease(harness);
+            assertEquals(SharedWorldReleasePhase.COMPLETE, harness.releaseCoordinator.view().phase());
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
     void transientUploadFailureAutoRetriesAfterBackoffWithoutHumanIntervention() throws Exception {
         SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
         try {

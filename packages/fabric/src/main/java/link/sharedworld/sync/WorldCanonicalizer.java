@@ -102,22 +102,6 @@ public final class WorldCanonicalizer {
         }
     }
 
-    public static void writeGzipFile(PreparedWorldFile file, Path target) throws IOException {
-        try (OutputStream rawOutput = Files.newOutputStream(target);
-             GZIPOutputStream gzip = new GZIPOutputStream(rawOutput)) {
-            if (file.overrideBytes() != null) {
-                gzip.write(file.overrideBytes());
-            } else if (file.sourcePath() != null) {
-                try (InputStream input = Files.newInputStream(file.sourcePath())) {
-                    input.transferTo(gzip);
-                }
-            } else {
-                throw new IOException("SharedWorld file " + file.relativePath() + " has no source bytes.");
-            }
-            gzip.finish();
-        }
-    }
-
     private static CanonicalLevelResult canonicalizeLevelDat(Path levelDat) throws IOException {
         CompoundTag levelTag = NbtCompat.readCompressed(levelDat);
         CompoundTag canonicalLevel = levelTag.copy();

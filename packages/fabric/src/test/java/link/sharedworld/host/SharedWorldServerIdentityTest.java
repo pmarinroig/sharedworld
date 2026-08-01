@@ -1,5 +1,6 @@
 package link.sharedworld.host;
 
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
@@ -9,6 +10,23 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class SharedWorldServerIdentityTest {
     private static final Path WORLDS_ROOT = Path.of("/game/sharedworld/worlds").toAbsolutePath().normalize();
+
+    @Test
+    @DisplayName("[P9] a directory whose name merely starts with the managed root is not managed")
+    void prefixCollidingSiblingIsNotManaged() {
+        // Path.startsWith is component-wise, so /game/sharedworld/worlds-evil
+        // must not count as being inside /game/sharedworld/worlds.
+        assertFalse(SharedWorldServerIdentity.isManagedRoot(
+                Path.of("/game/sharedworld/worlds-evil/world-1/current").toAbsolutePath().normalize(), WORLDS_ROOT));
+        assertFalse(SharedWorldServerIdentity.isManagedRoot(
+                Path.of("/game/sharedworld/worldsfoo/current").toAbsolutePath().normalize(), WORLDS_ROOT));
+    }
+
+    @Test
+    @DisplayName("[P9] the managed root itself is not a managed world")
+    void managedRootItselfIsNotManaged() {
+        assertFalse(SharedWorldServerIdentity.isManagedRoot(WORLDS_ROOT, WORLDS_ROOT));
+    }
 
     @Test
     void managedWorkingCopyIsRecognized() {

@@ -42,6 +42,23 @@ final class SharedWorldDevSessionBridgeTest {
     }
 
     @Test
+    void hostingSessionTeardownKeepsAuthScopedFlags() {
+        SharedWorldDevSessionBridge.updateAuthenticatedSession(true, true);
+        SharedWorldDevSessionBridge.setHostingSharedWorld(true, "00000000-0000-0000-0000-000000000001");
+
+        SharedWorldDevSessionBridge.clearHostingSession();
+
+        assertFalse(SharedWorldDevSessionBridge.isHostingSharedWorld());
+        assertNull(SharedWorldDevSessionBridge.hostingSharedWorldOwnerUuid());
+        assertTrue(SharedWorldDevSessionBridge.hostedMemberGrants().isEmpty());
+        // Auth-scoped session flags survive until re-auth (full clear):
+        assertTrue(SharedWorldDevSessionBridge.isCurrentSessionDev());
+        assertTrue(SharedWorldDevSessionBridge.backendAllowsInsecureE4mc());
+        // The bypass itself still turns off because hosting ended.
+        assertFalse(SharedWorldDevSessionBridge.isInsecureDialtoneBypassAllowed());
+    }
+
+    @Test
     void blankOwnerUuidDoesNotPersistHostedOwnerIdentity() {
         SharedWorldDevSessionBridge.setHostingSharedWorld(true, " ");
 
