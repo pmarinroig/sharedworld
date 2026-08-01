@@ -147,11 +147,11 @@ describe("MinecraftSessionServerAuthVerifier", () => {
     )).retryAfterSeconds).toBe(10);
   });
 
-  test("maps HTTP 403 to the refused-verification message", async () => {
+  test("maps HTTP 403 to the update-your-mod message (Mojang's standing egress block)", async () => {
     nextResponse = { status: 403 };
     const error = await expectUnavailable(
       verifier.verifyJoin("HostA", "server-id-1"),
-      "Minecraft's identity service refused the verification request. Please try again in a few minutes; if it keeps failing, please report it along with your Minecraft name."
+      "Minecraft no longer accepts the sign-in method used by SharedWorld 0.2.0 and older. Please update SharedWorld to 0.2.1 or newer. If you are already updated, a mod that blocks chat signing may be hiding your Minecraft profile keys."
     );
     expect(error.upstreamStatus).toBe(403);
     expect(error.retryAfterSeconds).toBeUndefined();

@@ -362,7 +362,9 @@ function unavailableMessageForStatus(status: number): string {
     return "Minecraft's identity service is rate-limiting the SharedWorld server. Please wait a minute and try again.";
   }
   if (status === 403) {
-    return "Minecraft's identity service refused the verification request. Please try again in a few minutes; if it keeps failing, please report it along with your Minecraft name.";
+    // Mojang's standing block on this egress: only the certificate flow
+    // (0.2.1+) gets around it, so point stale clients at the update.
+    return "Minecraft no longer accepts the sign-in method used by SharedWorld 0.2.0 and older. Please update SharedWorld to 0.2.1 or newer. If you are already updated, a mod that blocks chat signing may be hiding your Minecraft profile keys.";
   }
   return "Minecraft identity verification is unavailable.";
 }
