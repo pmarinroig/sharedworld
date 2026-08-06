@@ -81,6 +81,26 @@ export class AuthDomainService {
    * blocks that endpoint for Cloudflare Workers egress).
    */
   async completeCertAuth(request: AuthCompleteCertRequest, now = new Date()): Promise<SessionToken> {
+    try {
+      return await this.completeCertAuthChecked(request, now);
+    } catch (error) {
+      if (error instanceof HttpError) {
+        // 4xx auth failures never reach errorResponse's >=500 logging, and
+        // the client falls back to the (blocked) join flow silently — so this
+        // line is the only way production logs can answer "is a real
+        // certificate being rejected?".
+        console.warn("SharedWorld certificate auth rejected", {
+          code: error.code,
+          status: error.status,
+          playerName: request.playerName,
+          playerUuid: request.playerUuid
+        });
+      }
+      throw error;
+    }
+  }
+
+  private async completeCertAuthChecked(request: AuthCompleteCertRequest, now: Date): Promise<SessionToken> {
     const challenge = await this.repository.getChallenge(request.serverId);
     if (!challenge) {
       throw new HttpError(404, "challenge_not_found", "Authentication challenge not found.");

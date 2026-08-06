@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 
 import type { AuthCompleteCertRequest } from "../../../shared/src/index.ts";
 
@@ -187,6 +187,32 @@ describe("completeCertAuth", () => {
     const good = await validRequest(keys, challenge.serverId);
     const session = await instance.completeCertAuth(good);
     expect(session.playerUuid).toBe(PLAYER_UUID);
+  });
+
+  test("a certificate rejection leaves a Workers Logs line naming the code and player", async () => {
+    // The client falls back to the join flow silently on these, so this warn
+    // is the only production record that a real certificate was rejected.
+    const keys = await keysPromise;
+    const instance = certService(keys);
+    const challenge = await instance.createChallenge();
+    const request = await validRequest(keys, challenge.serverId, {
+      nonceSignature: Buffer.from("nope").toString("base64")
+    });
+
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expectHttpError(instance.completeCertAuth(request), 403, "signature_invalid");
+      const logged = warn.mock.calls.find((call) => call[0] === "SharedWorld certificate auth rejected");
+      expect(logged).toBeDefined();
+      expect(logged?.[1]).toMatchObject({
+        code: "signature_invalid",
+        status: 403,
+        playerName: "HostA",
+        playerUuid: PLAYER_UUID
+      });
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   test("a malformed player name is rejected before any crypto runs", async () => {
