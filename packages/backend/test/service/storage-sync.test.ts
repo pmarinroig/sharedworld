@@ -959,4 +959,77 @@ describe("SharedWorldService storage and sync planning", () => {
     await expect(instance.downloadPlan(owner, world.id, { files: [], nonRegionPack: null, regionBundles: [] }))
       .rejects.toThrow("missing a delta base artifact");
   });
+
+  test("an old client's unchanged-pack resend inherits member rows without changing what it sees", async () => {
+    const repository = createSqliteRepository();
+    const { signer } = createBlobSigner();
+    const instance = createTestService(repository, authVerifier, signer, {});
+    await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
+    const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Old Client SMP", "old-client-smp");
+    await claimHostForTest(instance, { playerUuid: "player-owner", playerName: "Owner" }, world.id);
+    const owner = { playerUuid: "player-owner", playerName: "Owner" };
+
+    const memberFiles = [
+      { path: "data/foo.dat", hash: "foo-1", size: 8, contentType: "application/octet-stream" },
+      { path: "level.dat", hash: "level-1", size: 10, contentType: "application/octet-stream" }
+    ];
+    const first = await instance.finalizeSnapshot(owner, world.id, {
+      files: [],
+      packs: [{
+        packId: "non-region",
+        hash: "same-pack",
+        size: 32,
+        storageKey: "packs/full/sa/same-pack.pack",
+        transferMode: "pack-full",
+        files: memberFiles
+      }]
+    }, new Date("2026-01-01T00:01:00.000Z"));
+
+    // The shipped mod asks for an upload plan, learns the pack is already
+    // present, and re-sends it verbatim (WorldSyncSupport.snapshotPackForExisting):
+    // full member list, storage key and delta metadata copied from the plan.
+    const plan = await instance.prepareUploads(owner, world.id, {
+      files: [],
+      nonRegionPack: { packId: "non-region", hash: "same-pack", size: 32, fileCount: 2, files: memberFiles },
+      regionBundles: []
+    });
+    expect(plan.nonRegionPackUpload?.alreadyPresent).toBe(true);
+    expect(plan.snapshotBaseId).toBe(first.snapshotId);
+    expect(plan.latestPackIds).toEqual(["non-region"]);
+
+    const resend = plan.nonRegionPackUpload!;
+    const second = await instance.finalizeSnapshot(owner, world.id, {
+      files: [],
+      baseSnapshotId: plan.snapshotBaseId,
+      packs: [{
+        packId: resend.pack.packId,
+        hash: resend.pack.hash,
+        size: resend.pack.size,
+        storageKey: resend.storageKey!,
+        transferMode: resend.transferMode as "pack-full",
+        baseSnapshotId: resend.baseSnapshotId ?? null,
+        baseHash: resend.baseHash ?? null,
+        chainDepth: resend.baseChainDepth ?? null,
+        files: memberFiles
+      }]
+    }, new Date("2026-01-01T00:06:00.000Z"));
+
+    // Inheritance happened physically...
+    const memberRows = repository.raw
+      .query("SELECT COUNT(*) AS count FROM snapshot_files WHERE snapshot_id = ? AND pack_id = ?")
+      .get(second.snapshotId, "non-region") as { count: number };
+    expect(Number(memberRows.count)).toBe(0);
+    const packRow = repository.raw
+      .query("SELECT members_snapshot_id FROM snapshot_packs WHERE snapshot_id = ?")
+      .get(second.snapshotId) as { members_snapshot_id: string | null };
+    expect(packRow.members_snapshot_id).toBe(first.snapshotId);
+
+    // ...while everything the client observes is unchanged.
+    expect(second.packs[0]?.files.map((file) => file.path)).toEqual(["data/foo.dat", "level.dat"]);
+    const summaries = await instance.listSnapshots(owner, world.id);
+    expect(summaries.map((summary) => summary.fileCount)).toEqual([2, 2]);
+    const downloadPlan = await instance.downloadPlan(owner, world.id, { files: [], nonRegionPack: null, regionBundles: [] });
+    expect(downloadPlan.nonRegionPackDownload?.hash).toBe("same-pack");
+    expect(downloadPlan.nonRegionPackDownload?.steps[0]?.storageKey).toBe("packs/full/sa/same-pack.pack");
+  });
 });

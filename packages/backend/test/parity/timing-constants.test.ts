@@ -30,7 +30,12 @@ const MAPPED_CONSTANTS: Mapping[] = [
 /** Java-side timing constants that deliberately have no shared-contract twin. */
 const JAVA_ONLY_CONSTANTS = new Set([
   "host/SharedWorldHostingManager.java#HEARTBEAT_RETRY_INTERVAL_MS",
-  "host/SharedWorldHostingManager.java#JOIN_TARGET_TIMEOUT_MS"
+  "host/SharedWorldHostingManager.java#JOIN_TARGET_TIMEOUT_MS",
+  // Local safety caps for server-suggested pacing (remote throttle levers);
+  // the backend has no matching literal — env vars drive the suggestions.
+  "host/SharedWorldHostingManager.java#MAX_SUGGESTED_HEARTBEAT_INTERVAL_MS",
+  "host/SharedWorldHostingManager.java#MAX_SUGGESTED_AUTOSAVE_INTERVAL_MS",
+  "SharedWorldPresenceManager.java#MAX_SUGGESTED_HEARTBEAT_INTERVAL_MS"
 ]);
 
 /** Contract constants enforced only by the backend, with no mod-side literal. */

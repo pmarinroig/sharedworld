@@ -9,6 +9,9 @@ import java.util.concurrent.Executor;
 
 public final class SharedWorldPresenceManager {
     private static final long HEARTBEAT_INTERVAL_MS = 15_000L;
+    // Must stay well below the backend's 45s presence timeout or throttled
+    // guests would flicker offline in the world list.
+    private static final long MAX_SUGGESTED_HEARTBEAT_INTERVAL_MS = 30_000L;
     private static final Logger LOGGER = LoggerFactory.getLogger(SharedWorldPresenceManager.class);
 
     private final PresenceSender presenceSender;
@@ -17,6 +20,7 @@ public final class SharedWorldPresenceManager {
     private volatile String activeGuestWorldId;
     private volatile long activeGuestSessionEpoch;
     private volatile long lastHeartbeatAt;
+    private volatile long heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS;
     private long nextGuestSessionEpoch = 1L;
     private long nextPresenceSequence = 1L;
 
@@ -76,7 +80,7 @@ public final class SharedWorldPresenceManager {
         boolean worldChanged = this.activeGuestWorldId == null || !this.activeGuestWorldId.equals(worldId);
         if (worldChanged) {
             startGuestSession(worldId);
-        } else if (now - this.lastHeartbeatAt < HEARTBEAT_INTERVAL_MS) {
+        } else if (now - this.lastHeartbeatAt < this.heartbeatIntervalMs) {
             return;
         }
 
@@ -113,6 +117,7 @@ public final class SharedWorldPresenceManager {
         this.activeGuestWorldId = worldId;
         this.activeGuestSessionEpoch = this.nextGuestSessionEpoch++;
         this.nextPresenceSequence = 1L;
+        this.heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS;
     }
 
     private void scheduleFlush(PresenceUpdate update) {
@@ -121,7 +126,11 @@ public final class SharedWorldPresenceManager {
 
     private void flush(PresenceUpdate update) {
         try {
-            this.presenceSender.setPresence(update);
+            link.sharedworld.api.SharedWorldModels.PresenceHeartbeatResponseDto response = this.presenceSender.setPresence(update);
+            if (response != null && matchesActiveGuestSession(update.guestSessionEpoch(), update.worldId())) {
+                this.heartbeatIntervalMs = link.sharedworld.util.ServerPacing.clampSuggestedInterval(
+                        response.suggestedIntervalMs(), HEARTBEAT_INTERVAL_MS, MAX_SUGGESTED_HEARTBEAT_INTERVAL_MS);
+            }
         } catch (Exception exception) {
             if (matchesActiveGuestSession(update.guestSessionEpoch(), update.worldId())) {
                 if (SharedWorldApiClient.isMembershipRevokedError(exception)) {
@@ -136,7 +145,8 @@ public final class SharedWorldPresenceManager {
 
     @FunctionalInterface
     interface PresenceSender {
-        void setPresence(PresenceUpdate update) throws Exception;
+        /** May return null: older test doubles and offline paths carry no pacing suggestion. */
+        link.sharedworld.api.SharedWorldModels.PresenceHeartbeatResponseDto setPresence(PresenceUpdate update) throws Exception;
     }
 
     @FunctionalInterface

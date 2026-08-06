@@ -112,7 +112,8 @@ export async function prepareUploads(
       PACK_DELTA_TRANSFER_MODE
     ),
     regionBundleUploads,
-    syncPolicy: syncPolicyForProvider(svc)
+    syncPolicy: syncPolicyForProvider(svc),
+    latestPackIds: latest?.packs.map((pack) => pack.packId) ?? []
   };
 }
 
@@ -395,7 +396,7 @@ async function loadSnapshotPack(
   return snapshot.packs.find((pack) => pack.packId === packId) ?? null;
 }
 
-function parsePositiveInt(value: string | undefined, fallback: number): number {
+export function parsePositiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }

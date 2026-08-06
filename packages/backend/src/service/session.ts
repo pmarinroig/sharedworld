@@ -14,6 +14,7 @@ import {
   type ObserveWaitingRequest,
   type ObserveWaitingResponse,
   type PresenceHeartbeatRequest,
+  type PresenceHeartbeatResponse,
   type ReleaseHostRequest,
   type WorldRuntimeStatus
 } from "../../../shared/src/index.ts";
@@ -36,6 +37,7 @@ import {
   type ResolvedRuntimeState
 } from "../runtime-service-support.ts";
 import type { ServiceContext } from "./context.ts";
+import { parsePositiveInt } from "./sync-plan.ts";
 import {
   hostNotActiveError,
   requireAuthorizedRuntime,
@@ -201,7 +203,11 @@ export async function observeWaiting(
 export async function runtimeStatus(svc: ServiceContext, ctx: RequestContext, worldId: string, now: Date): Promise<WorldRuntimeStatus> {
   await requireSessionAccess(svc, ctx, worldId, { allowRevokedHost: true });
   const resolved = await resolveRuntimeState(svc, worldId, now);
-  return toRuntimeStatus(worldId, resolved.runtime, resolved.candidate, resolved.warning);
+  const status = toRuntimeStatus(worldId, resolved.runtime, resolved.candidate, resolved.warning);
+  // Remote throttle lever: only the top-level GET /runtime response carries
+  // the suggestion — that is the poll the guest watcher drives.
+  const suggestedPollIntervalMs = parsePositiveInt(svc.env.SUGGESTED_RUNTIME_POLL_INTERVAL_MS, 0);
+  return suggestedPollIntervalMs > 0 ? { ...status, suggestedPollIntervalMs } : status;
 }
 
 export async function cancelWaiting(
@@ -277,11 +283,15 @@ async function withHeartbeatMemberships(
     canUseCommands: member.canUseCommands
   }));
   const worldSettings = await svc.repository.getWorldSettings(worldId);
+  const suggestedHeartbeatIntervalMs = parsePositiveInt(svc.env.SUGGESTED_HOST_HEARTBEAT_INTERVAL_MS, 0);
+  const suggestedAutosaveIntervalMs = parsePositiveInt(svc.env.SUGGESTED_AUTOSAVE_INTERVAL_MS, 0);
   return {
     ...status,
     memberships,
     settings: worldSettings?.settings ?? null,
-    settingsRevision: worldSettings?.settingsRevision ?? 0
+    settingsRevision: worldSettings?.settingsRevision ?? 0,
+    ...(suggestedHeartbeatIntervalMs > 0 ? { suggestedHeartbeatIntervalMs } : {}),
+    ...(suggestedAutosaveIntervalMs > 0 ? { suggestedAutosaveIntervalMs } : {})
   };
 }
 
@@ -330,14 +340,16 @@ export async function setPlayerPresence(
   worldId: string,
   request: PresenceHeartbeatRequest,
   now: Date
-) {
+): Promise<PresenceHeartbeatResponse> {
   await requireSessionAccess(svc, ctx, worldId);
   await svc.repository.setPlayerPresence(worldId, ctx, request, now);
+  const suggestedIntervalMs = parsePositiveInt(svc.env.SUGGESTED_PRESENCE_INTERVAL_MS, 0);
   return {
     worldId,
     present: request.present,
     updatedAt: now.toISOString(),
-    expiresAt: new Date(now.getTime() + PLAYER_PRESENCE_TIMEOUT_MS).toISOString()
+    expiresAt: new Date(now.getTime() + PLAYER_PRESENCE_TIMEOUT_MS).toISOString(),
+    ...(suggestedIntervalMs > 0 ? { suggestedIntervalMs } : {})
   };
 }
 

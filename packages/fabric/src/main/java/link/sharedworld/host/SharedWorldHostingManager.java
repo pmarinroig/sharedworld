@@ -44,6 +44,10 @@ public final class SharedWorldHostingManager {
     private static final long HOST_CONFIRM_TIMEOUT_MS = 90_000L;
     private static final long AUTOSAVE_INTERVAL_MS = 5 * 60_000L;
     private static final long JOIN_TARGET_TIMEOUT_MS = 60_000L;
+    // Server-throttle caps: heartbeats must stay well under the backend's 90s
+    // lease timeout; autosaves may stretch to an hour at most.
+    private static final long MAX_SUGGESTED_HEARTBEAT_INTERVAL_MS = 60_000L;
+    private static final long MAX_SUGGESTED_AUTOSAVE_INTERVAL_MS = 60 * 60_000L;
 
     private final SharedWorldApiClient apiClient;
     private final HostStartupProgressRelayController startupProgressRelay;
@@ -79,6 +83,8 @@ public final class SharedWorldHostingManager {
     private volatile long lastHeartbeatAttemptAt;
     private volatile int consecutiveHeartbeatFailures;
     private volatile long lastAutosaveAt;
+    private volatile long heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS;
+    private volatile long autosaveIntervalMs = AUTOSAVE_INTERVAL_MS;
     /** Last settings revision pushed to the live server; -1 = none this session. */
     private volatile long appliedSettingsRevision = -1;
     private volatile long startupAttemptId;
@@ -272,6 +278,8 @@ public final class SharedWorldHostingManager {
         this.lastHeartbeatAttemptAt = 0L;
         this.consecutiveHeartbeatFailures = 0;
         this.lastAutosaveAt = 0L;
+        this.heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS;
+        this.autosaveIntervalMs = AUTOSAVE_INTERVAL_MS;
         this.appliedSettingsRevision = -1;
         this.startupProgressRelayActive = false;
         this.startupStarted.set(true);
@@ -447,7 +455,7 @@ public final class SharedWorldHostingManager {
         if (this.phase != Phase.RUNNING || this.coordinatedRelease != CoordinatedRelease.NONE) {
             return;
         }
-        if (now - this.lastAutosaveAt >= AUTOSAVE_INTERVAL_MS && this.saveInFlight.compareAndSet(0L, this.hostSessionGeneration)) {
+        if (now - this.lastAutosaveAt >= this.autosaveIntervalMs && this.saveInFlight.compareAndSet(0L, this.hostSessionGeneration)) {
             uploadSnapshot(false);
         }
     }
@@ -760,7 +768,7 @@ public final class SharedWorldHostingManager {
                 now,
                 this.lastHeartbeatAt,
                 this.lastHeartbeatAttemptAt,
-                HEARTBEAT_INTERVAL_MS,
+                this.heartbeatIntervalMs,
                 HEARTBEAT_RETRY_INTERVAL_MS
         );
     }
@@ -811,6 +819,10 @@ public final class SharedWorldHostingManager {
             return;
         }
         this.lastHeartbeatAt = System.currentTimeMillis();
+        this.heartbeatIntervalMs = link.sharedworld.util.ServerPacing.clampSuggestedInterval(
+                runtime.suggestedHeartbeatIntervalMs(), HEARTBEAT_INTERVAL_MS, MAX_SUGGESTED_HEARTBEAT_INTERVAL_MS);
+        this.autosaveIntervalMs = link.sharedworld.util.ServerPacing.clampSuggestedInterval(
+                runtime.suggestedAutosaveIntervalMs(), AUTOSAVE_INTERVAL_MS, MAX_SUGGESTED_AUTOSAVE_INTERVAL_MS);
         if (this.consecutiveHeartbeatFailures > HEARTBEAT_FAILURES_BEFORE_WARNING && this.phase == Phase.RUNNING) {
             this.statusMessage = HostLifecyclePolicy.runningStatusMessage(this.publishedJoinTarget);
         }
@@ -965,7 +977,11 @@ public final class SharedWorldHostingManager {
                     if (!isCurrentAttempt(context)) {
                         return;
                     }
-                    this.latestManifest = uploadedManifest;
+                    // A null manifest means the sync layer proved nothing changed
+                    // and skipped the finalize; the previous manifest stays valid.
+                    if (uploadedManifest != null) {
+                        this.latestManifest = uploadedManifest;
+                    }
                     this.lastAutosaveAt = System.currentTimeMillis();
                     // A release that began while this save was in flight owns the
                     // phase now; stomping RELEASING back to RUNNING would tear
@@ -1198,6 +1214,8 @@ public final class SharedWorldHostingManager {
         this.lastHeartbeatAttemptAt = 0L;
         this.consecutiveHeartbeatFailures = 0;
         this.lastAutosaveAt = 0L;
+        this.heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS;
+        this.autosaveIntervalMs = AUTOSAVE_INTERVAL_MS;
         this.startupStarted.set(false);
         this.saveInFlight.set(0L);
         this.heartbeatInFlight.set(0L);
@@ -1444,6 +1462,7 @@ public final class SharedWorldHostingManager {
     interface SyncAccess {
         Path ensureSynchronizedWorkingCopy(String worldId, String hostPlayerUuid, WorldSyncProgressListener progressListener) throws IOException, InterruptedException;
 
+        /** Returns null when the sync layer skipped an unchanged snapshot; the previous manifest stays valid. */
         SnapshotManifestDto uploadSnapshot(
                 String worldId,
                 Path worldDirectory,

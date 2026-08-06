@@ -26,7 +26,10 @@ final class SharedWorldPresenceManagerTest {
     void initialGuestJoinSendsPresenceTrue() {
         List<String> calls = new ArrayList<>();
         SharedWorldPresenceManager manager = new SharedWorldPresenceManager(
-                update -> calls.add(format(update)),
+                update -> {
+                    calls.add(format(update));
+                    return null;
+                },
                 Runnable::run
         );
 
@@ -39,7 +42,10 @@ final class SharedWorldPresenceManagerTest {
     void repeatedTicksWithinIntervalDoNotSendDuplicates() {
         List<String> calls = new ArrayList<>();
         SharedWorldPresenceManager manager = new SharedWorldPresenceManager(
-                update -> calls.add(format(update)),
+                update -> {
+                    calls.add(format(update));
+                    return null;
+                },
                 Runnable::run
         );
 
@@ -55,7 +61,10 @@ final class SharedWorldPresenceManagerTest {
     void disconnectWithoutInflightRequestSendsPresenceFalse() {
         List<String> calls = new ArrayList<>();
         SharedWorldPresenceManager manager = new SharedWorldPresenceManager(
-                update -> calls.add(format(update)),
+                update -> {
+                    calls.add(format(update));
+                    return null;
+                },
                 Runnable::run
         );
 
@@ -74,6 +83,7 @@ final class SharedWorldPresenceManagerTest {
                     if (update.present()) {
                         managerRef.get().onDisconnect(GUEST_SESSION);
                     }
+                    return null;
                 },
                 Runnable::run
         );
@@ -94,7 +104,10 @@ final class SharedWorldPresenceManagerTest {
     void newGuestSessionGetsANewEpoch() {
         List<String> calls = new ArrayList<>();
         SharedWorldPresenceManager manager = new SharedWorldPresenceManager(
-                update -> calls.add(format(update)),
+                update -> {
+                    calls.add(format(update));
+                    return null;
+                },
                 Runnable::run
         );
 
@@ -114,6 +127,7 @@ final class SharedWorldPresenceManagerTest {
                     if (update.present()) {
                         throw new IllegalStateException("boom");
                     }
+                    return null;
                 },
                 Runnable::run
         );
@@ -216,6 +230,7 @@ final class SharedWorldPresenceManagerTest {
                     if (update.guestSessionEpoch() == 1L) {
                         throw new SharedWorldApiClient.SharedWorldApiException("membership_revoked", "Removed", 403);
                     }
+                    return null;
                 },
                 queued::add,
                 (reason, worldId) -> forcedExits.add(reason + ":" + worldId)
@@ -232,6 +247,29 @@ final class SharedWorldPresenceManagerTest {
 
         assertEquals(3, captured.size());
         assertEquals(List.of(), forcedExits);
+    }
+
+    @Test
+    void serverSuggestedIntervalSlowsHeartbeatsButIsClampedBelowThePresenceTimeout() {
+        List<String> calls = new ArrayList<>();
+        SharedWorldPresenceManager manager = new SharedWorldPresenceManager(
+                update -> {
+                    calls.add(format(update));
+                    // Two minutes would blow past the backend's 45s presence
+                    // timeout; the local cap holds the cadence at 30s.
+                    return new link.sharedworld.api.SharedWorldModels.PresenceHeartbeatResponseDto(
+                            update.worldId(), update.present(), "2026-01-01T00:00:00Z", "2026-01-01T00:00:45Z", 120_000L);
+                },
+                Runnable::run
+        );
+
+        manager.tickGuestSession("world-1", 1_000L);
+        // The default 15s cadence would fire here; the clamped suggestion is 30s.
+        manager.tickGuestSession("world-1", 16_000L);
+        manager.tickGuestSession("world-1", 30_999L);
+        assertEquals(List.of("world-1:true:1:1"), calls);
+        manager.tickGuestSession("world-1", 31_000L);
+        assertEquals(List.of("world-1:true:1:1", "world-1:true:1:2"), calls);
     }
 
     private static String format(SharedWorldPresenceManager.PresenceUpdate update) {

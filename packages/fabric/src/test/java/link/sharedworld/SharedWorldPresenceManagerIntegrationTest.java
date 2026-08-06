@@ -48,6 +48,7 @@ final class SharedWorldPresenceManagerIntegrationTest {
                         } else if (!update.present()) {
                             disconnectFinished.countDown();
                         }
+                        return null;
                     },
                     executor
             );
@@ -81,7 +82,10 @@ final class SharedWorldPresenceManagerIntegrationTest {
         world.hostClient().heartbeatHost(world.world().id(), assignment.runtimeEpoch(), assignment.hostToken(), "join.example");
 
         SharedWorldPresenceManager manager = new SharedWorldPresenceManager(
-                update -> sendPresence(world.guestClient(), update),
+                update -> {
+                    sendPresence(world.guestClient(), update);
+                    return null;
+                },
                 Runnable::run
         );
         SharedWorldPlaySessionTracker.ActiveWorldSession session = new SharedWorldPlaySessionTracker.ActiveWorldSession(
@@ -103,8 +107,8 @@ final class SharedWorldPresenceManagerIntegrationTest {
         assertEquals(List.of("HostA", "GuestB"), List.of(world.hostClient().listWorlds().get(0).onlinePlayerNames()));
     }
 
-    private static void sendPresence(SharedWorldApiClient client, SharedWorldPresenceManager.PresenceUpdate update) throws Exception {
-        client.setPresence(
+    private static SharedWorldModels.PresenceHeartbeatResponseDto sendPresence(SharedWorldApiClient client, SharedWorldPresenceManager.PresenceUpdate update) throws Exception {
+        return client.setPresence(
                 update.worldId(),
                 update.present(),
                 update.guestSessionEpoch(),

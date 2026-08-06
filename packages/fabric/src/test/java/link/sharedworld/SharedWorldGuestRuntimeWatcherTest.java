@@ -188,6 +188,71 @@ final class SharedWorldGuestRuntimeWatcherTest {
         );
     }
 
+    private static WorldRuntimeStatusDto pacedRuntime(Long suggestedPollIntervalMs) {
+        return new WorldRuntimeStatusDto(
+                "world-1",
+                "host-live",
+                7L,
+                "player-host",
+                "Host",
+                null,
+                null,
+                "join.example",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                suggestedPollIntervalMs
+        );
+    }
+
+    @Test
+    void serverSuggestedPollIntervalSlowsPollingButNeverBelowTheDefault() {
+        AtomicInteger polls = new AtomicInteger();
+        SharedWorldGuestRuntimeWatcher watcher = new SharedWorldGuestRuntimeWatcher(
+                worldId -> {
+                    polls.incrementAndGet();
+                    return pacedRuntime(30_000L);
+                },
+                Runnable::run,
+                Runnable::run,
+                (session, outcome) -> true
+        );
+
+        watcher.tickGuestSession(GUEST_SESSION, 1_000L);
+        // The default 5s cadence would poll here; the server said 30s.
+        watcher.tickGuestSession(GUEST_SESSION, 7_000L);
+        watcher.tickGuestSession(GUEST_SESSION, 30_000L);
+        assertEquals(1, polls.get());
+        watcher.tickGuestSession(GUEST_SESSION, 31_500L);
+        assertEquals(2, polls.get());
+    }
+
+    @Test
+    void absurdSuggestedPollIntervalIsClampedToTheLocalCap() {
+        AtomicInteger polls = new AtomicInteger();
+        SharedWorldGuestRuntimeWatcher watcher = new SharedWorldGuestRuntimeWatcher(
+                worldId -> {
+                    polls.incrementAndGet();
+                    // Ten minutes: a misconfigured server must not disable
+                    // departure detection; the local cap is 60s.
+                    return pacedRuntime(600_000L);
+                },
+                Runnable::run,
+                Runnable::run,
+                (session, outcome) -> true
+        );
+
+        watcher.tickGuestSession(GUEST_SESSION, 1_000L);
+        watcher.tickGuestSession(GUEST_SESSION, 60_500L);
+        assertEquals(1, polls.get());
+        watcher.tickGuestSession(GUEST_SESSION, 61_500L);
+        assertEquals(2, polls.get());
+    }
+
     @Test
     void aRejectedDepartureDispatchIsRetriedOnALaterPoll() {
         List<String> departures = new ArrayList<>();

@@ -25,6 +25,7 @@ import {
   requireWorldStorageBinding
 } from "./runtime-access.ts";
 import { maybeDeleteUnreferencedBlob, purgeWorldSnapshots } from "./snapshots.ts";
+import { parsePositiveInt } from "./sync-plan.ts";
 
 export async function listWorlds(svc: ServiceContext, ctx: RequestContext): Promise<WorldSummary[]> {
   const worlds = await svc.repository.listWorldsForPlayer(ctx.playerUuid);
@@ -37,6 +38,17 @@ export async function createWorld(
   request: CreateWorldRequest,
   now: Date
 ): Promise<CreateWorldResult> {
+  // Growth valve: a hard capacity ceiling turns unexpected virality into a
+  // polite queue instead of an unbounded bill. Checked before any validation
+  // or storage-link consumption so a refused create leaves nothing behind.
+  const maxActiveWorlds = parsePositiveInt(svc.env.MAX_ACTIVE_WORLDS, 0);
+  if (maxActiveWorlds > 0 && await svc.repository.countActiveWorlds() >= maxActiveWorlds) {
+    throw new HttpError(
+      503,
+      "world_capacity_reached",
+      "SharedWorld is at capacity right now, so new worlds can't be created. Please try again later."
+    );
+  }
   const name = requireValidWorldName(request.name);
   if ((request.storageLinkSessionId || request.useLinkedStorageAccount) && (request.importSource?.type !== "local-save" || !request.importSource.id.trim())) {
     throw new HttpError(400, "invalid_import_source", "A local save import source is required.");

@@ -26,6 +26,17 @@ export interface Env {
   DRIVE_MAX_UPLOAD_STARTS_PER_SECOND?: string;
   DRIVE_RETRY_BASE_DELAY_MS?: string;
   DRIVE_RETRY_MAX_DELAY_MS?: string;
+  /**
+   * Remote throttle levers: when set, responses carry suggested client
+   * cadences (clients clamp and never go below their built-in defaults).
+   * Unset = fields absent = clients use their defaults.
+   */
+  SUGGESTED_RUNTIME_POLL_INTERVAL_MS?: string;
+  SUGGESTED_HOST_HEARTBEAT_INTERVAL_MS?: string;
+  SUGGESTED_AUTOSAVE_INTERVAL_MS?: string;
+  SUGGESTED_PRESENCE_INTERVAL_MS?: string;
+  /** Growth valve: refuse new world creation at/above this count. Unset = unlimited. */
+  MAX_ACTIVE_WORLDS?: string;
 }
 
 export interface D1ResultRow {

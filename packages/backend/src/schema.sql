@@ -167,6 +167,11 @@ CREATE TABLE IF NOT EXISTS snapshot_packs (
   base_snapshot_id TEXT,
   base_hash TEXT,
   chain_depth INTEGER,
+  -- When a pack is identical to the base snapshot's pack, its member
+  -- snapshot_files rows are inherited from the snapshot named here instead
+  -- of being re-inserted. NULL = members live under my own snapshot_id.
+  -- Always flattened to the physical holder (one hop), never a chain.
+  members_snapshot_id TEXT,
   -- No snapshots(id) foreign key: the migration that created this table never
   -- declared one, so production does not enforce it; schema.sql matches.
   PRIMARY KEY (snapshot_id, pack_id)

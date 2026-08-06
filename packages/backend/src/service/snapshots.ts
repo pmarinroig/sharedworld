@@ -425,7 +425,10 @@ function snapshotNotFoundError(): HttpError {
  * while every base in its chain still exists: pruning a base would let
  * deleteSnapshots reclaim the base's blobs and leave the surviving delta
  * permanently unreconstructable. Keep the transitive closure of delta bases
- * reachable from every kept snapshot.
+ * reachable from every kept snapshot. (Inherited pack MEMBER rows need no
+ * such protection: deleteSnapshots promotes them to a surviving heir, so
+ * member donors are freely prunable — keeping them here would transitively
+ * retain nearly every autosave and defeat retention entirely.)
  */
 async function expandKeepSetWithDeltaBases(svc: ServiceContext, worldId: string, keep: Set<string>): Promise<void> {
   const edges = await svc.repository.listSnapshotDeltaBases(worldId);

@@ -633,4 +633,211 @@ describe("SharedWorldService snapshots and retention", () => {
     const other = summaries.find((summary) => !summary.isLatest)!;
     await instance.deleteSnapshot(owner, world.id, other.snapshotId);
   });
+
+  const inheritedPack = (hash: string, storageKey: string) => ({
+    packId: "non-region",
+    hash,
+    size: 100,
+    storageKey,
+    transferMode: "pack-full" as const,
+    files: [
+      { path: "level.dat", hash: `level-${hash}`, size: 60, contentType: "application/octet-stream" },
+      { path: "data/foo.dat", hash: `foo-${hash}`, size: 40, contentType: "application/octet-stream" }
+    ]
+  });
+
+  test("retention prunes member donors and promotes their rows to a surviving heir", async () => {
+    const repository = createSqliteRepository();
+    const { signer, deleted } = createBlobSigner();
+    const instance = createTestService(repository, authVerifier, signer, {});
+    await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
+    const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Donor Retention", "donor-retention");
+    await claimHostForTest(instance, { playerUuid: "player-owner", playerName: "Owner" }, world.id);
+    const owner = { playerUuid: "player-owner", playerName: "Owner" };
+
+    // Two identical autosaves on day one: A materializes, B inherits from A.
+    const snapshotA = await instance.finalizeSnapshot(owner, world.id, {
+      files: [],
+      packs: [inheritedPack("pack-a", "packs/full/a.pack")]
+    }, new Date("2026-01-01T10:00:00.000Z"));
+    const snapshotB = await instance.finalizeSnapshot(owner, world.id, {
+      files: [],
+      packs: [inheritedPack("pack-a", "packs/full/a.pack")],
+      baseSnapshotId: snapshotA.snapshotId
+    }, new Date("2026-01-01T11:00:00.000Z"));
+
+    // Two days later a third identical save (donor flattened to A). Retention
+    // prunes A by age — donors must NOT be kept alive, or the donor closure
+    // would retain every autosave forever — and promotion hands A's member
+    // rows to B so the surviving manifests stay complete.
+    const snapshotC = await instance.finalizeSnapshot(owner, world.id, {
+      files: [],
+      packs: [inheritedPack("pack-a", "packs/full/a.pack")],
+      baseSnapshotId: snapshotB.snapshotId
+    }, new Date("2026-01-03T12:00:00.000Z"));
+
+    const kept = await repository.listSnapshotsForWorld(world.id);
+    expect(kept.map((snapshot) => snapshot.snapshotId).sort()).toEqual(
+      [snapshotB.snapshotId, snapshotC.snapshotId].sort()
+    );
+    // The shared pack blob survives: B's and C's pack rows still reference it.
+    expect(deleted).toHaveLength(0);
+    for (const survivor of [snapshotB.snapshotId, snapshotC.snapshotId]) {
+      const manifest = await repository.getSnapshot(world.id, survivor);
+      expect(manifest?.packs[0]?.files.map((file) => file.path)).toEqual(["data/foo.dat", "level.dat"]);
+    }
+    const promoted = repository.raw
+      .query("SELECT members_snapshot_id FROM snapshot_packs WHERE snapshot_id = ?")
+      .get(snapshotB.snapshotId) as { members_snapshot_id: string | null };
+    expect(promoted.members_snapshot_id).toBeNull();
+    const repointed = repository.raw
+      .query("SELECT members_snapshot_id FROM snapshot_packs WHERE snapshot_id = ?")
+      .get(snapshotC.snapshotId) as { members_snapshot_id: string | null };
+    expect(repointed.members_snapshot_id).toBe(snapshotB.snapshotId);
+  });
+
+  test("deleting a member donor promotes rows to its heir instead of refusing or orphaning", async () => {
+    const repository = createSqliteRepository();
+    const { signer, deleted } = createBlobSigner();
+    const instance = createTestService(repository, authVerifier, signer, {});
+    await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
+    const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Donor Delete", "donor-delete");
+    await claimHostForTest(instance, { playerUuid: "player-owner", playerName: "Owner" }, world.id);
+    const owner = { playerUuid: "player-owner", playerName: "Owner" };
+
+    const snapshotA = await instance.finalizeSnapshot(owner, world.id, {
+      files: [],
+      packs: [inheritedPack("pack-a", "packs/full/a.pack")]
+    }, new Date("2026-01-01T10:00:00.000Z"));
+    const snapshotB = await instance.finalizeSnapshot(owner, world.id, {
+      files: [],
+      packs: [inheritedPack("pack-a", "packs/full/a.pack")],
+      baseSnapshotId: snapshotA.snapshotId
+    }, new Date("2026-01-01T11:00:00.000Z"));
+    await instance.finalizeSnapshot(owner, world.id, {
+      files: [],
+      packs: [inheritedPack("pack-c", "packs/full/c.pack")],
+      baseSnapshotId: snapshotB.snapshotId
+    }, new Date("2026-01-01T12:00:00.000Z"));
+
+    // A plain member donor is deletable: its rows move to heir B, and the
+    // shared pack blob survives because B's pack row still references it.
+    await instance.deleteSnapshot(owner, world.id, snapshotA.snapshotId);
+    expect(deleted).not.toContain("packs/full/a.pack");
+    const manifest = await repository.getSnapshot(world.id, snapshotB.snapshotId);
+    expect(manifest?.packs[0]?.files.map((file) => file.path)).toEqual(["data/foo.dat", "level.dat"]);
+
+    // Once the last snapshot referencing the pack is gone, the blob goes too.
+    await instance.deleteSnapshot(owner, world.id, snapshotB.snapshotId);
+    expect(deleted).toContain("packs/full/a.pack");
+    const remaining = await repository.listSnapshotsForWorld(world.id);
+    expect(remaining).toHaveLength(1);
+  });
+
+  test("restore flattens through an inheriting snapshot, so the intermediate stays deletable", async () => {
+    const repository = createSqliteRepository();
+    const { signer } = createBlobSigner();
+    const instance = createTestService(repository, authVerifier, signer, {});
+    await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
+    const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Restore Flatten", "restore-flatten");
+    await claimHostForTest(instance, { playerUuid: "player-owner", playerName: "Owner" }, world.id);
+    const owner = { playerUuid: "player-owner", playerName: "Owner" };
+
+    const snapshotA = await instance.finalizeSnapshot(owner, world.id, {
+      files: [],
+      packs: [inheritedPack("pack-a", "packs/full/a.pack")]
+    }, new Date("2026-01-01T10:00:00.000Z"));
+    const snapshotB = await instance.finalizeSnapshot(owner, world.id, {
+      files: [],
+      packs: [inheritedPack("pack-a", "packs/full/a.pack")],
+      baseSnapshotId: snapshotA.snapshotId
+    }, new Date("2026-01-01T11:00:00.000Z"));
+
+    // Restoring B republishes its manifest; its pack is identical to B's, so
+    // the restored snapshot inherits too — flattened straight to A, not B.
+    // (Restore is only legal once the test claim's runtime has expired.)
+    // Restore-time retention immediately prunes ancient A (monthly bucket
+    // kept by B), promoting A's member rows into B.
+    await instance.restoreSnapshot(owner, world.id, snapshotB.snapshotId, new Date("2099-01-05T00:00:00.000Z"));
+    const restored = (await instance.listSnapshots(owner, world.id)).find((summary) => summary.isLatest)!;
+    expect(restored.snapshotId).not.toBe(snapshotB.snapshotId);
+    const keptIds = (await repository.listSnapshotsForWorld(world.id)).map((snapshot) => snapshot.snapshotId);
+    expect(keptIds.sort()).toEqual([snapshotB.snapshotId, restored.snapshotId].sort());
+
+    // Deleting the intermediate donor promotes the rows into the restored
+    // snapshot itself, which stays fully loadable.
+    await instance.deleteSnapshot(owner, world.id, snapshotB.snapshotId);
+    const manifest = await repository.getSnapshot(world.id, restored.snapshotId);
+    expect(manifest?.packs[0]?.files.map((file) => file.path)).toEqual(["data/foo.dat", "level.dat"]);
+    const promoted = repository.raw
+      .query("SELECT members_snapshot_id FROM snapshot_packs WHERE snapshot_id = ?")
+      .get(restored.snapshotId) as { members_snapshot_id: string | null };
+    expect(promoted.members_snapshot_id).toBeNull();
+  });
+
+  test("a pruned donor's delta chain stays reconstructable through the surviving heir", async () => {
+    const repository = createSqliteRepository();
+    const { signer, deleted } = createBlobSigner();
+    const instance = createTestService(repository, authVerifier, signer, {});
+    await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
+    const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Mixed Edges", "mixed-edges");
+    await claimHostForTest(instance, { playerUuid: "player-owner", playerName: "Owner" }, world.id);
+    const owner = { playerUuid: "player-owner", playerName: "Owner" };
+
+    // E holds the full pack; D is a delta on E; F wins day one's age bucket;
+    // K (day three) inherits D's member rows. D is prunable (promotion), but
+    // E must survive: K's own pack row carries the delta edge onto E.
+    const snapshotE = await instance.finalizeSnapshot(owner, world.id, {
+      files: [],
+      packs: [inheritedPack("pack-e", "packs/full/e.pack")]
+    }, new Date("2026-01-01T09:00:00.000Z"));
+    const snapshotD = await instance.finalizeSnapshot(owner, world.id, {
+      files: [],
+      packs: [{
+        ...inheritedPack("pack-d", "packs/delta/e-d.bin"),
+        transferMode: "pack-delta" as const,
+        baseSnapshotId: snapshotE.snapshotId,
+        baseHash: "pack-e",
+        chainDepth: 1
+      }],
+      baseSnapshotId: snapshotE.snapshotId
+    }, new Date("2026-01-01T10:00:00.000Z"));
+    const snapshotF = await instance.finalizeSnapshot(owner, world.id, {
+      files: [{
+        path: "icon.png",
+        hash: "icon-f",
+        size: 10,
+        compressedSize: 5,
+        storageKey: "blobs/ic/icon-f.bin",
+        contentType: "image/png"
+      }],
+      baseSnapshotId: snapshotD.snapshotId
+    }, new Date("2026-01-01T11:00:00.000Z"));
+    const snapshotK = await instance.finalizeSnapshot(owner, world.id, {
+      files: [],
+      packs: [{
+        ...inheritedPack("pack-d", "packs/delta/e-d.bin"),
+        transferMode: "pack-delta" as const,
+        baseSnapshotId: snapshotE.snapshotId,
+        baseHash: "pack-e",
+        chainDepth: 1
+      }],
+      baseSnapshotId: snapshotD.snapshotId
+    }, new Date("2026-01-03T12:00:00.000Z"));
+
+    // Age keeps K (recent) and F (day-one bucket); the delta edge keeps E;
+    // D is pruned and its member rows are promoted into K.
+    const kept = await repository.listSnapshotsForWorld(world.id);
+    expect(kept.map((snapshot) => snapshot.snapshotId).sort()).toEqual(
+      [snapshotE.snapshotId, snapshotF.snapshotId, snapshotK.snapshotId].sort()
+    );
+    // Both pack artifacts stay referenced (E's full by E, D's delta by K).
+    expect(deleted).toHaveLength(0);
+    const manifest = await repository.getSnapshot(world.id, snapshotK.snapshotId);
+    expect(manifest?.packs[0]?.files).toHaveLength(2);
+
+    // A cold client can still reconstruct the pack: full artifact + delta tail.
+    const plan = await instance.downloadPlan(owner, world.id, { files: [], nonRegionPack: null, regionBundles: [] });
+    expect(plan.nonRegionPackDownload?.steps.map((step) => step.transferMode)).toEqual(["pack-full", "pack-delta"]);
+  });
 });

@@ -35,6 +35,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public final class SharedWorldGuestRuntimeWatcher {
     private static final long POLL_INTERVAL_MS = 5_000L;
+    /** Departure detection may lag by at most this much under server throttling. */
+    private static final long MAX_SUGGESTED_POLL_INTERVAL_MS = 60_000L;
     private static final Logger LOGGER = LoggerFactory.getLogger(SharedWorldGuestRuntimeWatcher.class);
 
     private final RuntimeStatusBackend backend;
@@ -44,6 +46,7 @@ public final class SharedWorldGuestRuntimeWatcher {
     private final AtomicBoolean inFlight = new AtomicBoolean();
     private volatile String activeWorldId;
     private volatile long lastPollAt;
+    private volatile long pollIntervalMs = POLL_INTERVAL_MS;
     private volatile boolean departed;
 
     public SharedWorldGuestRuntimeWatcher(SharedWorldApiClient apiClient) {
@@ -90,7 +93,8 @@ public final class SharedWorldGuestRuntimeWatcher {
         if (worldChanged) {
             this.activeWorldId = session.worldId();
             this.departed = false;
-        } else if (this.departed || now - this.lastPollAt < POLL_INTERVAL_MS) {
+            this.pollIntervalMs = POLL_INTERVAL_MS;
+        } else if (this.departed || now - this.lastPollAt < this.pollIntervalMs) {
             return;
         }
         if (!this.inFlight.compareAndSet(false, true)) {
@@ -107,6 +111,10 @@ public final class SharedWorldGuestRuntimeWatcher {
                 return;
             }
             this.inFlight.set(false);
+            if (status != null) {
+                this.pollIntervalMs = link.sharedworld.util.ServerPacing.clampSuggestedInterval(
+                        status.suggestedPollIntervalMs(), POLL_INTERVAL_MS, MAX_SUGGESTED_POLL_INTERVAL_MS);
+            }
             this.mainThreadExecutor.execute(() -> handleObservation(session, status));
         });
     }
@@ -144,6 +152,7 @@ public final class SharedWorldGuestRuntimeWatcher {
         if (worldId == null || worldId.equals(this.activeWorldId)) {
             this.activeWorldId = null;
             this.lastPollAt = 0L;
+            this.pollIntervalMs = POLL_INTERVAL_MS;
             this.departed = false;
         }
     }

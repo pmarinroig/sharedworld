@@ -401,8 +401,26 @@ public final class SharedWorldModels {
             UploadPlanEntryDto[] uploads,
             UploadPackPlanDto nonRegionPackUpload,
             UploadPackPlanDto[] regionBundleUploads,
-            SyncPolicyDto syncPolicy
+            SyncPolicyDto syncPolicy,
+            /**
+             * Pack ids of the latest snapshot; null on backends that predate the
+             * no-change autosave skip. Non-null lets the client prove "nothing
+             * changed" (every pack alreadyPresent AND this set matches the local
+             * pack ids) and skip the finalize call entirely.
+             */
+            String[] latestPackIds
     ) {
+        /** Pre-skip arity: older stubs/backends without latestPackIds. */
+        public UploadPlanDto(
+                String worldId,
+                String snapshotBaseId,
+                UploadPlanEntryDto[] uploads,
+                UploadPackPlanDto nonRegionPackUpload,
+                UploadPackPlanDto[] regionBundleUploads,
+                SyncPolicyDto syncPolicy
+        ) {
+            this(worldId, snapshotBaseId, uploads, nonRegionPackUpload, regionBundleUploads, syncPolicy, null);
+        }
     }
 
     public record IconUploadPrepareResponseDto(
@@ -485,8 +503,47 @@ public final class SharedWorldModels {
             String revokedAt,
             StartupProgressDto startupProgress,
             UncleanShutdownWarningDto uncleanShutdownWarning,
-            String hostMinecraftVersion
+            String hostMinecraftVersion,
+            Long suggestedPollIntervalMs
     ) {
+        /** Pre-pacing arity: servers without pacing suggestions leave the field null. */
+        public WorldRuntimeStatusDto(
+                String worldId,
+                String phase,
+                long runtimeEpoch,
+                String hostUuid,
+                String hostPlayerName,
+                String candidateUuid,
+                String candidatePlayerName,
+                String joinTarget,
+                String startupDeadlineAt,
+                String runtimeTokenIssuedAt,
+                String lastProgressAt,
+                String revokedAt,
+                StartupProgressDto startupProgress,
+                UncleanShutdownWarningDto uncleanShutdownWarning,
+                String hostMinecraftVersion
+        ) {
+            this(
+                    worldId,
+                    phase,
+                    runtimeEpoch,
+                    hostUuid,
+                    hostPlayerName,
+                    candidateUuid,
+                    candidatePlayerName,
+                    joinTarget,
+                    startupDeadlineAt,
+                    runtimeTokenIssuedAt,
+                    lastProgressAt,
+                    revokedAt,
+                    startupProgress,
+                    uncleanShutdownWarning,
+                    hostMinecraftVersion,
+                    null
+            );
+        }
+
         public WorldRuntimeStatusDto(
                 String worldId,
                 String phase,
@@ -596,8 +653,37 @@ public final class SharedWorldModels {
             String hostMinecraftVersion,
             HostHeartbeatMembershipDto[] memberships,
             WorldSettingsDto settings,
-            Long settingsRevision
+            Long settingsRevision,
+            Long suggestedHeartbeatIntervalMs,
+            Long suggestedAutosaveIntervalMs
     ) {
+        /** Pre-pacing arity: servers without pacing suggestions leave both fields null. */
+        public HostHeartbeatResponseDto(
+                String worldId,
+                String phase,
+                long runtimeEpoch,
+                String hostUuid,
+                String hostPlayerName,
+                String candidateUuid,
+                String candidatePlayerName,
+                String joinTarget,
+                String startupDeadlineAt,
+                String runtimeTokenIssuedAt,
+                String lastProgressAt,
+                String revokedAt,
+                StartupProgressDto startupProgress,
+                UncleanShutdownWarningDto uncleanShutdownWarning,
+                String hostMinecraftVersion,
+                HostHeartbeatMembershipDto[] memberships,
+                WorldSettingsDto settings,
+                Long settingsRevision
+        ) {
+            this(worldId, phase, runtimeEpoch, hostUuid, hostPlayerName, candidateUuid, candidatePlayerName,
+                    joinTarget, startupDeadlineAt, runtimeTokenIssuedAt, lastProgressAt, revokedAt,
+                    startupProgress, uncleanShutdownWarning, hostMinecraftVersion, memberships,
+                    settings, settingsRevision, null, null);
+        }
+
         /** Pre-settings arity: callers without settings knowledge leave both fields null. */
         public HostHeartbeatResponseDto(
                 String worldId,
@@ -662,5 +748,18 @@ public final class SharedWorldModels {
     }
 
     public record ErrorDto(String error, String message, int status) {
+    }
+
+    /**
+     * Presence heartbeat response. Only the pacing suggestion is consumed —
+     * older clients never parsed this body at all, so every field is additive.
+     */
+    public record PresenceHeartbeatResponseDto(
+            String worldId,
+            boolean present,
+            String updatedAt,
+            String expiresAt,
+            Long suggestedIntervalMs
+    ) {
     }
 }

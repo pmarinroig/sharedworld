@@ -320,9 +320,9 @@ public final class SharedWorldApiClient {
         request("POST", "/worlds/" + worldId + "/host-startup-progress", body, Object.class, true);
     }
 
-    public void setPresence(String worldId, boolean present, long guestSessionEpoch, long presenceSequence) throws IOException, InterruptedException {
+    public SharedWorldModels.PresenceHeartbeatResponseDto setPresence(String worldId, boolean present, long guestSessionEpoch, long presenceSequence) throws IOException, InterruptedException {
         ensureSession();
-        request(
+        return request(
                 "POST",
                 "/worlds/" + worldId + "/presence",
                 Map.of(
@@ -330,7 +330,7 @@ public final class SharedWorldApiClient {
                         "guestSessionEpoch", guestSessionEpoch,
                         "presenceSequence", presenceSequence
                 ),
-                null,
+                SharedWorldModels.PresenceHeartbeatResponseDto.class,
                 true
         );
     }

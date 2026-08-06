@@ -162,6 +162,91 @@ final class WorldSyncCoordinatorUploadTest {
         }
     }
 
+    @Test
+    void unchangedSnapshotSkipsFinalizeAndConvergesBaselines() throws Exception {
+        Path worldDirectory = writeWorldDirectory(Map.of("data/foo.dat", repeated('A', 4096)));
+        ManagedWorldStore worldStore = new ManagedWorldStore(this.tempDir.resolve("managed-skip"));
+        BuiltPack currentPack = buildPackFromWorld(worldDirectory);
+
+        try (SyncTestHttpServer server = new SyncTestHttpServer()) {
+            // Backend proof of "nothing changed": the only local pack is already
+            // present and the latest snapshot holds exactly that pack id. No
+            // finalize manifest is stubbed, so reaching finalize would fail loudly.
+            server.setUploadPlan(new UploadPlanDto(
+                    WORLD_ID,
+                    "base-snapshot",
+                    new link.sharedworld.api.SharedWorldModels.UploadPlanEntryDto[0],
+                    new UploadPackPlanDto(
+                            currentPack.descriptor(),
+                            true,
+                            "packs/existing.pack",
+                            "pack-full",
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null
+                    ),
+                    new UploadPackPlanDto[0],
+                    SyncTestHttpServer.syncPolicy(),
+                    new String[]{SharedWorldPack.PACK_ID}
+            ));
+
+            WorldSyncCoordinator coordinator = new WorldSyncCoordinator(server.apiClient(), worldStore);
+            SnapshotManifestDto manifest = coordinator.uploadSnapshot(WORLD_ID, worldDirectory, HOST_UUID, 7L, "token-7");
+
+            assertNull(manifest);
+            assertNull(server.lastFinalizeSnapshotBody());
+            // Baselines still converge on the latest snapshot for the next delta plan.
+            assertEquals("base-snapshot", worldStore.packBaselineSnapshotId(WORLD_ID));
+        }
+    }
+
+    @Test
+    void removedPackStillFinalizesEvenWhenEverythingElseIsUnchanged() throws Exception {
+        Path worldDirectory = writeWorldDirectory(Map.of("data/foo.dat", repeated('A', 4096)));
+        ManagedWorldStore worldStore = new ManagedWorldStore(this.tempDir.resolve("managed-removed-pack"));
+        BuiltPack currentPack = buildPackFromWorld(worldDirectory);
+
+        try (SyncTestHttpServer server = new SyncTestHttpServer()) {
+            // The latest snapshot also holds a region bundle that no longer
+            // exists locally: the pack id sets differ, so the manifest must be
+            // republished to record the removal.
+            server.setUploadPlan(new UploadPlanDto(
+                    WORLD_ID,
+                    "base-snapshot",
+                    new link.sharedworld.api.SharedWorldModels.UploadPlanEntryDto[0],
+                    new UploadPackPlanDto(
+                            currentPack.descriptor(),
+                            true,
+                            "packs/existing.pack",
+                            "pack-full",
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null
+                    ),
+                    new UploadPackPlanDto[0],
+                    SyncTestHttpServer.syncPolicy(),
+                    new String[]{SharedWorldPack.PACK_ID, "region-bundle:region:0:0"}
+            ));
+            server.setFinalizeManifest(manifest("snapshot-after-removal"));
+
+            WorldSyncCoordinator coordinator = new WorldSyncCoordinator(server.apiClient(), worldStore);
+            SnapshotManifestDto manifest = coordinator.uploadSnapshot(WORLD_ID, worldDirectory, HOST_UUID, 7L, "token-7");
+
+            assertNotNull(manifest);
+            assertNotNull(server.lastFinalizeSnapshotBody());
+        }
+    }
+
     private BuiltPack buildPackFromWorld(Path worldDirectory) throws Exception {
         Path packFile = Files.createTempFile(this.tempDir, "non-region-", ".pack");
         LocalPackDescriptorDto descriptor = SharedWorldPack.buildPack(

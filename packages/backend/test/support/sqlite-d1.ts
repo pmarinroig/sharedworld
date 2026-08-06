@@ -10,13 +10,16 @@ import { D1SharedWorldRepository } from "../../src/d1-repository.ts";
  * in-memory repository implementation: what the tests exercise is exactly what
  * production runs.
  */
-export function createSqliteRepository(): D1SharedWorldRepository & { close(): void } {
+export function createSqliteRepository(): D1SharedWorldRepository & { close(): void; raw: Database } {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON;");
   db.exec(readFileSync(new URL("../../src/schema.sql", import.meta.url), "utf8"));
   seedKnownTestPlayers(db);
-  const repository = new D1SharedWorldRepository(new SqliteD1Database(db)) as D1SharedWorldRepository & { close(): void };
+  const repository = new D1SharedWorldRepository(new SqliteD1Database(db)) as D1SharedWorldRepository & { close(): void; raw: Database };
   repository.close = () => db.close(false);
+  // Raw handle so tests can assert physical row counts (e.g. that inherited
+  // snapshot packs really wrote zero member rows), not just wire-level shapes.
+  repository.raw = db;
   return repository;
 }
 

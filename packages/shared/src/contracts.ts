@@ -263,6 +263,13 @@ export interface WorldRuntimeStatus {
   startupProgress: HostStartupProgress | null;
   uncleanShutdownWarning: UncleanShutdownWarning | null;
   hostMinecraftVersion: string | null;
+  /**
+   * Server-suggested guest runtime poll interval (remote throttle lever).
+   * Optional and additive: absent unless the deployment sets
+   * SUGGESTED_RUNTIME_POLL_INTERVAL_MS. Clients clamp to their own safe
+   * bounds and never poll faster than their built-in default.
+   */
+  suggestedPollIntervalMs?: number;
 }
 
 export interface HostHeartbeatMembership {
@@ -281,6 +288,13 @@ export interface HostHeartbeatResponse extends WorldRuntimeStatus {
   memberships: HostHeartbeatMembership[];
   settings: WorldSettings | null;
   settingsRevision: number;
+  /**
+   * Server-suggested host cadences (remote throttle levers). Optional and
+   * additive: absent unless the deployment sets the matching env vars.
+   * Clients clamp to safe bounds below their liveness timeouts.
+   */
+  suggestedHeartbeatIntervalMs?: number;
+  suggestedAutosaveIntervalMs?: number;
 }
 
 export interface EnterSessionRequest {
@@ -335,6 +349,19 @@ export interface PresenceHeartbeatRequest {
   present: boolean;
   guestSessionEpoch: number;
   presenceSequence: number;
+}
+
+/**
+ * Presence heartbeat response. Older mod clients never parse this body, so
+ * every field here is additive by construction.
+ */
+export interface PresenceHeartbeatResponse {
+  worldId: string;
+  present: boolean;
+  updatedAt: string;
+  expiresAt: string;
+  /** Server-suggested presence heartbeat interval (remote throttle lever). */
+  suggestedIntervalMs?: number;
 }
 
 export interface ReleaseHostRequest {
@@ -486,6 +513,13 @@ export interface UploadPlan {
   nonRegionPackUpload?: UploadPackPlan | null;
   regionBundleUploads?: UploadPackPlan[];
   syncPolicy: SyncPolicy;
+  /**
+   * Pack ids of the latest snapshot. Lets a client prove "nothing changed"
+   * (every pack alreadyPresent AND the pack id set matches) and skip the
+   * finalize call entirely; without this a removed local pack would be
+   * indistinguishable from no change. Additive — old clients ignore it.
+   */
+  latestPackIds?: string[];
 }
 
 export interface FinalizeSnapshotRequest {

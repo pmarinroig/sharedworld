@@ -29,4 +29,9 @@ GOOGLE_OAUTH_REDIRECT_URI = "https://sharedworld.farigola777.workers.dev/storage
 SESSION_TTL_HOURS = "168"
 SIGNED_URL_TTL_SECONDS = "900"
 
+# Growth valve: hard ceiling on total non-deleted worlds. Generous on purpose
+# (beta has a handful); exists so unexpected virality queues politely instead
+# of becoming an unbounded D1/Workers bill. Raise via config-only deploy.
+MAX_ACTIVE_WORLDS = "1000"
+
 MOJANG_HAS_JOINED_ENDPOINT = "https://sessionserver.mojang.com/session/minecraft/hasJoined"

@@ -96,6 +96,47 @@ describe("SharedWorldService world management", () => {
     expect(ok.world.name).toBe("x".repeat(128));
   });
 
+  test("MAX_ACTIVE_WORLDS refuses creation at capacity and counts only live worlds", async () => {
+    const repository = createSqliteRepository();
+    const { signer } = createBlobSigner();
+    const instance = createTestService(repository, authVerifier, signer, { MAX_ACTIVE_WORLDS: "2" });
+    await repository.upsertUser({ playerUuid: "player-a", playerName: "Alpha", createdAt: new Date().toISOString() });
+    await repository.upsertUser({ playerUuid: "player-b", playerName: "Bravo", createdAt: new Date().toISOString() });
+    const alpha = { playerUuid: "player-a", playerName: "Alpha" };
+    const bravo = { playerUuid: "player-b", playerName: "Bravo" };
+
+    await instance.createWorld(alpha, { name: "World One" });
+    const second = await instance.createWorld(bravo, { name: "World Two" });
+
+    // At capacity the valve refuses BEFORE any row is written, with the
+    // player-facing message the create screen shows verbatim.
+    await expect(instance.createWorld(alpha, { name: "World Three" })).rejects.toMatchObject({
+      status: 503,
+      code: "world_capacity_reached"
+    });
+    expect(await repository.countActiveWorlds()).toBe(2);
+
+    // Deleted worlds free capacity: the count tracks live worlds only.
+    await instance.deleteWorld(bravo, second.world.id);
+    const replacement = await instance.createWorld(alpha, { name: "World Three" });
+    expect(replacement.world.name).toBe("World Three");
+  });
+
+  test("world creation is unlimited when MAX_ACTIVE_WORLDS is unset or invalid", async () => {
+    const repository = createSqliteRepository();
+    const { signer } = createBlobSigner();
+    await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
+    const ctx = { playerUuid: "player-owner", playerName: "Owner" };
+
+    const unset = createTestService(repository, authVerifier, signer, {});
+    await unset.createWorld(ctx, { name: "Unset Cap" });
+
+    const invalid = createTestService(repository, authVerifier, signer, { MAX_ACTIVE_WORLDS: "not-a-number" });
+    await invalid.createWorld(ctx, { name: "Invalid Cap" });
+
+    expect(await repository.countActiveWorlds()).toBe(2);
+  });
+
   test("deleting the last member purges world snapshots and orphaned blobs", async () => {
     const repository = createSqliteRepository();
     const { signer, deleted } = createBlobSigner();

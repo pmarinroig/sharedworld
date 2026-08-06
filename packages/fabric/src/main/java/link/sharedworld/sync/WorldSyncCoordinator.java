@@ -101,6 +101,13 @@ public final class WorldSyncCoordinator {
         return this.uploadSnapshot(worldId, worldDirectory, hostPlayerUuid, runtimeEpoch, hostToken, listener);
     }
 
+    /**
+     * Uploads changed artifacts and finalizes a new snapshot.
+     *
+     * @return the finalized manifest, or {@code null} when the backend proved
+     *         nothing changed since the latest snapshot and the finalize was
+     *         skipped (the latest snapshot remains valid).
+     */
     public SnapshotManifestDto uploadSnapshot(String worldId, Path worldDirectory, String hostPlayerUuid, long runtimeEpoch, String hostToken, WorldSyncProgressListener progressListener) throws IOException, InterruptedException {
         WorldSyncSupport.report(progressListener, STAGE_PREPARING_SNAPSHOT, 0.02D, null, null, "Scanning world files");
         long scanStartedAt = System.nanoTime();
@@ -134,6 +141,22 @@ public final class WorldSyncCoordinator {
             SyncPolicy resolvedPolicy = SyncPolicy.from(plan.syncPolicy());
             this.activeSyncPolicy = resolvedPolicy;
             Map<String, WorldSyncSupport.LocalArtifact> regionBundlesById = regionBundles.stream().collect(Collectors.toMap(artifact -> artifact.descriptor().packId(), artifact -> artifact));
+            if (canSkipUnchangedSnapshot(plan, regionBundlesById.keySet())) {
+                // Nothing changed since the latest snapshot: skip the finalize
+                // entirely instead of publishing an identical backup (each one
+                // costs backend rows and clutters the backup list). Baselines
+                // still converge on the latest snapshot so the next delta plan
+                // starts from the right ancestor even if a marker was stale.
+                Map<String, Path> unchangedBundleBaselines = new HashMap<>();
+                for (WorldSyncSupport.LocalArtifact bundle : regionBundles) {
+                    unchangedBundleBaselines.put(bundle.descriptor().packId(), bundle.artifactPath());
+                }
+                this.worldStore.replaceRegionBaselines(worldId, unchangedBundleBaselines, plan.snapshotBaseId());
+                this.worldStore.refreshPackBaseline(worldId, packFile, plan.snapshotBaseId());
+                WorldSyncSupport.report(progressListener, STAGE_FINALIZING_SNAPSHOT, 1.0D, null, null, "No changes; snapshot up to date");
+                LOGGER.info("SharedWorld snapshot skipped for {}: no changes since {}", worldId, plan.snapshotBaseId());
+                return null;
+            }
             preparedUploads = prepareUploads(worldId, plan, packFile, localPack, regionBundlesById, resolvedPolicy, progressListener);
             Map<String, PreparedUpload> preparedByPath = preparedUploads.stream()
                     .collect(Collectors.toMap(PreparedUpload::relativePath, prepared -> prepared));
@@ -190,6 +213,33 @@ public final class WorldSyncCoordinator {
                 Files.deleteIfExists(bundle.artifactPath());
             }
         }
+    }
+
+    /**
+     * True only when the backend proved nothing changed: it is new enough to
+     * report the latest snapshot's pack ids, every local pack is already
+     * present, and the pack id sets match exactly (a removed local pack must
+     * still finalize so the manifest records the removal).
+     */
+    private static boolean canSkipUnchangedSnapshot(UploadPlanDto plan, java.util.Set<String> regionBundleIds) {
+        if (plan.latestPackIds() == null || plan.snapshotBaseId() == null) {
+            return false;
+        }
+        if (plan.nonRegionPackUpload() != null && !plan.nonRegionPackUpload().alreadyPresent()) {
+            return false;
+        }
+        if (plan.regionBundleUploads() != null) {
+            for (UploadPackPlanDto upload : plan.regionBundleUploads()) {
+                if (!upload.alreadyPresent()) {
+                    return false;
+                }
+            }
+        }
+        java.util.Set<String> localPackIds = new java.util.HashSet<>(regionBundleIds);
+        if (plan.nonRegionPackUpload() != null) {
+            localPackIds.add(plan.nonRegionPackUpload().pack().packId());
+        }
+        return localPackIds.equals(java.util.Set.of(plan.latestPackIds()));
     }
 
     private Path ensureWorkingCopy(String worldId, String hostPlayerUuid, boolean materializeHostPlayer, WorldSyncProgressListener progressListener) throws IOException, InterruptedException {

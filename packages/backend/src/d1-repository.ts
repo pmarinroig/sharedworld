@@ -169,6 +169,13 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     return row != null;
   }
 
+  async countActiveWorlds(): Promise<number> {
+    const row = await this.first<Row>(
+      "SELECT COUNT(*) AS count FROM worlds WHERE deleted_at IS NULL"
+    );
+    return Number(row?.count ?? 0);
+  }
+
   async createWorld(
     ctx: RequestContext,
     name: string,
@@ -1161,14 +1168,56 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
        WHERE s.world_id = ? AND sp.base_snapshot_id IS NOT NULL`,
       worldId
     );
+    // Member-donor pointers (members_snapshot_id) are deliberately NOT edges
+    // here: deleteSnapshots promotes inherited member rows to a surviving
+    // heir, so donors never need to be kept alive for retention or deletion.
     return [...fileRows, ...packRows].map((row) => ({
       snapshotId: String(row.snapshot_id),
       baseSnapshotId: String(row.base_snapshot_id)
     }));
   }
 
+  /**
+   * Pack rows of a base snapshot, keyed by pack id, for member-row
+   * inheritance during finalize. `membersSnapshotId` is the snapshot that
+   * physically holds the pack's member rows (NULL = the base itself).
+   */
+  private async basePackRowsForInheritance(worldId: string, baseSnapshotId: string): Promise<Map<string, {
+    hash: string;
+    size: number;
+    storageKey: string;
+    transferMode: string;
+    baseSnapshotId: string | null;
+    baseHash: string | null;
+    chainDepth: number | null;
+    membersSnapshotId: string | null;
+  }>> {
+    const rows = await this.all<Row>(
+      `SELECT sp.pack_id, sp.hash, sp.size, sp.storage_key, sp.transfer_mode,
+              sp.base_snapshot_id, sp.base_hash, sp.chain_depth, sp.members_snapshot_id
+       FROM snapshot_packs sp
+       JOIN snapshots s ON s.id = sp.snapshot_id
+       WHERE sp.snapshot_id = ? AND s.world_id = ?`,
+      baseSnapshotId,
+      worldId
+    );
+    return new Map(rows.map((row) => [String(row.pack_id), {
+      hash: String(row.hash),
+      size: Number(row.size),
+      storageKey: String(row.storage_key),
+      transferMode: String(row.transfer_mode),
+      baseSnapshotId: asNullableString(row.base_snapshot_id),
+      baseHash: asNullableString(row.base_hash),
+      chainDepth: row.chain_depth == null ? null : Number(row.chain_depth),
+      membersSnapshotId: asNullableString(row.members_snapshot_id)
+    }]));
+  }
+
   async finalizeSnapshot(worldId: string, ctx: RequestContext, request: FinalizeSnapshotRequest, now: Date): Promise<SnapshotManifest> {
     const snapshotId = `snapshot_${crypto.randomUUID().replace(/-/g, "")}`;
+    const basePacks = request.baseSnapshotId != null
+      ? await this.basePackRowsForInheritance(worldId, request.baseSnapshotId)
+      : null;
     // One transactional batch: a failure mid-write must not leave a partial
     // snapshot behind, because a partial row would become the world's
     // "latest" manifest.
@@ -1206,10 +1255,26 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       ));
     }
     for (const pack of request.packs ?? []) {
+      // A pack identical to the base snapshot's pack inherits that pack's
+      // member rows instead of re-inserting them, flattened to the snapshot
+      // that physically holds them (one hop, never a chain). Equality is
+      // judged on the same fields the pack row stores — the same trust model
+      // as materialized inserts, which never verify member lists either.
+      const base = basePacks?.get(pack.packId);
+      const inheritFrom = base != null
+        && pack.hash === base.hash
+        && pack.size === base.size
+        && pack.storageKey === base.storageKey
+        && pack.transferMode === base.transferMode
+        && (pack.baseSnapshotId ?? null) === base.baseSnapshotId
+        && (pack.baseHash ?? null) === base.baseHash
+        && (pack.chainDepth ?? null) === base.chainDepth
+        ? (base.membersSnapshotId ?? request.baseSnapshotId ?? null)
+        : null;
       statements.push(this.prepared(
         `INSERT INTO snapshot_packs (
-          snapshot_id, pack_id, hash, size, storage_key, transfer_mode, base_snapshot_id, base_hash, chain_depth
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          snapshot_id, pack_id, hash, size, storage_key, transfer_mode, base_snapshot_id, base_hash, chain_depth, members_snapshot_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         snapshotId,
         pack.packId,
         pack.hash,
@@ -1218,8 +1283,12 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
         pack.transferMode,
         pack.baseSnapshotId ?? null,
         pack.baseHash ?? null,
-        pack.chainDepth ?? null
+        pack.chainDepth ?? null,
+        inheritFrom
       ));
+      if (inheritFrom != null) {
+        continue;
+      }
       for (const file of pack.files) {
         statements.push(this.prepared(
           fileInsert,
@@ -1281,22 +1350,76 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     );
     const candidateStorageKeys = [...candidateRows, ...packCandidateRows].map((row) => String(row.storage_key));
 
-    await this.run(
+    // Member-row promotion: surviving packs that inherit their member rows
+    // from a doomed snapshot get those rows copied to the OLDEST surviving
+    // heir before the donor is deleted; every other heir is repointed at the
+    // new physical holder. This keeps every surviving manifest loadable
+    // without retention ever having to keep donor snapshots alive.
+    const referrerRows = await this.all<Row>(
+      `SELECT sp.snapshot_id, sp.pack_id, sp.members_snapshot_id
+       FROM snapshot_packs sp
+       JOIN snapshots s ON s.id = sp.snapshot_id
+       WHERE s.world_id = ?
+         AND sp.members_snapshot_id IN (${deletePlaceholders})
+         AND sp.snapshot_id NOT IN (${deletePlaceholders})
+       ORDER BY s.created_at ASC, s.id ASC`,
+      worldId,
+      ...deletedSnapshotIds,
+      ...deletedSnapshotIds
+    );
+    const statements: ReturnType<D1Database["prepare"]>[] = [];
+    const promotionTargets = new Set<string>();
+    for (const row of referrerRows) {
+      const donorId = String(row.members_snapshot_id);
+      const packId = String(row.pack_id);
+      const key = `${donorId} ${packId}`;
+      if (promotionTargets.has(key)) {
+        continue;
+      }
+      promotionTargets.add(key);
+      const targetId = String(row.snapshot_id);
+      statements.push(this.prepared(
+        `INSERT INTO snapshot_files (
+           snapshot_id, path, hash, size, compressed_size, pack_id, storage_key, content_type, transfer_mode, base_snapshot_id, base_hash, chain_depth
+         )
+         SELECT ?, path, hash, size, compressed_size, pack_id, storage_key, content_type, transfer_mode, base_snapshot_id, base_hash, chain_depth
+         FROM snapshot_files
+         WHERE snapshot_id = ? AND pack_id = ?`,
+        targetId,
+        donorId,
+        packId
+      ));
+      statements.push(this.prepared(
+        "UPDATE snapshot_packs SET members_snapshot_id = ? WHERE pack_id = ? AND members_snapshot_id = ?",
+        targetId,
+        packId,
+        donorId
+      ));
+      statements.push(this.prepared(
+        "UPDATE snapshot_packs SET members_snapshot_id = NULL WHERE snapshot_id = ? AND pack_id = ?",
+        targetId,
+        packId
+      ));
+    }
+    statements.push(this.prepared(
       `DELETE FROM snapshot_files
        WHERE snapshot_id IN (${deletePlaceholders})`,
       ...deletedSnapshotIds
-    );
-    await this.run(
+    ));
+    statements.push(this.prepared(
       `DELETE FROM snapshot_packs
        WHERE snapshot_id IN (${deletePlaceholders})`,
       ...deletedSnapshotIds
-    );
-    await this.run(
+    ));
+    statements.push(this.prepared(
       `DELETE FROM snapshots
        WHERE world_id = ? AND id IN (${deletePlaceholders})`,
       worldId,
       ...deletedSnapshotIds
-    );
+    ));
+    // One transactional batch: promotion and deletion land together, so a
+    // failure can never leave an heir pointing at a vanished donor.
+    await this.batch(statements);
 
     let unreferencedStorageKeys: string[] = [];
     if (candidateStorageKeys.length > 0) {
@@ -1411,7 +1534,7 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       snapshotId
     );
     const packRows = await this.all<Row>(
-      `SELECT pack_id, hash, size, storage_key, transfer_mode, base_snapshot_id, base_hash, chain_depth
+      `SELECT pack_id, hash, size, storage_key, transfer_mode, base_snapshot_id, base_hash, chain_depth, members_snapshot_id
        FROM snapshot_packs
        WHERE snapshot_id = ?
        ORDER BY pack_id ASC`,
@@ -1434,29 +1557,42 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
         baseHash: asNullableString(row.base_hash),
         chainDepth: row.chain_depth == null ? null : Number(row.chain_depth)
       })),
-      packs: await Promise.all(packRows.map(async (row) => ({
-        packId: String(row.pack_id),
-        hash: String(row.hash),
-        size: Number(row.size),
-        storageKey: String(row.storage_key),
-        transferMode: String(row.transfer_mode) as FileTransferMode,
-        baseSnapshotId: asNullableString(row.base_snapshot_id),
-        baseHash: asNullableString(row.base_hash),
-        chainDepth: row.chain_depth == null ? null : Number(row.chain_depth),
-        files: (await this.all<Row>(
+      packs: await Promise.all(packRows.map(async (row) => {
+        // Inherited packs resolve member rows from the donor snapshot that
+        // physically holds them (members_snapshot_id, always one hop).
+        const membersSnapshotId = asNullableString(row.members_snapshot_id) ?? snapshotId;
+        const memberRows = await this.all<Row>(
           `SELECT path, hash, size, content_type
            FROM snapshot_files
            WHERE snapshot_id = ? AND pack_id = ?
            ORDER BY path ASC`,
-          snapshotId,
+          membersSnapshotId,
           String(row.pack_id)
-        )).map((fileRow) => ({
-          path: String(fileRow.path),
-          hash: String(fileRow.hash),
-          size: Number(fileRow.size),
-          contentType: String(fileRow.content_type)
-        }))
-      })))
+        );
+        if (memberRows.length === 0 && membersSnapshotId !== snapshotId) {
+          console.warn("SharedWorld snapshot pack inherited zero member rows — donor missing?", {
+            snapshotId,
+            packId: String(row.pack_id),
+            membersSnapshotId
+          });
+        }
+        return {
+          packId: String(row.pack_id),
+          hash: String(row.hash),
+          size: Number(row.size),
+          storageKey: String(row.storage_key),
+          transferMode: String(row.transfer_mode) as FileTransferMode,
+          baseSnapshotId: asNullableString(row.base_snapshot_id),
+          baseHash: asNullableString(row.base_hash),
+          chainDepth: row.chain_depth == null ? null : Number(row.chain_depth),
+          files: memberRows.map((fileRow) => ({
+            path: String(fileRow.path),
+            hash: String(fileRow.hash),
+            size: Number(fileRow.size),
+            contentType: String(fileRow.content_type)
+          }))
+        };
+      }))
     };
   }
 

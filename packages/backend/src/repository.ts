@@ -116,6 +116,7 @@ export interface SessionRepository {
 export interface WorldRepository {
   listWorldsForPlayer(playerUuid: string): Promise<WorldSummary[]>;
   hasActiveWorld(worldId: string): Promise<boolean>;
+  countActiveWorlds(): Promise<number>;
   createWorld(
     ctx: RequestContext,
     name: string,
