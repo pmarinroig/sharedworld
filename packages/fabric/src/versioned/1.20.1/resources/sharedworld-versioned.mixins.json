@@ -5,6 +5,7 @@
   "client": [
     "ChatComponentMixin",
     "ChunkStorageWorkerAccessor",
+    "DisconnectedScreenReasonAccessor",
     "EntityStorageAccessor",
     "MinecraftDisconnectMixin",
     "MinecraftServerHostPermissionMixin",

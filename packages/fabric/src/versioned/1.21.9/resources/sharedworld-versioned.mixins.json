@@ -6,6 +6,7 @@
     "ChatComponentMixin",
     "ChunkStorageWorkerAccessor",
     "DimensionDataStorageAccessor",
+    "DisconnectedScreenReasonAccessor",
     "EntityStorageAccessor",
     "MinecraftDisconnectMixin",
     "MinecraftServerHostPermissionMixin",

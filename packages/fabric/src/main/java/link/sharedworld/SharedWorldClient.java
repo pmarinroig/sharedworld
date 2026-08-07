@@ -217,6 +217,17 @@ public final class SharedWorldClient implements ClientModInitializer {
         return sessionCoordinator;
     }
 
+    /**
+     * A kick/ban disconnect must not auto-rejoin. Covers both orderings of
+     * screen-init vs the disconnect event: flag the still-active session so
+     * the event never arms recovery, drop any already-armed pending session,
+     * and clear the persisted record an already-run event may have written.
+     */
+    public static void abandonGuestRecoveryAfterDeliberateRemoval() {
+        PLAY_SESSION_TRACKER.markUserInitiatedDisconnect();
+        sessionCoordinator.clearPersistedGuestRecovery();
+    }
+
     public static SharedWorldCustomIconStore customIconStore() {
         return CUSTOM_ICON_STORE;
     }

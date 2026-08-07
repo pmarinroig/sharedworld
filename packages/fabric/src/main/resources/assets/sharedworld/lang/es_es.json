@@ -266,7 +266,7 @@
   "sharedworld.command.cannot_target_owner": "El propietario siempre tiene permisos de comandos.",
   "sharedworld.command.cannot_target_self": "No puedes eliminarte de tu propio mundo compartido.",
   "sharedworld.command.ban.cannot_target_owner": "El propietario del mundo no puede ser expulsado de su propio mundo compartido.",
-  "sharedworld.command.whitelist.managed": "Quién puede entrar ya lo controlan los miembros de este mundo compartido. Invita o elimina miembros en la pantalla de SharedWorld.",
+  "sharedworld.command.whitelist.managed": "Quién puede entrar ya lo controlan los miembros de este mundo compartido. Invita o elimina miembros en la pantalla de edición del mundo compartido.",
   "sharedworld.command.op.success": "%s ahora puede usar comandos.",
   "sharedworld.command.op.already": "%s ya puede usar comandos.",
   "sharedworld.command.deop.success": "%s ya no puede usar comandos.",

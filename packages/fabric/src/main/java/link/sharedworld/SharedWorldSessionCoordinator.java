@@ -420,6 +420,11 @@ public final class SharedWorldSessionCoordinator {
         return true;
     }
 
+    /** A kicked/banned guest must not resume; drop the persisted disconnect-recovery record. */
+    public void clearPersistedGuestRecovery() {
+        this.recoveryStore.clear();
+    }
+
     public boolean openRecoveryScreenIfPresent(Screen fallbackParent) {
         SharedWorldRecoveryStore.RecoveryRecord record = this.recoveryStore.load();
         if (record == null || isRecoverySuppressed(record)) {

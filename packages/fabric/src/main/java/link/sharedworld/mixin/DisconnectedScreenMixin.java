@@ -27,6 +27,14 @@ public abstract class DisconnectedScreenMixin {
             // record resumes through the menu auto-resume path instead.
             return;
         }
+        if (link.sharedworld.SharedWorldDisconnectReasonPolicy.isDeliberateRemoval(
+                link.sharedworld.versioned.DisconnectReasonCompat.disconnectReason((Screen) (Object) this))) {
+            // The server deliberately removed this guest (kick/ban); auto-rejoining
+            // would undo the removal on the spot. Abandon recovery everywhere it
+            // could restart and let the vanilla screen explain what happened.
+            SharedWorldClient.abandonGuestRecoveryAfterDeliberateRemoval();
+            return;
+        }
         Minecraft minecraft = Minecraft.getInstance();
         Screen fallbackParent = this.parent == null ? new JoinMultiplayerScreen(new TitleScreen()) : this.parent;
         if (!SharedWorldClient.sessionCoordinator().openRecoveryScreenIfPresent(fallbackParent)) {

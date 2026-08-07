@@ -5,6 +5,7 @@
   "client": [
     "ChatComponentMixin",
     "DimensionDataStorageAccessor",
+    "DisconnectedScreenReasonAccessor",
     "EntityStorageAccessor",
     "MinecraftDisconnectMixin",
     "MinecraftServerHostPermissionMixin",
