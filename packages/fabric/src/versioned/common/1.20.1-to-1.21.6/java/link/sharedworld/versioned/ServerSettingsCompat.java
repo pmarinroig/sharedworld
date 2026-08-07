@@ -36,4 +36,16 @@ public final class ServerSettingsCompat {
             case PVP -> server.setPvpAllowed(value);
         }
     }
+
+    /** Read the current value of a managed rule from the running server (server thread). */
+    public static boolean getGameRule(MinecraftServer server, SharedWorldGameRule rule) {
+        return switch (rule) {
+            case KEEP_INVENTORY -> server.getGameRules().getRule(GameRules.RULE_KEEPINVENTORY).get();
+            case MOB_GRIEFING -> server.getGameRules().getRule(GameRules.RULE_MOBGRIEFING).get();
+            case DAYLIGHT_CYCLE -> server.getGameRules().getRule(GameRules.RULE_DAYLIGHT).get();
+            case WEATHER_CYCLE -> server.getGameRules().getRule(GameRules.RULE_WEATHER_CYCLE).get();
+            // Mirrors the setter: pvp has no gamerule here, so read the server flag.
+            case PVP -> server.isPvpAllowed();
+        };
+    }
 }

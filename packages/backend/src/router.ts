@@ -33,7 +33,10 @@ export function createRouter(service: RouterService) {
       }
       throw new HttpError(404, "not_found", "Route not found.");
     } catch (error) {
-      return errorResponse(error);
+      return errorResponse(error, {
+        clientVersion: request.headers.get("x-sharedworld-version"),
+        route: `${request.method} ${new URL(request.url).pathname}`
+      });
     }
   };
 }

@@ -1,6 +1,8 @@
 import type {
   CreateWorldRequest,
   CreateWorldResult,
+  HostGameRulesReportRequest,
+  HostGameRulesReportResponse,
   StorageUsageSummary,
   UpdateWorldRequest,
   UpdateWorldSettingsRequest,
@@ -19,8 +21,11 @@ import { assignHostStarting } from "../runtime-protocol.ts";
 import type { StorageBinding } from "../storage.ts";
 import { signDownloadForWorld, type ServiceContext } from "./context.ts";
 import {
+  hostNotActiveError,
+  requireAuthorizedRuntime,
   requireMembership,
   requireOwner,
+  requireSessionAccess,
   requireWorldDetails,
   requireWorldStorageBinding
 } from "./runtime-access.ts";
@@ -141,6 +146,48 @@ export async function updateWorldSettings(
   }
   const updated = await requireWorldDetails(svc, worldId, ctx.playerUuid);
   return hydrateWorldDetails(svc, updated, ctx.requestOrigin);
+}
+
+/**
+ * Host-reported gamerule persistence: the active host pushes the managed
+ * server's current gamerule values so in-game /gamerule changes survive the
+ * session. Runtime-authorized (the host may not be the owner). Gamerules
+ * merge per key; difficulty and defaultGameMode are never touched here.
+ */
+export async function reportHostGameRules(
+  svc: ServiceContext,
+  ctx: RequestContext,
+  worldId: string,
+  request: HostGameRulesReportRequest,
+  now: Date
+): Promise<HostGameRulesReportResponse> {
+  await requireSessionAccess(svc, ctx, worldId, { allowRevokedHost: true });
+  if (request.runtimeEpoch == null || request.runtimeEpoch < 0 || request.hostToken == null) {
+    throw hostNotActiveError();
+  }
+  // host-finalizing is allowed so a shutdown flush can still land.
+  await requireAuthorizedRuntime(svc, ctx, worldId, now, request.runtimeEpoch, request.hostToken, [
+    "host-live",
+    "host-finalizing"
+  ]);
+  const gamerules = validateGameRules(request.gamerules);
+  // Merge-and-CAS: the owner's PUT bumps the revision blindly, so a report
+  // racing an owner save must re-read and merge against the fresh base
+  // instead of resurrecting stale difficulty/gameMode values.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const stored = await svc.repository.getWorldSettings(worldId);
+    if (!stored) {
+      throw new HttpError(404, "world_not_found", "This Shared World no longer exists.");
+    }
+    const merged: WorldSettings = {
+      ...(stored.settings ?? {}),
+      gamerules: { ...(stored.settings?.gamerules ?? {}), ...gamerules }
+    };
+    if (await svc.repository.updateWorldSettingsIfRevision(worldId, JSON.stringify(merged), stored.settingsRevision)) {
+      return { settings: merged, settingsRevision: stored.settingsRevision + 1 };
+    }
+  }
+  throw new HttpError(409, "settings_conflict", "World settings changed while saving the game rule update. Please try again.");
 }
 
 export async function deleteWorld(svc: ServiceContext, ctx: RequestContext, worldId: string, now: Date): Promise<void> {
@@ -268,19 +315,24 @@ function validateWorldSettings(raw: WorldSettings | undefined): WorldSettings {
     settings.defaultGameMode = raw.defaultGameMode;
   }
   if (raw.gamerules !== undefined) {
-    if (raw.gamerules == null || typeof raw.gamerules !== "object" || Array.isArray(raw.gamerules)) {
-      throw new HttpError(400, "invalid_world_settings", "World settings are missing or malformed.");
-    }
-    const gamerules: Partial<Record<WorldGameRule, boolean>> = {};
-    for (const [rule, value] of Object.entries(raw.gamerules)) {
-      if (!WORLD_GAME_RULES.includes(rule as WorldGameRule) || typeof value !== "boolean") {
-        throw new HttpError(400, "invalid_world_settings", `Unknown game rule "${rule}".`);
-      }
-      gamerules[rule as WorldGameRule] = value;
-    }
-    settings.gamerules = gamerules;
+    settings.gamerules = validateGameRules(raw.gamerules);
   }
   return settings;
+}
+
+/** Whitelist validation shared by the owner settings PUT and the host gamerule report. */
+function validateGameRules(raw: unknown): Partial<Record<WorldGameRule, boolean>> {
+  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new HttpError(400, "invalid_world_settings", "World settings are missing or malformed.");
+  }
+  const gamerules: Partial<Record<WorldGameRule, boolean>> = {};
+  for (const [rule, value] of Object.entries(raw)) {
+    if (!WORLD_GAME_RULES.includes(rule as WorldGameRule) || typeof value !== "boolean") {
+      throw new HttpError(400, "invalid_world_settings", `Unknown game rule "${rule}".`);
+    }
+    gamerules[rule as WorldGameRule] = value;
+  }
+  return gamerules;
 }
 
 const MAX_WORLD_NAME_LENGTH = 128;

@@ -36,10 +36,34 @@ export async function readJson<T>(request: Request): Promise<T> {
   }
 }
 
-export function errorResponse(error: unknown): Response {
+export interface ErrorLogContext {
+  /** Contents of the x-sharedworld-version request header (0.2.2+ clients). */
+  clientVersion?: string | null;
+  /** "METHOD /path" of the failing request. */
+  route?: string;
+}
+
+export function errorResponse(error: unknown, context: ErrorLogContext = {}): Response {
   if (error instanceof HttpError) {
     if (error.status >= 500) {
-      console.warn("SharedWorld request failed", { code: error.code, status: error.status, message: error.message });
+      console.warn("SharedWorld request failed", {
+        code: error.code,
+        status: error.status,
+        message: error.message,
+        route: context.route,
+        clientVersion: context.clientVersion ?? null
+      });
+    } else if (error.code !== "not_found") {
+      // 4xx used to be invisible in Workers Logs, which made every field
+      // report start from zero. One line with the mod version answers "which
+      // release is failing" immediately. not_found is excluded so bot route
+      // scans don't spam the log.
+      console.warn("SharedWorld request rejected", {
+        code: error.code,
+        status: error.status,
+        route: context.route,
+        clientVersion: context.clientVersion ?? null
+      });
     }
     const payload: ApiErrorShape = {
       error: error.code,
@@ -52,7 +76,10 @@ export function errorResponse(error: unknown): Response {
 
   // Anything else is an unexpected internal failure: log the real error, but
   // never leak its message to the client.
-  console.error("SharedWorld unhandled error", error);
+  console.error("SharedWorld unhandled error", error, {
+    route: context.route,
+    clientVersion: context.clientVersion ?? null
+  });
   const payload: ApiErrorShape = {
     error: "internal_error",
     message: "Internal server error.",

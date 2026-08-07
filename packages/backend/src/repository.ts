@@ -129,6 +129,8 @@ export interface WorldRepository {
   updateWorld(ctx: RequestContext, worldId: string, request: WorldUpdateRecord): Promise<WorldDetails>;
   /** Replace the world's settings JSON and bump its revision; false when no active world row exists. */
   updateWorldSettings(worldId: string, settingsJson: string): Promise<boolean>;
+  /** Compare-and-set variant for host-reported settings: writes only when the stored revision still matches. */
+  updateWorldSettingsIfRevision(worldId: string, settingsJson: string, expectedRevision: number): Promise<boolean>;
   /** Lightweight settings read for the host heartbeat; null when the world does not exist. */
   getWorldSettings(worldId: string): Promise<{ settings: WorldSettings | null; settingsRevision: number } | null>;
   deleteWorldForPlayer(ctx: RequestContext, worldId: string, now: Date): Promise<DeleteWorldResult>;

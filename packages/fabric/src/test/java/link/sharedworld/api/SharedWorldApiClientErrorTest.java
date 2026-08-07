@@ -41,8 +41,8 @@ final class SharedWorldApiClientErrorTest {
                         "HostA",
                         "dev:test-secret"
                 ),
-                (identity, serverId) -> {
-                    throw new IOException("dev sessions never join Mojang");
+                () -> {
+                    throw new IllegalStateException("dev sessions never consult the certificate provider");
                 }
         );
     }

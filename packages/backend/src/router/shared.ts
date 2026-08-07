@@ -38,6 +38,7 @@ export type RouterService = Pick<
   | "prepareUploads"
   | "redeemInvite"
   | "releaseHost"
+  | "reportHostGameRules"
   | "resetInvite"
   | "restoreSnapshot"
   | "runtimeStatus"

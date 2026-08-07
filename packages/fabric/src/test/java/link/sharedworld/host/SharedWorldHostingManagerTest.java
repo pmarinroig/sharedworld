@@ -424,6 +424,273 @@ final class SharedWorldHostingManagerTest {
     }
 
     @Test
+    void gameRuleSnapshotsAreRequestedOnlyWhileRunningWithoutRelease() throws Exception {
+        AtomicInteger snapshotRequests = new AtomicInteger();
+        HostingEvents events = new HostingEvents() {
+            @Override
+            public void onWorldGameRulesSnapshotRequested(java.util.function.Consumer<Map<String, Boolean>> consumer) {
+                snapshotRequests.incrementAndGet();
+            }
+        };
+        SharedWorldHostingManager manager = gameRuleManager(events, "managed-gamerule-request", Runnable::run);
+        primeRunningGameRuleManager(manager);
+        SharedWorldDevSessionBridge.setHostingSharedWorld(true, HOST_UUID);
+        try {
+            invokeLiveHeartbeat(manager, heartbeatResponseWithSettings("world-1", "host-live", 7L, "join.example", null, 0L));
+            assertEquals(1, snapshotRequests.get());
+
+            // While a coordinated release owns the session, polling stops.
+            manager.beginCoordinatedRelease();
+            invokeLiveHeartbeat(manager, heartbeatResponseWithSettings("world-1", "host-live", 7L, "join.example", null, 0L));
+            assertEquals(1, snapshotRequests.get());
+        } finally {
+            SharedWorldDevSessionBridge.clear();
+        }
+    }
+
+    @Test
+    void firstGameRuleSnapshotBaselinesAndOnlyLaterChangesPush() throws Exception {
+        ManualExecutor background = new ManualExecutor();
+        SharedWorldHostingManager manager = gameRuleManager(HostingEvents.NONE, "managed-gamerule-baseline", background);
+        primeRunningGameRuleManager(manager);
+        SharedWorldDevSessionBridge.setHostingSharedWorld(true, HOST_UUID);
+        try {
+            Map<String, Boolean> first = Map.of("keepInventory", false, "pvp", true);
+            invokeHandleGameRulesSnapshot(manager, first);
+            assertEquals(first, getField(manager, "lastConfirmedGameRules"));
+            assertEquals(0, background.size());
+
+            // An unchanged snapshot never pushes.
+            invokeHandleGameRulesSnapshot(manager, Map.of("pvp", true, "keepInventory", false));
+            assertEquals(0, background.size());
+
+            // A changed snapshot pushes; a second change while that push is in
+            // flight waits for the next poll instead of double-pushing.
+            invokeHandleGameRulesSnapshot(manager, Map.of("keepInventory", true, "pvp", true));
+            assertEquals(1, background.size());
+            invokeHandleGameRulesSnapshot(manager, Map.of("keepInventory", true, "pvp", false));
+            assertEquals(1, background.size());
+
+            // The push fails (dead port): the in-flight slot clears and the
+            // baseline stays put, so the next poll re-diffs and retries.
+            background.runNext();
+            assertEquals(0L, ((java.util.concurrent.atomic.AtomicLong) getField(manager, "gameRulesPushInFlight")).get());
+            assertEquals(first, getField(manager, "lastConfirmedGameRules"));
+        } finally {
+            SharedWorldDevSessionBridge.clear();
+        }
+    }
+
+    @Test
+    void gameRulePushSuccessRecordsRevisionWithoutReapplyingGameRules() throws Exception {
+        List<SharedWorldModels.WorldSettingsDto> applied = new ArrayList<>();
+        HostingEvents events = new HostingEvents() {
+            @Override
+            public void onWorldSettingsChanged(SharedWorldModels.WorldSettingsDto settings) {
+                applied.add(settings);
+            }
+        };
+        SharedWorldHostingManager manager = gameRuleManager(events, "managed-gamerule-success", Runnable::run);
+        primeRunningGameRuleManager(manager);
+        SharedWorldDevSessionBridge.setHostingSharedWorld(true, HOST_UUID);
+        try {
+            Map<String, Boolean> snapshot = Map.of("keepInventory", true);
+            SharedWorldModels.WorldSettingsDto merged =
+                    new SharedWorldModels.WorldSettingsDto("hard", "survival", Map.of("keepInventory", true));
+            invokeOnGameRulesPushSucceeded(manager, hostAttemptContext(1L, 7L, "world-1", 7L, "token-7"), snapshot,
+                    new SharedWorldModels.HostGameRulesReportResponseDto(merged, 5L));
+
+            assertEquals(snapshot, getField(manager, "lastConfirmedGameRules"));
+            assertEquals(5L, getField(manager, "appliedSettingsRevision"));
+            // Only difficulty/game mode re-apply; the gamerules the server
+            // already holds are stripped so a racing in-game change survives.
+            assertEquals(1, applied.size());
+            assertEquals("hard", applied.get(0).difficulty());
+            assertEquals("survival", applied.get(0).defaultGameMode());
+            assertNull(applied.get(0).gamerules());
+
+            // Echo kill: the heartbeat that echoes the merged revision back
+            // does not re-apply anything.
+            invokeLiveHeartbeat(manager, heartbeatResponseWithSettings("world-1", "host-live", 7L, "join.example", merged, 5L));
+            assertEquals(1, applied.size());
+
+            // A stale completion (superseded attempt) is ignored entirely.
+            invokeOnGameRulesPushSucceeded(manager, hostAttemptContext(99L, 7L, "world-1", 7L, "token-7"),
+                    Map.of("pvp", false), new SharedWorldModels.HostGameRulesReportResponseDto(merged, 9L));
+            assertEquals(5L, getField(manager, "appliedSettingsRevision"));
+            assertEquals(snapshot, getField(manager, "lastConfirmedGameRules"));
+        } finally {
+            SharedWorldDevSessionBridge.clear();
+        }
+    }
+
+    @Test
+    void settingsApplyInvalidatesTheGameRuleBaseline() throws Exception {
+        SharedWorldHostingManager manager = gameRuleManager(HostingEvents.NONE, "managed-gamerule-invalidate", Runnable::run);
+        primeRunningGameRuleManager(manager);
+        SharedWorldDevSessionBridge.setHostingSharedWorld(true, HOST_UUID);
+        try {
+            SharedWorldModels.WorldSettingsDto settings =
+                    new SharedWorldModels.WorldSettingsDto("hard", null, Map.of("mobGriefing", false));
+
+            // A heartbeat that applies a new revision rewrites server gamerules,
+            // so the recorded baseline must not survive it.
+            setField(manager, "lastConfirmedGameRules", Map.of("pvp", true));
+            invokeLiveHeartbeat(manager, heartbeatResponseWithSettings("world-1", "host-live", 7L, "join.example", settings, 3L));
+            assertNull(getField(manager, "lastConfirmedGameRules"));
+
+            // Same for the owner-hosting local shortcut.
+            setField(manager, "lastConfirmedGameRules", Map.of("pvp", true));
+            manager.applyLocalWorldSettingsChange("world-1", settings);
+            assertNull(getField(manager, "lastConfirmedGameRules"));
+        } finally {
+            SharedWorldDevSessionBridge.clear();
+        }
+    }
+
+    @Test
+    void gameRuleSnapshotIgnoredOutsideAHostingSession() throws Exception {
+        // [P9] adjacent: without an active shared-world hosting session no
+        // gamerule state is ever tracked, let alone reported.
+        SharedWorldHostingManager manager = gameRuleManager(HostingEvents.NONE, "managed-gamerule-inert", Runnable::run);
+        primeRunningGameRuleManager(manager);
+        try {
+            invokeHandleGameRulesSnapshot(manager, Map.of("pvp", true));
+            assertNull(getField(manager, "lastConfirmedGameRules"));
+        } finally {
+            SharedWorldDevSessionBridge.clear();
+        }
+    }
+
+    @Test
+    void beginCoordinatedReleaseFlushesChangedGameRules() throws Exception {
+        AtomicReference<java.util.function.Consumer<Map<String, Boolean>>> captured = new AtomicReference<>();
+        HostingEvents events = new HostingEvents() {
+            @Override
+            public void onWorldGameRulesSnapshotRequested(java.util.function.Consumer<Map<String, Boolean>> consumer) {
+                captured.set(consumer);
+            }
+        };
+        ManualExecutor background = new ManualExecutor();
+        SharedWorldHostingManager manager = gameRuleManager(events, "managed-gamerule-flush", background);
+        primeRunningGameRuleManager(manager);
+        SharedWorldDevSessionBridge.setHostingSharedWorld(true, HOST_UUID);
+        try {
+            setField(manager, "lastConfirmedGameRules", Map.of("pvp", true));
+            manager.beginCoordinatedRelease();
+            assertNotNull(captured.get());
+
+            // The flush snapshot lands after the release started; a changed
+            // value still pushes (the backend accepts host-finalizing).
+            captured.get().accept(Map.of("pvp", false));
+            assertEquals(1, background.size());
+        } finally {
+            SharedWorldDevSessionBridge.clear();
+        }
+    }
+
+    @Test
+    void beginCoordinatedReleaseSkipsFlushWithoutABaselineOrChange() throws Exception {
+        AtomicReference<java.util.function.Consumer<Map<String, Boolean>>> captured = new AtomicReference<>();
+        HostingEvents events = new HostingEvents() {
+            @Override
+            public void onWorldGameRulesSnapshotRequested(java.util.function.Consumer<Map<String, Boolean>> consumer) {
+                captured.set(consumer);
+            }
+        };
+        ManualExecutor background = new ManualExecutor();
+        SharedWorldHostingManager manager = gameRuleManager(events, "managed-gamerule-flush-skip", background);
+        primeRunningGameRuleManager(manager);
+        SharedWorldDevSessionBridge.setHostingSharedWorld(true, HOST_UUID);
+        try {
+            Object releaseNone = getField(manager, "coordinatedRelease");
+
+            // No baseline yet: nothing worth flushing, no snapshot requested.
+            manager.beginCoordinatedRelease();
+            assertNull(captured.get());
+
+            // With a baseline but no change, the flush snapshot pushes nothing.
+            setField(manager, "coordinatedRelease", releaseNone);
+            setField(manager, "lastConfirmedGameRules", Map.of("pvp", true));
+            manager.beginCoordinatedRelease();
+            assertNotNull(captured.get());
+            captured.get().accept(Map.of("pvp", true));
+            assertEquals(0, background.size());
+        } finally {
+            SharedWorldDevSessionBridge.clear();
+        }
+    }
+
+    private SharedWorldHostingManager gameRuleManager(HostingEvents events, String storeDir, Executor backgroundExecutor) {
+        return new SharedWorldHostingManager(
+                apiClient(),
+                new ManagedWorldStore(this.tempDir.resolve(storeDir)),
+                null,
+                new RecordingWorldOpenController(),
+                new HostStartupProgressRelayController(
+                        (worldId, runtimeEpoch, hostToken, progress) -> {
+                        },
+                        Runnable::run,
+                        () -> 0L
+                ),
+                new InMemoryHostRecoveryStore(),
+                events,
+                backgroundExecutor,
+                Runnable::run
+        );
+    }
+
+    private static void primeRunningGameRuleManager(SharedWorldHostingManager manager) throws Exception {
+        setField(manager, "world", world("world-1", "Handoff World"));
+        setField(manager, "hostPlayerUuid", HOST_UUID);
+        setField(manager, "runtimeEpoch", 7L);
+        setField(manager, "hostToken", "token-7");
+        setField(manager, "hostSessionGeneration", 1L);
+        setField(manager, "startupAttemptId", 7L);
+        setField(manager, "publishedJoinTarget", "join.example");
+        setField(manager, "phase", SharedWorldHostingManager.Phase.RUNNING);
+        ((AtomicBoolean) getField(manager, "startupStarted")).set(true);
+    }
+
+    private static void invokeLiveHeartbeat(SharedWorldHostingManager manager, SharedWorldModels.HostHeartbeatResponseDto response) throws Exception {
+        Method onHeartbeatSucceeded = SharedWorldHostingManager.class.getDeclaredMethod(
+                "onHeartbeatSucceeded",
+                Class.forName("link.sharedworld.host.SharedWorldHostingManager$HostAttemptContext"),
+                SharedWorldModels.HostHeartbeatResponseDto.class,
+                String.class,
+                boolean.class
+        );
+        onHeartbeatSucceeded.setAccessible(true);
+        onHeartbeatSucceeded.invoke(manager, hostAttemptContext(1L, 7L, "world-1", 7L, "token-7"), response, "join.example", false);
+    }
+
+    private static void invokeHandleGameRulesSnapshot(SharedWorldHostingManager manager, Map<String, Boolean> snapshot) throws Exception {
+        Method handle = SharedWorldHostingManager.class.getDeclaredMethod(
+                "handleGameRulesSnapshot",
+                Class.forName("link.sharedworld.host.SharedWorldHostingManager$HostAttemptContext"),
+                Map.class
+        );
+        handle.setAccessible(true);
+        handle.invoke(manager, hostAttemptContext(1L, 7L, "world-1", 7L, "token-7"), snapshot);
+    }
+
+    private static void invokeOnGameRulesPushSucceeded(
+            SharedWorldHostingManager manager,
+            Object context,
+            Map<String, Boolean> snapshot,
+            SharedWorldModels.HostGameRulesReportResponseDto response
+    ) throws Exception {
+        Method succeeded = SharedWorldHostingManager.class.getDeclaredMethod(
+                "onGameRulesPushSucceeded",
+                Class.forName("link.sharedworld.host.SharedWorldHostingManager$HostAttemptContext"),
+                Map.class,
+                SharedWorldModels.HostGameRulesReportResponseDto.class
+        );
+        succeeded.setAccessible(true);
+        succeeded.invoke(manager, context, snapshot, response);
+    }
+
+    @Test
     void backendFinalizationMarksHostManagerAsReleasing() throws Exception {
         AtomicReference<SharedWorldModels.StartupProgressDto> relayedProgress = new AtomicReference<>();
         SharedWorldHostingManager manager = new SharedWorldHostingManager(

@@ -261,6 +261,9 @@ const defaultRouterService = {
   async releaseHost(_ctx, _worldId, _request, _now) {
     return unexpectedRouteCall("releaseHost");
   },
+  async reportHostGameRules(_ctx, _worldId, _request, _now) {
+    return unexpectedRouteCall("reportHostGameRules");
+  },
   async resetInvite(_ctx, _worldId) {
     return unexpectedRouteCall("resetInvite");
   },

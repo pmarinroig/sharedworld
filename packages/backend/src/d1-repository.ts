@@ -272,6 +272,18 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     return changes > 0;
   }
 
+  async updateWorldSettingsIfRevision(worldId: string, settingsJson: string, expectedRevision: number): Promise<boolean> {
+    const changes = await this.runWithChanges(
+      `UPDATE worlds
+       SET settings = ?, settings_revision = settings_revision + 1
+       WHERE id = ? AND deleted_at IS NULL AND settings_revision = ?`,
+      settingsJson,
+      worldId,
+      expectedRevision
+    );
+    return changes > 0;
+  }
+
   async getWorldSettings(worldId: string): Promise<{ settings: WorldSettings | null; settingsRevision: number } | null> {
     const row = await this.first<Row>(
       "SELECT settings, settings_revision FROM worlds WHERE id = ? AND deleted_at IS NULL",

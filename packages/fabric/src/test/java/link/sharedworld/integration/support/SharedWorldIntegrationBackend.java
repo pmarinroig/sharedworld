@@ -51,7 +51,7 @@ public final class SharedWorldIntegrationBackend {
         return java.util.Base64.getDecoder().decode(payload.get("privateKeyPkcs8").getAsString());
     }
 
-    /** A premium-identity client whose only auth path is the certificate flow: joinServer fails the test. */
+    /** A premium-identity client authenticating through the certificate flow (the only auth path since 0.2.2). */
     public static SharedWorldApiClient certApiClient(TestPlayer player, SharedWorldApiClient.ProfileCertificateProvider provider) {
         return new SharedWorldApiClient(
                 backendUrl(),
@@ -61,7 +61,6 @@ public final class SharedWorldIntegrationBackend {
                         player.playerName(),
                         "premium-access-token"
                 ),
-                (identity, serverId) -> Assertions.fail("certificate auth must not fall back to joinServer"),
                 provider
         );
     }

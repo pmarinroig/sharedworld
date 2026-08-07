@@ -630,6 +630,17 @@ public final class SharedWorldModels {
     }
 
     /**
+     * Response to a host gamerule report (POST /worlds/:id/host-gamerules):
+     * the stored settings after the merge plus the new revision, so the host
+     * can record the revision as applied without re-applying its own values.
+     */
+    public record HostGameRulesReportResponseDto(
+            WorldSettingsDto settings,
+            Long settingsRevision
+    ) {
+    }
+
+    /**
      * The heartbeat response body is a flat superset of {@link WorldRuntimeStatusDto}:
      * the same runtime fields at the top level plus the world's active membership
      * list. Older clients bind the identical body to WorldRuntimeStatusDto and

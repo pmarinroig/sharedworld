@@ -26,12 +26,14 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Certificate-first auth: a client holding a Mojang-signed profile keypair
- * signs the challenge nonce and never touches the sessionserver join flow;
- * cert-less clients and pre-cert backends fall back to it automatically.
+ * Certificate auth is the only sign-in path: a client holding a Mojang-signed
+ * profile keypair signs the challenge nonce. There is no join-flow fallback
+ * anymore (Mojang blocks the backend's egress for it), so a missing keypair
+ * or a backend rejection surfaces as a clear error instead.
  */
 final class SharedWorldApiClientCertAuthTest {
     private static final String PLAYER_UUID = "11111111-1111-1111-1111-111111111111";
@@ -80,13 +82,12 @@ final class SharedWorldApiClientCertAuthTest {
         return generator.generateKeyPair();
     }
 
-    private SharedWorldApiClient client(String baseUrl, AtomicInteger joinCalls, Optional<ProfileCertificateData> certificate) {
+    private SharedWorldApiClient client(String baseUrl, Optional<ProfileCertificateData> certificate) {
         SharedWorldDevSessionBridge.clear();
         return new SharedWorldApiClient(
                 baseUrl,
                 HttpClient.newHttpClient(),
                 () -> new SharedWorldApiClient.SessionIdentity(PLAYER_UUID, "HostA", "premium-access-token"),
-                (identity, serverId) -> joinCalls.incrementAndGet(),
                 () -> certificate
         );
     }
@@ -97,7 +98,7 @@ final class SharedWorldApiClientCertAuthTest {
     }
 
     @Test
-    void aCertificateSignsTheChallengeAndSkipsTheJoinFlow() throws Exception {
+    void aCertificateSignsTheChallenge() throws Exception {
         String baseUrl = startServer();
         serveChallenge();
         KeyPair keyPair = generateKeyPair();
@@ -107,12 +108,10 @@ final class SharedWorldApiClientCertAuthTest {
             received.set(GSON.fromJson(body, JsonObject.class));
             writeJson(exchange, 200, SESSION_JSON);
         });
-        AtomicInteger joinCalls = new AtomicInteger();
 
-        SessionTokenDto session = client(baseUrl, joinCalls, Optional.of(certificate(keyPair))).ensureSession();
+        SessionTokenDto session = client(baseUrl, Optional.of(certificate(keyPair))).ensureSession();
 
         assertEquals("session-cert", session.token());
-        assertEquals(0, joinCalls.get(), "certificate auth must never call Mojang joinServer");
         JsonObject request = received.get();
         assertNotNull(request);
         assertEquals("server-1", request.get("serverId").getAsString());
@@ -133,56 +132,36 @@ final class SharedWorldApiClientCertAuthTest {
     }
 
     @Test
-    void aCertLessClientUsesTheJoinFlow() throws Exception {
+    void aCertLessClientIsToldItsProfileKeysAreUnavailable() throws Exception {
         String baseUrl = startServer();
-        serveChallenge();
-        AtomicInteger completeCalls = new AtomicInteger();
-        this.server.createContext("/auth/complete", exchange -> {
-            completeCalls.incrementAndGet();
-            writeJson(exchange, 200, SESSION_JSON);
+        AtomicInteger challengeCalls = new AtomicInteger();
+        this.server.createContext("/auth/challenge", exchange -> {
+            challengeCalls.incrementAndGet();
+            writeJson(exchange, 200, "{\"serverId\":\"server-1\",\"expiresAt\":\"2099-01-01T00:00:00.000Z\"}");
         });
-        AtomicInteger joinCalls = new AtomicInteger();
 
-        SessionTokenDto session = client(baseUrl, joinCalls, Optional.empty()).ensureSession();
+        SharedWorldApiClient.SharedWorldApiException error =
+                assertThrows(SharedWorldApiClient.SharedWorldApiException.class,
+                        () -> client(baseUrl, Optional.empty()).ensureSession());
 
-        assertEquals("session-cert", session.token());
-        assertEquals(1, joinCalls.get());
-        assertEquals(1, completeCalls.get());
+        assertEquals("profile_keys_unavailable", error.error());
+        assertTrue(error.getMessage().contains("profile keys"), "the message names what is missing");
+        assertEquals(0, challengeCalls.get(), "no backend call is wasted when the keys are missing");
     }
 
     @Test
-    void aPreCertBackendFallsBackToTheJoinFlow() throws Exception {
-        String baseUrl = startServer();
-        serveChallenge();
-        this.server.createContext("/auth/complete-cert", exchange ->
-                writeJson(exchange, 404, "{\"error\":\"not_found\",\"message\":\"Route not found.\",\"status\":404}"));
-        AtomicInteger completeCalls = new AtomicInteger();
-        this.server.createContext("/auth/complete", exchange -> {
-            completeCalls.incrementAndGet();
-            writeJson(exchange, 200, SESSION_JSON);
-        });
-        AtomicInteger joinCalls = new AtomicInteger();
-
-        SessionTokenDto session = client(baseUrl, joinCalls, Optional.of(certificate(generateKeyPair()))).ensureSession();
-
-        assertEquals("session-cert", session.token());
-        assertEquals(1, joinCalls.get(), "the fallback path proves the session via joinServer");
-        assertEquals(1, completeCalls.get());
-    }
-
-    @Test
-    void aRejectedCertificateFallsBackToTheJoinFlow() throws Exception {
+    void aRejectedCertificateSurfacesTheBackendsMessage() throws Exception {
         String baseUrl = startServer();
         serveChallenge();
         this.server.createContext("/auth/complete-cert", exchange ->
                 writeJson(exchange, 403,
                         "{\"error\":\"certificate_invalid\",\"message\":\"Minecraft profile certificate is not validly signed for this player.\",\"status\":403}"));
-        this.server.createContext("/auth/complete", exchange -> writeJson(exchange, 200, SESSION_JSON));
-        AtomicInteger joinCalls = new AtomicInteger();
 
-        SessionTokenDto session = client(baseUrl, joinCalls, Optional.of(certificate(generateKeyPair()))).ensureSession();
+        SharedWorldApiClient.SharedWorldApiException error =
+                assertThrows(SharedWorldApiClient.SharedWorldApiException.class,
+                        () -> client(baseUrl, Optional.of(certificate(generateKeyPair()))).ensureSession());
 
-        assertEquals("session-cert", session.token());
-        assertEquals(1, joinCalls.get());
+        assertEquals("certificate_invalid", error.error());
+        assertEquals("Minecraft profile certificate is not validly signed for this player.", error.getMessage());
     }
 }

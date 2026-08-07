@@ -1,6 +1,5 @@
 package link.sharedworld.versioned;
 
-import com.mojang.authlib.minecraft.MinecraftSessionService;
 import net.minecraft.client.Minecraft;
 
 /**
@@ -10,10 +9,6 @@ import net.minecraft.client.Minecraft;
  */
 public final class ClientCompat {
     private ClientCompat() {
-    }
-
-    public static MinecraftSessionService sessionService(Minecraft minecraft) {
-        return minecraft.getMinecraftSessionService();
     }
 
     public static void disconnectFromWorld(Minecraft minecraft) {
@@ -27,11 +22,6 @@ public final class ClientCompat {
     }
 
     public static void drawDeferredSubtitles(Minecraft minecraft) {
-    }
-
-    public static void joinServer(Minecraft minecraft, java.util.UUID profileId, String accessToken, String serverId)
-            throws com.mojang.authlib.exceptions.AuthenticationException {
-        sessionService(minecraft).joinServer(new com.mojang.authlib.GameProfile(profileId, ""), accessToken, serverId);
     }
 
     /**

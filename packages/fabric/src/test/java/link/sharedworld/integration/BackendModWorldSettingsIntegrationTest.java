@@ -69,4 +69,42 @@ final class BackendModWorldSettingsIntegrationTest {
                 worldId, new SharedWorldModels.WorldSettingsDto("impossible", null, null)));
         assertTrue(invalid.getMessage().toLowerCase().contains("difficulty"), invalid.getMessage());
     }
+
+    @Test
+    void hostGameRuleReportMergesAndSurvivesToTheNextHeartbeat() throws Exception {
+        // The GUEST hosts: exactly the writer the owner-only settings PUT
+        // cannot cover, which is why the report is runtime-authorized.
+        SharedWorldIntegrationFixtures.HostedWorld hosted = SharedWorldIntegrationFixtures.createHostedWorld(
+                "Integration Gamerule Report",
+                SharedWorldIntegrationBackend.OWNER,
+                SharedWorldIntegrationBackend.GUEST
+        );
+        SharedWorldApiClient owner = hosted.ownerClient();
+        SharedWorldApiClient host = hosted.hostClient();
+        String worldId = hosted.world().id();
+        long epoch = hosted.assignment().runtimeEpoch();
+        String token = hosted.assignment().hostToken();
+
+        owner.putWorldSettings(worldId, new SharedWorldModels.WorldSettingsDto(
+                "hard", "survival", Map.of("keepInventory", false)));
+
+        SharedWorldModels.HostGameRulesReportResponseDto reported = host.reportHostGameRules(
+                worldId, epoch, token, Map.of("keepInventory", true, "mobGriefing", false));
+        assertEquals(2L, (long) reported.settingsRevision());
+        assertEquals("hard", reported.settings().difficulty(), "difficulty survives the merge");
+        assertEquals("survival", reported.settings().defaultGameMode(), "game mode survives the merge");
+        assertEquals(Boolean.TRUE, reported.settings().gamerules().get("keepInventory"));
+        assertEquals(Boolean.FALSE, reported.settings().gamerules().get("mobGriefing"));
+
+        SharedWorldModels.HostHeartbeatResponseDto heartbeat = host.heartbeatHost(worldId, epoch, token, "join.example");
+        assertEquals(2L, (long) heartbeat.settingsRevision());
+        assertEquals(Boolean.TRUE, heartbeat.settings().gamerules().get("keepInventory"));
+        assertEquals("hard", heartbeat.settings().difficulty());
+
+        // A wrong host token is fenced out and writes nothing.
+        Exception denied = assertThrows(Exception.class, () -> host.reportHostGameRules(
+                worldId, epoch, "rt-wrong", Map.of("pvp", true)));
+        assertTrue(denied.getMessage().toLowerCase().contains("hosting"), denied.getMessage());
+        assertEquals(2L, (long) owner.getWorld(worldId).settingsRevision());
+    }
 }

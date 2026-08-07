@@ -14,6 +14,8 @@ import type {
   EnterSessionResponse,
   FinalizeSnapshotRequest,
   HeartbeatRequest,
+  HostGameRulesReportRequest,
+  HostGameRulesReportResponse,
   HostHeartbeatResponse,
   HostStartupProgressRequest,
   InviteCode,
@@ -146,6 +148,10 @@ export class SharedWorldService {
 
   async updateWorldSettings(ctx: RequestContext, worldId: string, request: UpdateWorldSettingsRequest): Promise<WorldDetails> {
     return worlds.updateWorldSettings(this.svc, ctx, worldId, request);
+  }
+
+  async reportHostGameRules(ctx: RequestContext, worldId: string, request: HostGameRulesReportRequest, now = new Date()): Promise<HostGameRulesReportResponse> {
+    return worlds.reportHostGameRules(this.svc, ctx, worldId, request, now);
   }
 
   async deleteWorld(ctx: RequestContext, worldId: string, now = new Date()): Promise<void> {

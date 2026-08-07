@@ -34,4 +34,16 @@ public final class ServerSettingsCompat {
             case PVP -> rules.set(GameRules.PVP, value, server);
         }
     }
+
+    /** Read the current value of a managed rule from the running server (server thread). */
+    public static boolean getGameRule(MinecraftServer server, SharedWorldGameRule rule) {
+        GameRules rules = server.getGameRules();
+        return switch (rule) {
+            case KEEP_INVENTORY -> rules.get(GameRules.KEEP_INVENTORY);
+            case MOB_GRIEFING -> rules.get(GameRules.MOB_GRIEFING);
+            case DAYLIGHT_CYCLE -> rules.get(GameRules.ADVANCE_TIME);
+            case WEATHER_CYCLE -> rules.get(GameRules.ADVANCE_WEATHER);
+            case PVP -> rules.get(GameRules.PVP);
+        };
+    }
 }

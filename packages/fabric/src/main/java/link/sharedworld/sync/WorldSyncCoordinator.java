@@ -239,7 +239,9 @@ public final class WorldSyncCoordinator {
         if (plan.nonRegionPackUpload() != null) {
             localPackIds.add(plan.nonRegionPackUpload().pack().packId());
         }
-        return localPackIds.equals(java.util.Set.of(plan.latestPackIds()));
+        // HashSet (not Set.of): a backend answering with a duplicated pack id
+        // must degrade to a needless finalize, not crash the sync path.
+        return localPackIds.equals(new java.util.HashSet<>(java.util.Arrays.asList(plan.latestPackIds())));
     }
 
     private Path ensureWorkingCopy(String worldId, String hostPlayerUuid, boolean materializeHostPlayer, WorldSyncProgressListener progressListener) throws IOException, InterruptedException {

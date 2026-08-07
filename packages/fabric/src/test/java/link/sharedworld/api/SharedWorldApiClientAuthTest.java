@@ -21,11 +21,26 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 final class SharedWorldApiClientAuthTest {
     private static final String DEV_AUTH_SECRET = "test-dev-auth-secret";
 
+    private static ProfileCertificateData certificate() {
+        try {
+            java.security.KeyPairGenerator generator = java.security.KeyPairGenerator.getInstance("RSA");
+            generator.initialize(2048);
+            java.security.KeyPair keyPair = generator.generateKeyPair();
+            return new ProfileCertificateData(
+                    keyPair.getPrivate(),
+                    keyPair.getPublic().getEncoded(),
+                    System.currentTimeMillis() + 48L * 60L * 60_000L,
+                    "mojang-signature-bytes".getBytes(StandardCharsets.UTF_8)
+            );
+        } catch (Exception exception) {
+            throw new IllegalStateException(exception);
+        }
+    }
+
     @Test
-    void ensureSessionUsesJoinServerAndNeverSendsAccessTokenToBackend() throws Exception {
+    void ensureSessionSignsTheChallengeAndNeverSendsAccessTokenToBackend() throws Exception {
         SharedWorldDevSessionBridge.clear();
         AtomicReference<String> completeBody = new AtomicReference<>();
-        AtomicReference<String> joinedServerId = new AtomicReference<>();
         AtomicInteger challengeCalls = new AtomicInteger();
         AtomicInteger completeCalls = new AtomicInteger();
 
@@ -36,7 +51,7 @@ final class SharedWorldApiClientAuthTest {
                         {"serverId":"server-proof-123","expiresAt":"2099-01-01T00:00:00.000Z"}
                         """);
             });
-            server.handle("/auth/complete", exchange -> {
+            server.handle("/auth/complete-cert", exchange -> {
                 completeCalls.incrementAndGet();
                 completeBody.set(readBody(exchange));
                 writeJson(exchange, 200, """
@@ -52,7 +67,7 @@ final class SharedWorldApiClientAuthTest {
                             "HostA",
                             "premium-access-token"
                     ),
-                    (identity, serverId) -> joinedServerId.set(serverId)
+                    () -> java.util.Optional.of(certificate())
             );
 
             SharedWorldModels.SessionTokenDto first = client.ensureSession();
@@ -60,14 +75,14 @@ final class SharedWorldApiClientAuthTest {
 
             assertEquals("session-123", first.token());
             assertEquals(first, second);
-            assertEquals("server-proof-123", joinedServerId.get());
             assertEquals(1, challengeCalls.get());
             assertEquals(1, completeCalls.get());
             assertNotNull(completeBody.get());
             assertTrue(completeBody.get().contains("\"serverId\":\"server-proof-123\""));
             assertTrue(completeBody.get().contains("\"playerName\":\"HostA\""));
+            assertTrue(completeBody.get().contains("\"playerUuid\":\"11111111111111111111111111111111\""));
             assertFalse(completeBody.get().contains("accessToken"));
-            assertFalse(completeBody.get().contains("playerUuid"));
+            assertFalse(completeBody.get().contains("premium-access-token"));
             assertFalse(SharedWorldDevSessionBridge.isCurrentSessionDev());
             assertFalse(SharedWorldDevSessionBridge.backendAllowsInsecureE4mc());
         }
@@ -77,7 +92,7 @@ final class SharedWorldApiClientAuthTest {
     void ensureSessionUsesDedicatedDevEndpointForDevSessions() throws Exception {
         SharedWorldDevSessionBridge.clear();
         AtomicReference<String> devCompleteBody = new AtomicReference<>();
-        AtomicInteger joinCalls = new AtomicInteger();
+        AtomicInteger certLookups = new AtomicInteger();
 
         try (TestHttpServer server = new TestHttpServer()) {
             server.handle("/auth/dev-complete", exchange -> {
@@ -95,13 +110,16 @@ final class SharedWorldApiClientAuthTest {
                             "GuestB",
                             "dev:" + DEV_AUTH_SECRET
                     ),
-                    (identity, serverId) -> joinCalls.incrementAndGet()
+                    () -> {
+                        certLookups.incrementAndGet();
+                        return java.util.Optional.empty();
+                    }
             );
 
             SharedWorldModels.SessionTokenDto session = client.ensureSession();
 
             assertEquals("session-dev", session.token());
-            assertEquals(0, joinCalls.get());
+            assertEquals(0, certLookups.get(), "dev sessions never touch the certificate flow");
             assertNotNull(devCompleteBody.get());
             assertTrue(devCompleteBody.get().contains("\"playerUuid\":\"22222222222222222222222222222222\""));
             assertTrue(devCompleteBody.get().contains("\"playerName\":\"GuestB\""));

@@ -337,6 +337,24 @@ export interface HeartbeatRequest {
   minecraftVersion?: string | null;
 }
 
+/**
+ * Host-reported gamerule values, pushed when a command-permitted player
+ * changes a managed rule in game. Runtime-authorized (epoch + host token),
+ * so a non-owner host can persist changes. Only gamerules travel this path;
+ * difficulty and default game mode stay owner-only.
+ */
+export interface HostGameRulesReportRequest {
+  runtimeEpoch?: number | null;
+  hostToken?: string | null;
+  gamerules: Partial<Record<WorldGameRule, boolean>>;
+}
+
+export interface HostGameRulesReportResponse {
+  /** The stored settings after the merge (source of truth for the host). */
+  settings: WorldSettings;
+  settingsRevision: number;
+}
+
 export interface HostStartupProgressRequest {
   runtimeEpoch?: number | null;
   hostToken?: string | null;

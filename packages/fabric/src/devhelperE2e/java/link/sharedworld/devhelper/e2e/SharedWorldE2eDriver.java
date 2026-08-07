@@ -57,6 +57,7 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
         OP_DRILL_AWAIT_COMMAND,
         OP_DRILL_AWAIT_GRANT,
         OP_DRILL_AWAIT_DIFFICULTY,
+        GAMERULE_DRILL_AWAIT_CHANGE,
         AWAIT_SHUTDOWN_COMMAND,
         AWAIT_RELEASE_COMPLETE,
         AWAIT_EXIT
@@ -70,6 +71,7 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
         BEGIN_JOIN,
         AWAIT_INGAME,
         AWAIT_COMMAND_DRILL,
+        AWAIT_GAMERULE_DRILL,
         AWAIT_HOST_DEPARTURE,
         AWAIT_EXIT
     }
@@ -356,6 +358,19 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
                 IntegratedServer server = minecraft.getSingleplayerServer();
                 if (server != null && server.getWorldData().getDifficulty() == net.minecraft.world.Difficulty.HARD) {
                     this.markers.emit("difficulty-changed", "hard");
+                    this.hostStep = HostStep.GAMERULE_DRILL_AWAIT_CHANGE;
+                }
+            }
+            case GAMERULE_DRILL_AWAIT_CHANGE -> {
+                // Gamerule persistence proof, local half: the guest's vanilla
+                // /gamerule flipped keepInventory on the integrated server.
+                // The hosting manager's next heartbeat snapshot reports it to
+                // the backend; the orchestrator asserts that half against
+                // GET /worlds/:id before allowing shutdown.
+                IntegratedServer server = minecraft.getSingleplayerServer();
+                if (server != null && Boolean.TRUE.equals(
+                        link.sharedworld.host.WorldSettingsReader.readGameRules(server).get("keepInventory"))) {
+                    this.markers.emit("gamerule-changed", "keepInventory=true");
                     this.hostStep = HostStep.AWAIT_SHUTDOWN_COMMAND;
                 }
             }
@@ -483,6 +498,20 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
                     // Freshly /op'ed by the host; a vanilla admin command must work.
                     minecraft.player.connection.sendCommand("difficulty hard");
                     this.markers.emit("guest-command-sent", "difficulty hard");
+                    this.guestStep = GuestStep.AWAIT_GAMERULE_DRILL;
+                }
+            }
+            case AWAIT_GAMERULE_DRILL -> {
+                if (minecraft.player == null) {
+                    return;
+                }
+                if ("gamerule-drill".equals(this.commands.poll())) {
+                    // A managed gamerule changed in game must persist to the
+                    // backend (the host reports it; see the orchestrator).
+                    // 1.21.11 registry gamerules use snake_case command ids
+                    // (the dev-e2e jar only runs on that bucket).
+                    minecraft.player.connection.sendCommand("gamerule keep_inventory true");
+                    this.markers.emit("guest-gamerule-sent", "keep_inventory true");
                     this.guestStep = GuestStep.AWAIT_HOST_DEPARTURE;
                 }
             }

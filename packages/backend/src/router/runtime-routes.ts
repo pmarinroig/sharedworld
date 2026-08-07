@@ -5,6 +5,7 @@ import type {
   CompleteFinalizationRequest,
   EnterSessionRequest,
   HeartbeatRequest,
+  HostGameRulesReportRequest,
   HostStartupProgressRequest,
   ObserveWaitingRequest,
   PresenceHeartbeatRequest,
@@ -26,6 +27,7 @@ export function runtimeRoutes(
     | "heartbeatHost"
     | "observeWaiting"
     | "releaseHost"
+    | "reportHostGameRules"
     | "runtimeStatus"
     | "setHostStartupProgress"
     | "setPlayerPresence"
@@ -61,6 +63,12 @@ export function runtimeRoutes(
       pattern: new UrlPattern({ pathname: "/worlds/:worldId/heartbeat" }),
       auth: true,
       handler: async (request, params, ctx) => json(await service.heartbeatHost(ctx, requireParam(params.worldId, "worldId"), await readJson<HeartbeatRequest>(request)))
+    },
+    {
+      method: "POST",
+      pattern: new UrlPattern({ pathname: "/worlds/:worldId/host-gamerules" }),
+      auth: true,
+      handler: async (request, params, ctx) => json(await service.reportHostGameRules(ctx, requireParam(params.worldId, "worldId"), await readJson<HostGameRulesReportRequest>(request)))
     },
     {
       method: "POST",

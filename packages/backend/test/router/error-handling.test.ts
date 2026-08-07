@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 
 import { HttpError } from "../../src/http.ts";
 import { createRouter } from "../../src/router.ts";
@@ -99,6 +99,51 @@ describe("router error handling", () => {
       message: "Invite code is no longer active.",
       status: 409
     });
+  });
+
+  test("4xx failures log route and the reporting client's mod version", async () => {
+    const router = createRouter(createRouterService({
+      async redeemInvite() {
+        throw new HttpError(409, "invite_inactive", "Invite code is no longer active.");
+      }
+    }));
+
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await router(new Request("http://127.0.0.1:8787/invites/redeem", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer session-token",
+          "content-type": "application/json",
+          "x-sharedworld-version": "0.2.2"
+        },
+        body: JSON.stringify({ code: "ABCD-EFGH-JKLM" })
+      }));
+
+      const logged = warn.mock.calls.find((call) => call[0] === "SharedWorld request rejected");
+      expect(logged).toBeDefined();
+      expect(logged?.[1]).toMatchObject({
+        code: "invite_inactive",
+        status: 409,
+        route: "POST /invites/redeem",
+        clientVersion: "0.2.2"
+      });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("unmatched routes do not add a rejection log line", async () => {
+    // Bot route scans would otherwise fill Workers Logs with 404 noise.
+    const router = createRouter(createRouterService({}));
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const response = await router(new Request("http://127.0.0.1:8787/wp-admin/setup.php"));
+      expect(response.status).toBe(404);
+      expect(warn.mock.calls.find((call) => call[0] === "SharedWorld request rejected")).toBeUndefined();
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   test("unexpected internal errors never leak their message to the client", async () => {
