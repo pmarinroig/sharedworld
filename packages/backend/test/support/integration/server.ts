@@ -11,7 +11,10 @@ import { createIntegrationTestApp } from "./app.ts";
 
 const port = Number.parseInt(process.env.SHAREDWORLD_INTEGRATION_PORT ?? "18787", 10);
 const baseUrl = `http://127.0.0.1:${port}`;
-const app = createIntegrationTestApp(baseUrl);
+const app = createIntegrationTestApp(baseUrl, {
+  dbPath: process.env.SHAREDWORLD_INTEGRATION_DB_FILE || undefined,
+  realtimeStateDir: process.env.SHAREDWORLD_INTEGRATION_STATE_DIR || undefined
+});
 
 /**
  * The harness's stand-in for the UserGatewayDO layer: Bun-native WebSockets
@@ -29,6 +32,7 @@ const lastSeenByPlayer = new Map<string, number>();
 function wireRealtime(): void {
   const realtime = app.realtime();
   realtime.enableAlarmTimers();
+  realtime.restorePersistedWorlds();
   realtime.socketBridge = {
     isConnected: (playerUuid) => (socketsByPlayer.get(playerUuid)?.size ?? 0) > 0,
     lastSeenAt: (playerUuid) => {

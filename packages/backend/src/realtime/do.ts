@@ -18,7 +18,7 @@ import {
   type CoordinatorStore,
   type LegacyPresenceEntry
 } from "./coordinator.ts";
-import { decodeCallBody, toErrorEnvelope } from "./service.ts";
+import { decodeCallBody, encodeCallBody, toErrorEnvelope } from "./service.ts";
 import type { RuntimeMembership, RuntimeWaiter, WorldRuntimeRecord } from "../runtime-protocol.ts";
 
 /**
@@ -297,9 +297,11 @@ export class UserGatewayDO {
   }
 
   private async callCoordinator(worldId: string, method: string, args: unknown[]): Promise<void> {
+    // The call envelope, not plain JSON: Date arguments must survive
+    // (JSON.stringify turns them into strings before any replacer sees them).
     await this.coordinatorStub(worldId).fetch("https://do/call", {
       method: "POST",
-      body: JSON.stringify({ method, args })
+      body: encodeCallBody(method, args)
     });
   }
 

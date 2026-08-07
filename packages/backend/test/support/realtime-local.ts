@@ -1,3 +1,5 @@
+import * as fs from "node:fs";
+
 import type { RealtimeEvent, RoomPlayer, WorldRuntimeStatus } from "../../../shared/src/index.ts";
 
 import { WorldCoordinator, type CoordinatorEffects } from "../../src/realtime/coordinator.ts";
@@ -11,6 +13,20 @@ interface LocalWorldRealtime {
   store: InMemoryCoordinatorStore;
   alarmAt: Date | null;
   alarmTimer: ReturnType<typeof setTimeout> | null;
+  persistingHandle: CoordinatorHandle | null;
+}
+
+/** JSON snapshot of one world's coordinator state (chaos-drill persistence). */
+interface PersistedWorldState {
+  runtime: ReturnType<InMemoryCoordinatorStore["getRuntime"]>;
+  warning: ReturnType<InMemoryCoordinatorStore["getWarning"]>;
+  lastEpoch: number;
+  waiters: RuntimeWaiter[];
+  roomPlayers: ReturnType<InMemoryCoordinatorStore["getRoomPlayers"]>;
+  legacyPresence: ReturnType<InMemoryCoordinatorStore["listLegacyPresence"]>;
+  hostLink: ReturnType<InMemoryCoordinatorStore["getHostLink"]>;
+  alarmAt: string | null;
+  hostWatch: string | null;
 }
 
 /** What the harness's Bun WebSocket server reports about live sockets. */
@@ -40,7 +56,15 @@ export class LocalRealtimeService implements RealtimeService {
   /** Real-time alarm timers (integration harness only; unit tests fire manually). */
   private alarmTimersEnabled = false;
 
-  constructor(private readonly repository: SharedWorldRepository) {}
+  /**
+   * @param persistDir when set, every world's coordinator state is written
+   * as JSON after each call and restored on first touch after a restart —
+   * the harness stand-in for Durable Object storage surviving a deploy.
+   */
+  constructor(
+    private readonly repository: SharedWorldRepository,
+    private readonly persistDir: string | null = null
+  ) {}
 
   /**
    * Run alarms on real timers, like the DO runtime would. Only the harness
@@ -48,6 +72,22 @@ export class LocalRealtimeService implements RealtimeService {
    */
   enableAlarmTimers(): void {
     this.alarmTimersEnabled = true;
+  }
+
+  /**
+   * Rehydrate every persisted world at boot. Faithful to production: DO
+   * alarms survive deploys and re-fire without any incoming traffic, so the
+   * harness re-arms them eagerly instead of waiting for a request.
+   */
+  restorePersistedWorlds(): void {
+    if (this.persistDir == null || !fs.existsSync(this.persistDir)) {
+      return;
+    }
+    for (const file of fs.readdirSync(this.persistDir)) {
+      if (file.endsWith(".json")) {
+        this.world(file.slice(0, -".json".length));
+      }
+    }
   }
 
   /** The harness server reports socket open/close for a player. */
@@ -66,7 +106,31 @@ export class LocalRealtimeService implements RealtimeService {
   }
 
   coordinator(worldId: string): CoordinatorHandle {
-    return this.world(worldId).coordinator;
+    const entry = this.world(worldId);
+    if (this.persistDir == null) {
+      return entry.coordinator;
+    }
+    if (entry.persistingHandle == null) {
+      // Persist after every coordinator call — the calls are the only
+      // mutation entry points, so this snapshots exactly like DO storage
+      // committing at the end of each event.
+      const handle: Record<string, (...args: unknown[]) => Promise<unknown>> = {};
+      const target = entry.coordinator as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
+      for (const method of Object.getOwnPropertyNames(Object.getPrototypeOf(entry.coordinator))) {
+        if (typeof target[method] !== "function" || method === "constructor") {
+          continue;
+        }
+        handle[method] = async (...args: unknown[]) => {
+          try {
+            return await target[method].apply(entry.coordinator, args);
+          } finally {
+            this.persistWorld(worldId, entry);
+          }
+        };
+      }
+      entry.persistingHandle = handle as unknown as CoordinatorHandle;
+    }
+    return entry.persistingHandle;
   }
 
   async notifyUsers(event: RealtimeEvent, recipients: string[]): Promise<void> {
@@ -157,6 +221,67 @@ export class LocalRealtimeService implements RealtimeService {
     this.onPublish?.(event, resolved);
   }
 
+  /** Snapshot one world's coordinator state to disk (chaos persistence). */
+  private persistWorld(worldId: string, entry: LocalWorldRealtime): void {
+    if (this.persistDir == null) {
+      return;
+    }
+    const state: PersistedWorldState = {
+      runtime: entry.store.getRuntime(),
+      warning: entry.store.getWarning(),
+      lastEpoch: entry.store.getLastEpoch(),
+      waiters: entry.store.listWaiters(),
+      roomPlayers: entry.store.getRoomPlayers(),
+      legacyPresence: entry.store.listLegacyPresence(),
+      hostLink: entry.store.getHostLink(),
+      alarmAt: entry.alarmAt == null ? null : entry.alarmAt.toISOString(),
+      hostWatch: this.hostWatches.get(worldId) ?? null
+    };
+    fs.mkdirSync(this.persistDir, { recursive: true });
+    fs.writeFileSync(`${this.persistDir}/${worldId}.json`, JSON.stringify(state));
+  }
+
+  private restoreWorld(worldId: string, entry: LocalWorldRealtime): void {
+    if (this.persistDir == null) {
+      return;
+    }
+    const path = `${this.persistDir}/${worldId}.json`;
+    if (!fs.existsSync(path)) {
+      return;
+    }
+    const state = JSON.parse(fs.readFileSync(path, "utf8")) as PersistedWorldState;
+    if (state.runtime != null) {
+      entry.store.putRuntime(state.runtime);
+    }
+    if (state.warning != null) {
+      entry.store.setWarning(state.warning);
+    }
+    entry.store.setLastEpoch(state.lastEpoch);
+    for (const waiter of state.waiters) {
+      entry.store.upsertWaiter(waiter);
+    }
+    entry.store.setRoomPlayers(state.roomPlayers);
+    for (const legacy of state.legacyPresence) {
+      entry.store.upsertLegacyPresence(legacy);
+    }
+    entry.store.setHostLink(state.hostLink);
+    if (state.hostWatch != null) {
+      this.hostWatches.set(worldId, state.hostWatch);
+    }
+    if (state.alarmAt != null) {
+      // Like a Durable Object waking after a deploy: a missed alarm runs
+      // now, a future one is re-armed.
+      const at = new Date(state.alarmAt);
+      entry.alarmAt = at;
+      if (this.alarmTimersEnabled) {
+        entry.alarmTimer = setTimeout(() => {
+          entry.alarmTimer = null;
+          void this.fireAlarm(worldId, new Date());
+        }, Math.max(0, at.getTime() - Date.now()));
+      }
+    }
+  }
+
   private world(worldId: string): LocalWorldRealtime {
     const existing = this.worlds.get(worldId);
     if (existing != null) {
@@ -167,7 +292,8 @@ export class LocalRealtimeService implements RealtimeService {
       coordinator: null as unknown as WorldCoordinator,
       store,
       alarmAt: null,
-      alarmTimer: null
+      alarmTimer: null,
+      persistingHandle: null
     };
     const effects: CoordinatorEffects = {
       listMemberships: async (id: string): Promise<RuntimeMembership[]> => this.repository.listMemberships(id),
@@ -210,6 +336,7 @@ export class LocalRealtimeService implements RealtimeService {
         this.socketBridge?.lastSeenAt(hostUuid) ?? null
     };
     entry.coordinator = new WorldCoordinator(worldId, store, effects);
+    this.restoreWorld(worldId, entry);
     this.worlds.set(worldId, entry);
     return entry;
   }

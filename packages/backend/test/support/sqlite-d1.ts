@@ -10,8 +10,11 @@ import { D1SharedWorldRepository } from "../../src/d1-repository.ts";
  * in-memory repository implementation: what the tests exercise is exactly what
  * production runs.
  */
-export function createSqliteRepository(): D1SharedWorldRepository & { close(): void; raw: Database } {
-  const db = new Database(":memory:");
+export function createSqliteRepository(dbPath = ":memory:"): D1SharedWorldRepository & { close(): void; raw: Database } {
+  // A file path makes the database survive a process restart — the chaos
+  // drills use this so killing the harness backend is faithful to production
+  // (where D1 and DO storage both outlive a deploy).
+  const db = new Database(dbPath);
   db.exec("PRAGMA foreign_keys = ON;");
   db.exec(readFileSync(new URL("../../src/schema.sql", import.meta.url), "utf8"));
   seedKnownTestPlayers(db);
@@ -46,7 +49,8 @@ const KNOWN_TEST_PLAYERS: Array<[string, string]> = [
 ];
 
 function seedKnownTestPlayers(db: Database): void {
-  const insert = db.query("INSERT INTO users (player_uuid, player_name, created_at) VALUES (?, ?, ?)");
+  // OR IGNORE keeps re-opening a persisted database idempotent.
+  const insert = db.query("INSERT OR IGNORE INTO users (player_uuid, player_name, created_at) VALUES (?, ?, ?)");
   for (const [playerUuid, playerName] of KNOWN_TEST_PLAYERS) {
     insert.run(playerUuid, playerName, "2000-01-01T00:00:00.000Z");
   }

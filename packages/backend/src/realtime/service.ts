@@ -70,9 +70,13 @@ export const COORDINATOR_METHODS: ReadonlyArray<keyof CoordinatorHandle> = [
 const DATE_MARKER = "__sw_date";
 
 export function encodeCallBody(method: string, args: unknown[]): string {
-  return JSON.stringify({ method, args }, (_key, value: unknown) => {
-    if (value instanceof Date) {
-      return { [DATE_MARKER]: value.toISOString() };
+  // JSON.stringify applies Date.toJSON BEFORE the replacer sees the value, so
+  // the instanceof check must read the ORIGINAL off the containing object —
+  // hence a function (not arrow) replacer using `this[key]`.
+  return JSON.stringify({ method, args }, function (this: Record<string, unknown>, key: string, value: unknown) {
+    const original = this[key];
+    if (original instanceof Date) {
+      return { [DATE_MARKER]: original.toISOString() };
     }
     return value;
   });

@@ -1,4 +1,5 @@
 import { generateKeyPairSync } from "node:crypto";
+import { rmSync } from "node:fs";
 
 import { createRouter } from "../../../src/router.ts";
 import { createSqliteRepository } from "../sqlite-d1.ts";
@@ -120,12 +121,27 @@ const servicesKeyPair = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const servicesPublicKeyB64 = servicesKeyPair.publicKey.export({ type: "spki", format: "der" }).toString("base64");
 const servicesPrivateKeyPkcs8B64 = servicesKeyPair.privateKey.export({ type: "pkcs8", format: "der" }).toString("base64");
 
-export function createIntegrationTestApp(publicBaseUrl: string) {
-  let state = createState(publicBaseUrl);
+export interface IntegrationPersistence {
+  /** File-backed sqlite for D1 so a harness restart is deploy-faithful. */
+  dbPath?: string;
+  /** Directory for per-world coordinator state snapshots. */
+  realtimeStateDir?: string;
+}
+
+export function createIntegrationTestApp(publicBaseUrl: string, persistence: IntegrationPersistence = {}) {
+  let state = createState(publicBaseUrl, persistence);
 
   return {
     reset() {
-      state = createState(publicBaseUrl);
+      // A reset means a fresh universe: wipe the persisted files too, or
+      // stale coordinator state would resurrect into the new one.
+      if (persistence.dbPath) {
+        rmSync(persistence.dbPath, { force: true });
+      }
+      if (persistence.realtimeStateDir) {
+        rmSync(persistence.realtimeStateDir, { recursive: true, force: true });
+      }
+      state = createState(publicBaseUrl, persistence);
     },
 
     storageSnapshot() {
@@ -163,7 +179,7 @@ export function createIntegrationTestApp(publicBaseUrl: string) {
   };
 }
 
-function createState(publicBaseUrl: string): IntegrationState {
+function createState(publicBaseUrl: string, persistence: IntegrationPersistence = {}): IntegrationState {
   const env: Env = {
     PUBLIC_BASE_URL: publicBaseUrl,
     SIGNING_SECRET: "sharedworld-integration-secret",
@@ -175,7 +191,7 @@ function createState(publicBaseUrl: string): IntegrationState {
     DEV_GOOGLE_EMAIL: "integration-drive@example.com",
     MOJANG_PLAYER_CERTIFICATE_KEYS: servicesPublicKeyB64
   };
-  const repository = createSqliteRepository();
+  const repository = createSqliteRepository(persistence.dbPath ?? ":memory:");
   const storageProvider = new FakeGoogleDriveStorageProvider(repository);
   const authVerifier: AuthVerifier = {
     async verifyJoin() {
@@ -184,7 +200,7 @@ function createState(publicBaseUrl: string): IntegrationState {
   };
   // In-process realtime: real coordinator logic per world. The integration
   // server bridges realtime.onPublish to its WebSocket clients.
-  const realtime = new LocalRealtimeService(repository);
+  const realtime = new LocalRealtimeService(repository, persistence.realtimeStateDir ?? null);
   return {
     env,
     storageProvider,
