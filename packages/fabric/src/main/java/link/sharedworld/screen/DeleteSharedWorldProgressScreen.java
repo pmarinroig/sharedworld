@@ -18,6 +18,9 @@ public final class DeleteSharedWorldProgressScreen extends link.sharedworld.vers
     private final boolean ownerDelete;
     private final Component label;
     private boolean started;
+    /** 0 = indeterminate; the worker advances it per deleted backup. */
+    private volatile float progress;
+    private volatile Component progressDetail;
 
     public DeleteSharedWorldProgressScreen(SharedWorldScreen parent, WorldSummaryDto world) {
         super(Component.empty());
@@ -50,18 +53,30 @@ public final class DeleteSharedWorldProgressScreen extends link.sharedworld.vers
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
         this.sharedworldRenderMenuBackground(guiGraphics);
         super.render(guiGraphics, mouseX, mouseY, partialTick);
-        // The delete is a single opaque request, so the bar carries a full-width
-        // activity highlight instead of a fill fraction.
-        SharedWorldProgressRenderer.renderCenteredBar(
-                guiGraphics, this.font, this.width, this.height,
-                this.title, this.label, 0.0F, 0.0F, 1.0F, partialTick);
+        // Owner deletes advance per removed backup (a real fraction); the
+        // fast member-leave path stays an indeterminate activity band.
+        Component detail = this.progressDetail;
+        float fraction = this.progress;
+        if (fraction > 0.0F) {
+            SharedWorldProgressRenderer.renderCenteredBar(
+                    guiGraphics, this.font, this.width, this.height,
+                    this.title, detail != null ? detail : this.label, fraction, null, null, partialTick);
+        } else {
+            SharedWorldProgressRenderer.renderCenteredBar(
+                    guiGraphics, this.font, this.width, this.height,
+                    this.title, this.label, 0.0F, 0.0F, 1.0F, partialTick);
+        }
     }
 
     private void startDeleteFlow() {
         CompletableFuture
                 .runAsync(() -> {
                     try {
-                        SharedWorldClient.apiClient().deleteWorld(this.world.id());
+                        if (this.ownerDelete) {
+                            deleteBackupsThenWorld();
+                        } else {
+                            SharedWorldClient.apiClient().deleteWorld(this.world.id());
+                        }
                     } catch (Exception exception) {
                         throw new RuntimeException(exception);
                     }
@@ -81,6 +96,55 @@ public final class DeleteSharedWorldProgressScreen extends link.sharedworld.vers
                         link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, this.parent);
                     }
                 }));
+    }
+
+    /**
+     * Owner deletes remove backups one by one so the bar shows real progress
+     * (the old single request purged everything opaquely and could sit for a
+     * long time on Drive-heavy worlds). Order falls out of the chain rules:
+     * the backend refuses the latest backup and delta bases still in use, so
+     * each round deletes the current leaves and the final world delete
+     * cleans up whatever stayed protected.
+     */
+    private void deleteBackupsThenWorld() throws Exception {
+        SharedWorldApiClient api = SharedWorldClient.apiClient();
+        java.util.List<link.sharedworld.api.SharedWorldModels.WorldSnapshotSummaryDto> remaining =
+                new java.util.ArrayList<>(java.util.Arrays.asList(api.listSnapshots(this.world.id())));
+        int total = remaining.size() + 1;
+        int done = 0;
+        boolean deletedAnyThisRound = true;
+        while (!remaining.isEmpty() && deletedAnyThisRound) {
+            deletedAnyThisRound = false;
+            for (java.util.Iterator<link.sharedworld.api.SharedWorldModels.WorldSnapshotSummaryDto> iterator = remaining.iterator(); iterator.hasNext(); ) {
+                link.sharedworld.api.SharedWorldModels.WorldSnapshotSummaryDto snapshot = iterator.next();
+                try {
+                    api.deleteSnapshot(this.world.id(), snapshot.snapshotId());
+                } catch (SharedWorldApiClient.SharedWorldApiException exception) {
+                    if (isProtectedUntilWorldDelete(exception)) {
+                        continue;
+                    }
+                    throw exception;
+                }
+                iterator.remove();
+                done += 1;
+                updateProgress(done, total);
+                deletedAnyThisRound = true;
+            }
+        }
+        api.deleteWorld(this.world.id());
+        updateProgress(total, total);
+    }
+
+    /** The latest backup and in-use delta bases fall with the world itself. */
+    private static boolean isProtectedUntilWorldDelete(SharedWorldApiClient.SharedWorldApiException exception) {
+        return "cannot_delete_latest_snapshot".equals(exception.error())
+                || "snapshot_base_in_use".equals(exception.error());
+    }
+
+    private void updateProgress(int done, int total) {
+        this.progress = total == 0 ? 1.0F : (float) done / total;
+        this.progressDetail = Component.translatable(
+                "screen.sharedworld.delete_progress_backups", done, total);
     }
 
     private static boolean isOwner(WorldSummaryDto world) {

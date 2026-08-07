@@ -107,6 +107,36 @@ describe("reportHostGameRules", () => {
     expect(reported.settings.gamerules).toEqual({ keepInventory: false });
   });
 
+  test("a host-reported game mode persists like difficulty does", async () => {
+    const repository = createSqliteRepository();
+    const { signer } = createBlobSigner();
+    const instance = createTestService(repository, authVerifier, signer, {});
+    const world = await worldWithGuestMember(repository, instance);
+    await instance.updateWorldSettings(owner, world.id, {
+      settings: { difficulty: "easy", defaultGameMode: "survival" }
+    });
+
+    const assignment = await becomeLiveHost(instance, owner, world.id, new Date("2026-01-03T00:00:00.000Z"));
+    const reported = await instance.reportHostGameRules(
+      owner,
+      world.id,
+      { runtimeEpoch: assignment.runtimeEpoch, hostToken: assignment.hostToken, gamerules: {}, defaultGameMode: "creative" },
+      new Date("2026-01-03T00:00:30.000Z")
+    );
+
+    expect(reported.settings.defaultGameMode).toBe("creative");
+    expect(reported.settings.difficulty).toBe("easy");
+
+    await expect(
+      instance.reportHostGameRules(
+        owner,
+        world.id,
+        { runtimeEpoch: assignment.runtimeEpoch, hostToken: assignment.hostToken, gamerules: {}, defaultGameMode: "spectator" as never },
+        new Date("2026-01-03T00:00:31.000Z")
+      )
+    ).rejects.toMatchObject({ code: "invalid_world_settings" });
+  });
+
   test("an absent difficulty leaves the stored difficulty untouched", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();

@@ -92,9 +92,9 @@
   "screen.sharedworld.starting_title": "S'està iniciant Shared World",
   "screen.sharedworld.saving_title": "S'està sortint de Shared World",
   "screen.sharedworld.unclean_shutdown_title": "El món no es va tancar correctament",
-  "screen.sharedworld.unclean_shutdown_notice_self_recover_local": "%s no es va tancar correctament l'última vegada, així que el progrés pot anar fins a uns 5 minuts enrere. Si l'inicies des d'aquest ordinador, es recuperarà i es pujarà el que es va desar aquí abans d'arrencar el món.",
-  "screen.sharedworld.unclean_shutdown_notice_self_latest_snapshot": "%s no es va tancar correctament l'última vegada, així que el progrés pot anar fins a uns 5 minuts enrere. Si l'inicies des d'aquest ordinador, arrencarà des de l'última còpia de seguretat pujada, perquè aquí no s'ha trobat res més recent.",
-  "screen.sharedworld.unclean_shutdown_notice": "%s no es va tancar correctament l'última vegada, així que poden faltar fins a uns 5 minuts de progrés. Per perdre el mínim, prem Cancel·la i demana a %s que iniciï el món. O prem Inicia igualment per arrencar des de l'última còpia de seguretat pujada.",
+  "screen.sharedworld.unclean_shutdown_notice_self_recover_local": "%s no es va tancar correctament l'última vegada, així que pot faltar el progrés posterior a l'últim desat. Si l'inicies des d'aquest ordinador, es recuperarà i es pujarà el que es va desar aquí abans d'arrencar el món.",
+  "screen.sharedworld.unclean_shutdown_notice_self_latest_snapshot": "%s no es va tancar correctament l'última vegada, així que pot faltar el progrés posterior a l'últim desat. Si l'inicies des d'aquest ordinador, arrencarà des de l'última còpia de seguretat pujada, perquè aquí no s'ha trobat res més recent.",
+  "screen.sharedworld.unclean_shutdown_notice": "%s no es va tancar correctament l'última vegada, així que pot faltar el progrés posterior a l'últim desat. Per perdre el mínim, prem Cancel·la i demana a %s que iniciï el món. O prem Inicia igualment per arrencar des de l'última còpia de seguretat pujada.",
   "screen.sharedworld.unclean_shutdown_launch": "Inicia",
   "screen.sharedworld.unclean_shutdown_launch_anyway": "Inicia igualment",
   "screen.sharedworld.unclean_shutdown_confirm_launch": "N'estàs segur? Fes clic una altra vegada",
@@ -168,7 +168,6 @@
   "screen.sharedworld.settings_rule_daylightCycle": "Cicle de dia i nit: %s",
   "screen.sharedworld.settings_rule_weatherCycle": "Canvis de temps: %s",
   "screen.sharedworld.settings_rule_pvp": "Jugador contra jugador: %s",
-  "screen.sharedworld.settings_hint": "Els canvis arriben a qui estigui hostatjant en mig minut aproximadament i es desen amb el món.",
   "screen.sharedworld.settings_owner_only": "Només el propietari pot canviar la configuració del món.",
   "screen.sharedworld.edit_status_saving_settings": "S'està desant la configuració...",
   "screen.sharedworld.edit_settings_unreadable": "No s'ha pogut llegir la configuració local d'aquest món, així que es mostren els valors per defecte. Desar la configuració està desactivat fins que el món es torni a sincronitzar.",
@@ -293,5 +292,6 @@
   "screen.sharedworld.replace_done": "S'ha substituït el contingut de \"%s\".",
   "screen.sharedworld.replace_blocked_busy": "Aquest món és obert ara mateix. Demana a l'amfitrió que en surti primer i torna-ho a provar.",
   "screen.sharedworld.replace_blocked_hosting": "Deixa d'hostatjar aquest món abans de substituir-lo.",
-  "screen.sharedworld.replace_blocked_playing": "Surt d'aquest món abans de substituir-lo."
+  "screen.sharedworld.replace_blocked_playing": "Surt d'aquest món abans de substituir-lo.",
+  "screen.sharedworld.delete_progress_backups": "S'estan eliminant les còpies de seguretat... (%s de %s)"
 }

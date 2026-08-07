@@ -92,9 +92,9 @@
   "screen.sharedworld.starting_title": "Iniciando Shared World",
   "screen.sharedworld.saving_title": "Saliendo de Shared World",
   "screen.sharedworld.unclean_shutdown_title": "El mundo no se cerró correctamente",
-  "screen.sharedworld.unclean_shutdown_notice_self_recover_local": "%s no se cerró correctamente la última vez, así que el progreso puede tener hasta unos 5 minutos de retraso. Si lo inicias desde este ordenador, se recuperará y subirá lo que se guardó aquí antes de arrancar el mundo.",
-  "screen.sharedworld.unclean_shutdown_notice_self_latest_snapshot": "%s no se cerró correctamente la última vez, así que el progreso puede tener hasta unos 5 minutos de retraso. Si lo inicias desde este ordenador, arrancará desde la última copia de seguridad subida, porque aquí no se encontró nada más reciente.",
-  "screen.sharedworld.unclean_shutdown_notice": "%s no se cerró correctamente la última vez, así que pueden faltar hasta unos 5 minutos de progreso. Para perder lo mínimo, pulsa Cancelar y pídele a %s que inicie el mundo. O pulsa Iniciar igualmente para arrancar desde la última copia de seguridad subida.",
+  "screen.sharedworld.unclean_shutdown_notice_self_recover_local": "%s no se cerró correctamente la última vez, así que puede faltar el progreso posterior al último guardado. Si lo inicias desde este ordenador, se recuperará y subirá lo que se guardó aquí antes de arrancar el mundo.",
+  "screen.sharedworld.unclean_shutdown_notice_self_latest_snapshot": "%s no se cerró correctamente la última vez, así que puede faltar el progreso posterior al último guardado. Si lo inicias desde este ordenador, arrancará desde la última copia de seguridad subida, porque aquí no se encontró nada más reciente.",
+  "screen.sharedworld.unclean_shutdown_notice": "%s no se cerró correctamente la última vez, así que puede faltar el progreso posterior al último guardado. Para perder lo mínimo, pulsa Cancelar y pídele a %s que inicie el mundo. O pulsa Iniciar igualmente para arrancar desde la última copia de seguridad subida.",
   "screen.sharedworld.unclean_shutdown_launch": "Iniciar",
   "screen.sharedworld.unclean_shutdown_launch_anyway": "Iniciar igualmente",
   "screen.sharedworld.unclean_shutdown_confirm_launch": "¿Seguro? Haz clic otra vez",
@@ -168,7 +168,6 @@
   "screen.sharedworld.settings_rule_daylightCycle": "Ciclo de día y noche: %s",
   "screen.sharedworld.settings_rule_weatherCycle": "Cambios de clima: %s",
   "screen.sharedworld.settings_rule_pvp": "Jugador contra jugador: %s",
-  "screen.sharedworld.settings_hint": "Los cambios llegan a quien esté hospedando en medio minuto aproximadamente y se guardan con el mundo.",
   "screen.sharedworld.settings_owner_only": "Solo el propietario puede cambiar los ajustes del mundo.",
   "screen.sharedworld.edit_status_saving_settings": "Guardando ajustes...",
   "screen.sharedworld.edit_settings_unreadable": "No se pudo leer la configuración local de este mundo, así que se muestran los valores por defecto. Guardar la configuración está desactivado hasta que el mundo se vuelva a sincronizar.",
@@ -293,5 +292,6 @@
   "screen.sharedworld.replace_done": "Se ha reemplazado el contenido de \"%s\".",
   "screen.sharedworld.replace_blocked_busy": "Este mundo está abierto ahora mismo. Pídele al anfitrión que salga primero y vuelve a intentarlo.",
   "screen.sharedworld.replace_blocked_hosting": "Deja de hospedar este mundo antes de reemplazarlo.",
-  "screen.sharedworld.replace_blocked_playing": "Sal de este mundo antes de reemplazarlo."
+  "screen.sharedworld.replace_blocked_playing": "Sal de este mundo antes de reemplazarlo.",
+  "screen.sharedworld.delete_progress_backups": "Eliminando copias de seguridad... (%s de %s)"
 }

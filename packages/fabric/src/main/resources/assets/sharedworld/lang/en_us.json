@@ -92,9 +92,9 @@
   "screen.sharedworld.starting_title": "Starting Shared World",
   "screen.sharedworld.saving_title": "Leaving Shared World",
   "screen.sharedworld.unclean_shutdown_title": "The World Wasn't Closed Properly",
-  "screen.sharedworld.unclean_shutdown_notice_self_recover_local": "%s wasn't closed properly the last time it ran, so progress may be up to about 5 minutes behind. Launching from this computer will recover and upload what was saved here before the world starts.",
-  "screen.sharedworld.unclean_shutdown_notice_self_latest_snapshot": "%s wasn't closed properly the last time it ran, so progress may be up to about 5 minutes behind. Launching from this computer will start from the last uploaded backup, because nothing newer was found here.",
-  "screen.sharedworld.unclean_shutdown_notice": "%s wasn't closed properly the last time it ran, so up to about 5 minutes of progress may be missing. To lose as little as possible, click Cancel and ask %s to start the world. Or click Launch Anyway to start from the last uploaded backup.",
+  "screen.sharedworld.unclean_shutdown_notice_self_recover_local": "%s wasn't closed properly the last time it ran, so progress after its last save may be behind. Launching from this computer will recover and upload what was saved here before the world starts.",
+  "screen.sharedworld.unclean_shutdown_notice_self_latest_snapshot": "%s wasn't closed properly the last time it ran, so progress after its last save may be behind. Launching from this computer will start from the last uploaded backup, because nothing newer was found here.",
+  "screen.sharedworld.unclean_shutdown_notice": "%s wasn't closed properly the last time it ran, so progress after its last save may be missing. To lose as little as possible, click Cancel and ask %s to start the world. Or click Launch Anyway to start from the last uploaded backup.",
   "screen.sharedworld.unclean_shutdown_launch": "Launch",
   "screen.sharedworld.unclean_shutdown_launch_anyway": "Launch Anyway",
   "screen.sharedworld.unclean_shutdown_confirm_launch": "Are you sure? Click again",
@@ -168,7 +168,6 @@
   "screen.sharedworld.settings_rule_daylightCycle": "Day-night cycle: %s",
   "screen.sharedworld.settings_rule_weatherCycle": "Weather changes: %s",
   "screen.sharedworld.settings_rule_pvp": "Player vs player: %s",
-  "screen.sharedworld.settings_hint": "Changes reach whoever is hosting within about half a minute and are saved with the world.",
   "screen.sharedworld.settings_owner_only": "Only the owner can change world settings.",
   "screen.sharedworld.edit_status_saving_settings": "Saving settings...",
   "screen.sharedworld.edit_settings_unreadable": "Couldn't read this world's local settings, so defaults are shown. Saving settings is off until the world syncs again.",
@@ -293,5 +292,6 @@
   "screen.sharedworld.replace_done": "Replaced the content of \"%s\".",
   "screen.sharedworld.replace_blocked_busy": "This world is open right now. Ask the host to leave first, then try again.",
   "screen.sharedworld.replace_blocked_hosting": "Stop hosting this world before replacing it.",
-  "screen.sharedworld.replace_blocked_playing": "Leave this world before replacing it."
+  "screen.sharedworld.replace_blocked_playing": "Leave this world before replacing it.",
+  "screen.sharedworld.delete_progress_backups": "Removing backups... (%s of %s)"
 }

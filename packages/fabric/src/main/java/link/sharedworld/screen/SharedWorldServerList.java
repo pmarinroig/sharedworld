@@ -161,17 +161,12 @@ public final class SharedWorldServerList extends link.sharedworld.versioned.Vers
                     this.statusIcon
             );
 
-            int iconRight = left + ROW_WIDTH - STATUS_ICON_RIGHT_INSET;
-            int playerCountWidth = SharedWorldServerList.this.minecraft.font.width(playerCount(this.world));
-            int playerCountX = iconRight - playerCountWidth - PLAYER_COUNT_GAP;
+            RowHitBoxes boxes = rowHitBoxes(
+                    SharedWorldServerList.this.minecraft.font, this.getX(), this.getY(), playerCount(this.world));
 
-            if (this.statusIconTooltip != null && mouseX >= iconRight && mouseX <= iconRight + 10 && mouseY >= top && mouseY <= top + 8) {
+            if (this.statusIconTooltip != null && boxes.overStatusIcon(mouseX, mouseY)) {
                 link.sharedworld.versioned.GuiCompat.deferTooltip(guiGraphics, SharedWorldServerList.this.minecraft, this.statusIconTooltip, mouseX, mouseY);
-            } else if (this.onlinePlayersTooltip != null
-                    && mouseX >= playerCountX
-                    && mouseX <= playerCountX + playerCountWidth
-                    && mouseY >= top
-                    && mouseY <= top + 9) {
+            } else if (this.onlinePlayersTooltip != null && boxes.overPlayerCount(mouseX, mouseY)) {
                 java.util.List<FormattedCharSequence> tooltipLines = new java.util.ArrayList<>(this.onlinePlayersTooltip.size());
                 for (Component component : this.onlinePlayersTooltip) {
                     tooltipLines.add(component.getVisualOrderText());
@@ -401,6 +396,33 @@ public final class SharedWorldServerList extends link.sharedworld.versioned.Vers
         guiGraphics.fill(x + 1, y + 1, x + ROW_WIDTH - 1, y + ROW_HEIGHT - 1, 0xFF000000);
     }
 
+    /**
+     * The status icon and player count's drawn rectangles. The renderer and
+     * the tooltip hover tests both read from here — they diverged once
+     * (hover rects were computed from a different origin and width constant
+     * than the drawn pixels), which made tooltips trigger next to, instead
+     * of on, their targets.
+     */
+    record RowHitBoxes(int statusIconX, int statusIconY, int playerCountX, int playerCountY, int playerCountWidth) {
+        boolean overStatusIcon(int mouseX, int mouseY) {
+            return mouseX >= statusIconX && mouseX <= statusIconX + 10 && mouseY >= statusIconY && mouseY <= statusIconY + 8;
+        }
+
+        boolean overPlayerCount(int mouseX, int mouseY) {
+            return mouseX >= playerCountX && mouseX <= playerCountX + playerCountWidth
+                    && mouseY >= playerCountY && mouseY <= playerCountY + 9;
+        }
+    }
+
+    static RowHitBoxes rowHitBoxes(Font font, int rowX, int rowY, Component playerCount) {
+        int left = rowX + CONTENT_PADDING;
+        int top = rowY + CONTENT_PADDING;
+        int iconRight = left + CONTENT_WIDTH - STATUS_ICON_RIGHT_INSET;
+        int playerCountWidth = font.width(playerCount);
+        int playerCountX = iconRight - playerCountWidth - PLAYER_COUNT_GAP;
+        return new RowHitBoxes(iconRight, top, playerCountX, top + TITLE_Y_OFFSET, playerCountWidth);
+    }
+
     static void renderRowContents(
             GuiGraphics guiGraphics,
             Font font,
@@ -411,12 +433,12 @@ public final class SharedWorldServerList extends link.sharedworld.versioned.Vers
             Component playerCount,
             String statusIcon
     ) {
+        RowHitBoxes boxes = rowHitBoxes(font, rowX, rowY, playerCount);
         int left = rowX + CONTENT_PADDING;
         int top = rowY + CONTENT_PADDING;
         int textLeft = left + TEXT_LEFT_OFFSET;
-        int iconRight = left + CONTENT_WIDTH - STATUS_ICON_RIGHT_INSET;
-        int playerCountWidth = font.width(playerCount);
-        int playerCountX = iconRight - playerCountWidth - PLAYER_COUNT_GAP;
+        int iconRight = boxes.statusIconX();
+        int playerCountX = boxes.playerCountX();
         int detailsWidth = Math.max(90, playerCountX - textLeft - DETAILS_GAP);
 
         String title = link.sharedworld.SharedWorldText.truncate(font, name, Math.max(40, playerCountX - DETAILS_GAP - textLeft));

@@ -481,10 +481,16 @@ public final class SharedWorldHostingManager {
      * settings/membership changes request an immediate heartbeat instead.
      */
     private boolean shouldAttemptLiveHeartbeat(long now) {
+        // A pushed settings/membership change bypasses the base cadence —
+        // only retry pacing applies — so kicks and settings edits reach the
+        // running server within about a second, not a heartbeat interval.
+        if (this.immediateHeartbeatRequested) {
+            return HostLifecyclePolicy.shouldAttemptHeartbeat(now, 0L, this.lastHeartbeatAttemptAt, 0L, HEARTBEAT_RETRY_INTERVAL_MS);
+        }
         if (!shouldAttemptHeartbeat(now)) {
             return false;
         }
-        if (!this.realtimeConnected.getAsBoolean() || this.immediateHeartbeatRequested) {
+        if (!this.realtimeConnected.getAsBoolean()) {
             return true;
         }
         return now - this.lastHeartbeatAt >= PUSH_CONNECTED_HEARTBEAT_INTERVAL_MS;
@@ -998,7 +1004,8 @@ public final class SharedWorldHostingManager {
                         context.runtimeEpoch(),
                         context.hostToken(),
                         snapshot.gamerules(),
-                        snapshot.difficulty()
+                        snapshot.difficulty(),
+                        snapshot.defaultGameMode()
                 );
                 dispatchToMainThread(() -> onGameRulesPushSucceeded(context, snapshot, response));
             } catch (Exception exception) {

@@ -286,8 +286,8 @@ public final class SharedWorldApiClient {
         return request("POST", "/worlds/" + worldId + "/heartbeat", body, SharedWorldModels.HostHeartbeatResponseDto.class, true);
     }
 
-    /** Persist the managed server's current gamerule + difficulty values (host runtime authority, not ownership). */
-    public SharedWorldModels.HostGameRulesReportResponseDto reportHostGameRules(String worldId, long runtimeEpoch, String hostToken, Map<String, Boolean> gamerules, String difficulty) throws IOException, InterruptedException {
+    /** Persist the managed server's current gamerule/difficulty/game-mode values (host runtime authority, not ownership). */
+    public SharedWorldModels.HostGameRulesReportResponseDto reportHostGameRules(String worldId, long runtimeEpoch, String hostToken, Map<String, Boolean> gamerules, String difficulty, String defaultGameMode) throws IOException, InterruptedException {
         ensureSession();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("runtimeEpoch", runtimeEpoch);
@@ -295,6 +295,9 @@ public final class SharedWorldApiClient {
         body.put("gamerules", gamerules);
         if (difficulty != null) {
             body.put("difficulty", difficulty);
+        }
+        if (defaultGameMode != null) {
+            body.put("defaultGameMode", defaultGameMode);
         }
         return request("POST", "/worlds/" + worldId + "/host-gamerules", body, SharedWorldModels.HostGameRulesReportResponseDto.class, true);
     }

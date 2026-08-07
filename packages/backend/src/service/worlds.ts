@@ -162,10 +162,12 @@ export async function updateWorldSettings(
 }
 
 /**
- * Host-reported gamerule persistence: the active host pushes the managed
- * server's current gamerule values so in-game /gamerule changes survive the
- * session. Runtime-authorized (the host may not be the owner). Gamerules
- * merge per key; difficulty and defaultGameMode are never touched here.
+ * Host-reported settings persistence: the active host pushes the managed
+ * server's current gamerule/difficulty/game-mode values so in-game
+ * /gamerule, /difficulty, and /defaultgamemode changes survive the session.
+ * Runtime-authorized (the host may not be the owner). Gamerules merge per
+ * key; difficulty and game mode are last-write-wins with the owner's
+ * settings screen.
  */
 export async function reportHostGameRules(
   svc: ServiceContext,
@@ -181,6 +183,7 @@ export async function reportHostGameRules(
   ], now);
   const gamerules = validateGameRules(request.gamerules);
   const difficulty = validateOptionalDifficulty(request.difficulty);
+  const defaultGameMode = validateOptionalGameMode(request.defaultGameMode);
   // Merge-and-CAS: the owner's PUT bumps the revision blindly, so a report
   // racing an owner save must re-read and merge against the fresh base
   // instead of resurrecting stale difficulty/gameMode values.
@@ -195,6 +198,9 @@ export async function reportHostGameRules(
     };
     if (difficulty != null) {
       merged.difficulty = difficulty;
+    }
+    if (defaultGameMode != null) {
+      merged.defaultGameMode = defaultGameMode;
     }
     if (await svc.repository.updateWorldSettingsIfRevision(worldId, JSON.stringify(merged), stored.settingsRevision)) {
       await publishWorldEvent(svc, worldId, "settings-changed");
@@ -347,6 +353,17 @@ function validateOptionalDifficulty(raw: WorldDifficulty | null | undefined): Wo
   }
   if (!WORLD_DIFFICULTIES.includes(raw)) {
     throw new HttpError(400, "invalid_world_settings", "That difficulty isn't one of the supported values.");
+  }
+  return raw;
+}
+
+/** Host-reported game mode: absent means "no change", anything else must be valid. */
+function validateOptionalGameMode(raw: WorldDefaultGameMode | null | undefined): WorldDefaultGameMode | null {
+  if (raw == null) {
+    return null;
+  }
+  if (!WORLD_DEFAULT_GAME_MODES.includes(raw)) {
+    throw new HttpError(400, "invalid_world_settings", "That game mode isn't one of the supported values.");
   }
   return raw;
 }

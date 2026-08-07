@@ -352,6 +352,8 @@ export interface HostGameRulesReportRequest {
    * with the owner's settings screen). Absent/null = no difficulty change.
    */
   difficulty?: WorldDifficulty | null;
+  /** Same contract as difficulty, for /defaultgamemode. */
+  defaultGameMode?: WorldDefaultGameMode | null;
 }
 
 export interface HostGameRulesReportResponse {

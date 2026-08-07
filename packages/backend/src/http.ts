@@ -43,6 +43,15 @@ export interface ErrorLogContext {
   route?: string;
 }
 
+/**
+ * The startup-progress relay races phase transitions by design (a report can
+ * land right after live promotion or release retired the epoch), so its
+ * host_not_active 409s are expected traffic, not a failing client.
+ */
+function isExpectedProgressRace(code: string, route: string | undefined): boolean {
+  return code === "host_not_active" && route != null && route.endsWith("/host-startup-progress");
+}
+
 export function errorResponse(error: unknown, context: ErrorLogContext = {}): Response {
   if (error instanceof HttpError) {
     if (error.status >= 500) {
@@ -53,7 +62,7 @@ export function errorResponse(error: unknown, context: ErrorLogContext = {}): Re
         route: context.route,
         clientVersion: context.clientVersion ?? null
       });
-    } else if (error.code !== "not_found") {
+    } else if (error.code !== "not_found" && !isExpectedProgressRace(error.code, context.route)) {
       // 4xx used to be invisible in Workers Logs, which made every field
       // report start from zero. One line with the mod version answers "which
       // release is failing" immediately. not_found is excluded so bot route

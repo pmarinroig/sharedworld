@@ -22,12 +22,12 @@ public final class WorldSettingsReader {
      * /difficulty persists like /gamerule does). A null difficulty means
      * "unknown, report nothing for it".
      */
-    public record Snapshot(Map<String, Boolean> gamerules, String difficulty) {
+    public record Snapshot(Map<String, Boolean> gamerules, String difficulty, String defaultGameMode) {
     }
 
     /** Must run on the server thread (callers wrap in server.execute). */
     public static Snapshot readSnapshot(MinecraftServer server) {
-        return new Snapshot(readGameRules(server), readDifficultyId(server));
+        return new Snapshot(readGameRules(server), readDifficultyId(server), readDefaultGameModeId(server));
     }
 
     /** Must run on the server thread (callers wrap in server.execute). */
@@ -40,6 +40,25 @@ public final class WorldSettingsReader {
             values.put(rule.id(), link.sharedworld.versioned.ServerSettingsCompat.getGameRule(server, rule));
         }
         return values;
+    }
+
+    /** The settings-vocabulary game mode id, or null when unavailable/unmanaged. */
+    static String readDefaultGameModeId(MinecraftServer server) {
+        if (server == null) {
+            return null;
+        }
+        net.minecraft.world.level.GameType mode = link.sharedworld.versioned.ServerSettingsCompat.getDefaultGameMode(server);
+        if (mode == null) {
+            return null;
+        }
+        return switch (mode) {
+            case SURVIVAL -> "survival";
+            case CREATIVE -> "creative";
+            case ADVENTURE -> "adventure";
+            // Spectator is not a managed value; report nothing rather than
+            // an id the backend would reject.
+            default -> null;
+        };
     }
 
     /** The settings-vocabulary difficulty id, or null when unavailable. */

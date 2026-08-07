@@ -298,14 +298,6 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         // it can never run into the gamerule toggles on the right.
         int columnWidth = Math.min(170, this.contentArea.width() / 2 - 24);
         int leftColumn = this.contentArea.left() + (this.contentArea.width() / 2 - columnWidth) / 2;
-        this.drawWrappedText(
-                guiGraphics,
-                Component.translatable("screen.sharedworld.settings_hint"),
-                leftColumn,
-                top + 34 + 2 * 24 + 8,
-                columnWidth,
-                0xFF8EA3BC
-        );
         if (!this.isOwner()) {
             this.drawWrappedText(
                     guiGraphics,

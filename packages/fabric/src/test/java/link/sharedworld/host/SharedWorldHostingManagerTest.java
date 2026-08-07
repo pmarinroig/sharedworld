@@ -457,7 +457,7 @@ final class SharedWorldHostingManagerTest {
         try {
             Map<String, Boolean> first = Map.of("keepInventory", false, "pvp", true);
             invokeHandleGameRulesSnapshot(manager, first);
-            assertEquals(new WorldSettingsReader.Snapshot(first, null), getField(manager, "lastConfirmedGameRules"));
+            assertEquals(new WorldSettingsReader.Snapshot(first, null, null), getField(manager, "lastConfirmedGameRules"));
             assertEquals(0, background.size());
 
             // An unchanged snapshot never pushes.
@@ -475,7 +475,7 @@ final class SharedWorldHostingManagerTest {
             // baseline stays put, so the next poll re-diffs and retries.
             background.runNext();
             assertEquals(0L, ((java.util.concurrent.atomic.AtomicLong) getField(manager, "gameRulesPushInFlight")).get());
-            assertEquals(new WorldSettingsReader.Snapshot(first, null), getField(manager, "lastConfirmedGameRules"));
+            assertEquals(new WorldSettingsReader.Snapshot(first, null, null), getField(manager, "lastConfirmedGameRules"));
         } finally {
             SharedWorldDevSessionBridge.clear();
         }
@@ -500,7 +500,7 @@ final class SharedWorldHostingManagerTest {
             invokeOnGameRulesPushSucceeded(manager, hostAttemptContext(1L, 7L, "world-1", 7L, "token-7"), snapshot,
                     new SharedWorldModels.HostGameRulesReportResponseDto(merged, 5L));
 
-            assertEquals(new WorldSettingsReader.Snapshot(snapshot, null), getField(manager, "lastConfirmedGameRules"));
+            assertEquals(new WorldSettingsReader.Snapshot(snapshot, null, null), getField(manager, "lastConfirmedGameRules"));
             assertEquals(5L, getField(manager, "appliedSettingsRevision"));
             // Only difficulty/game mode re-apply; the gamerules the server
             // already holds are stripped so a racing in-game change survives.
@@ -518,7 +518,7 @@ final class SharedWorldHostingManagerTest {
             invokeOnGameRulesPushSucceeded(manager, hostAttemptContext(99L, 7L, "world-1", 7L, "token-7"),
                     Map.of("pvp", false), new SharedWorldModels.HostGameRulesReportResponseDto(merged, 9L));
             assertEquals(5L, getField(manager, "appliedSettingsRevision"));
-            assertEquals(new WorldSettingsReader.Snapshot(snapshot, null), getField(manager, "lastConfirmedGameRules"));
+            assertEquals(new WorldSettingsReader.Snapshot(snapshot, null, null), getField(manager, "lastConfirmedGameRules"));
         } finally {
             SharedWorldDevSessionBridge.clear();
         }
@@ -535,12 +535,12 @@ final class SharedWorldHostingManagerTest {
 
             // A heartbeat that applies a new revision rewrites server gamerules,
             // so the recorded baseline must not survive it.
-            setField(manager, "lastConfirmedGameRules", new WorldSettingsReader.Snapshot(Map.of("pvp", true), null));
+            setField(manager, "lastConfirmedGameRules", new WorldSettingsReader.Snapshot(Map.of("pvp", true), null, null));
             invokeLiveHeartbeat(manager, heartbeatResponseWithSettings("world-1", "host-live", 7L, "join.example", settings, 3L));
             assertNull(getField(manager, "lastConfirmedGameRules"));
 
             // Same for the owner-hosting local shortcut.
-            setField(manager, "lastConfirmedGameRules", new WorldSettingsReader.Snapshot(Map.of("pvp", true), null));
+            setField(manager, "lastConfirmedGameRules", new WorldSettingsReader.Snapshot(Map.of("pvp", true), null, null));
             manager.applyLocalWorldSettingsChange("world-1", settings);
             assertNull(getField(manager, "lastConfirmedGameRules"));
         } finally {
@@ -576,13 +576,13 @@ final class SharedWorldHostingManagerTest {
         primeRunningGameRuleManager(manager);
         SharedWorldDevSessionBridge.setHostingSharedWorld(true, HOST_UUID);
         try {
-            setField(manager, "lastConfirmedGameRules", new WorldSettingsReader.Snapshot(Map.of("pvp", true), null));
+            setField(manager, "lastConfirmedGameRules", new WorldSettingsReader.Snapshot(Map.of("pvp", true), null, null));
             manager.beginCoordinatedRelease();
             assertNotNull(captured.get());
 
             // The flush snapshot lands after the release started; a changed
             // value still pushes (the backend accepts host-finalizing).
-            captured.get().accept(new WorldSettingsReader.Snapshot(Map.of("pvp", false), null));
+            captured.get().accept(new WorldSettingsReader.Snapshot(Map.of("pvp", false), null, null));
             assertEquals(1, background.size());
         } finally {
             SharedWorldDevSessionBridge.clear();
@@ -611,10 +611,10 @@ final class SharedWorldHostingManagerTest {
 
             // With a baseline but no change, the flush snapshot pushes nothing.
             setField(manager, "coordinatedRelease", releaseNone);
-            setField(manager, "lastConfirmedGameRules", new WorldSettingsReader.Snapshot(Map.of("pvp", true), null));
+            setField(manager, "lastConfirmedGameRules", new WorldSettingsReader.Snapshot(Map.of("pvp", true), null, null));
             manager.beginCoordinatedRelease();
             assertNotNull(captured.get());
-            captured.get().accept(new WorldSettingsReader.Snapshot(Map.of("pvp", true), null));
+            captured.get().accept(new WorldSettingsReader.Snapshot(Map.of("pvp", true), null, null));
             assertEquals(0, background.size());
         } finally {
             SharedWorldDevSessionBridge.clear();
@@ -672,7 +672,9 @@ final class SharedWorldHostingManagerTest {
         manager.setRealtimeConnectedSupplier(() -> true);
 
         manager.requestImmediateHeartbeat();
-        driveLiveLease.invoke(manager, 1_031_000L);
+        // 5s after the last heartbeat: well inside the base cadence — the
+        // immediate trigger must bypass it (only retry pacing applies).
+        driveLiveLease.invoke(manager, 1_005_000L);
         assertEquals(1, background.size());
         // The trigger is one-shot: it clears when the heartbeat dispatches.
         assertEquals(false, getField(manager, "immediateHeartbeatRequested"));
@@ -727,9 +729,9 @@ final class SharedWorldHostingManagerTest {
             Object context = hostAttemptContext(1L, 7L, "world-1", 7L, "token-7");
 
             // Baseline with normal difficulty; same rules, difficulty flips to hard.
-            handle.invoke(manager, context, new WorldSettingsReader.Snapshot(Map.of("pvp", true), "normal"));
+            handle.invoke(manager, context, new WorldSettingsReader.Snapshot(Map.of("pvp", true), "normal", "survival"));
             assertEquals(0, background.size());
-            handle.invoke(manager, context, new WorldSettingsReader.Snapshot(Map.of("pvp", true), "hard"));
+            handle.invoke(manager, context, new WorldSettingsReader.Snapshot(Map.of("pvp", true), "hard", "survival"));
             assertEquals(1, background.size());
         } finally {
             SharedWorldDevSessionBridge.clear();
@@ -786,7 +788,7 @@ final class SharedWorldHostingManagerTest {
                 WorldSettingsReader.Snapshot.class
         );
         handle.setAccessible(true);
-        handle.invoke(manager, hostAttemptContext(1L, 7L, "world-1", 7L, "token-7"), new WorldSettingsReader.Snapshot(snapshot, null));
+        handle.invoke(manager, hostAttemptContext(1L, 7L, "world-1", 7L, "token-7"), new WorldSettingsReader.Snapshot(snapshot, null, null));
     }
 
     private static void invokeOnGameRulesPushSucceeded(
@@ -802,7 +804,7 @@ final class SharedWorldHostingManagerTest {
                 SharedWorldModels.HostGameRulesReportResponseDto.class
         );
         succeeded.setAccessible(true);
-        succeeded.invoke(manager, context, new WorldSettingsReader.Snapshot(snapshot, null), response);
+        succeeded.invoke(manager, context, new WorldSettingsReader.Snapshot(snapshot, null, null), response);
     }
 
     @Test
