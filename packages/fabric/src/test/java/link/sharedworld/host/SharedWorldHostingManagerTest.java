@@ -621,6 +621,95 @@ final class SharedWorldHostingManagerTest {
         }
     }
 
+    @Test
+    void liveHeartbeatsStretchToASafetyNetWhileRealtimeIsConnected() throws Exception {
+        ManualExecutor background = new ManualExecutor();
+        SharedWorldHostingManager manager = gameRuleManager(new HostingEvents() {
+        }, "realtime-stretch", background);
+        primeRunningGameRuleManager(manager);
+        setField(manager, "lastHeartbeatAt", 1_000_000L);
+        setField(manager, "lastHeartbeatAttemptAt", 1_000_000L);
+        Method driveLiveLease = SharedWorldHostingManager.class.getDeclaredMethod("driveLiveLease", long.class);
+        driveLiveLease.setAccessible(true);
+
+        // Connected: 31s past the last heartbeat is base-cadence due, but the
+        // stretched safety net holds it back.
+        manager.setRealtimeConnectedSupplier(() -> true);
+        driveLiveLease.invoke(manager, 1_031_000L);
+        assertEquals(0, background.size());
+
+        // Past the safety-net cadence the heartbeat still goes out.
+        driveLiveLease.invoke(manager, 1_000_000L + 5 * 60_000L + 1_000L);
+        assertEquals(1, background.size());
+    }
+
+    @Test
+    void aDroppedChannelRestoresTheBaseHeartbeatCadence() throws Exception {
+        ManualExecutor background = new ManualExecutor();
+        SharedWorldHostingManager manager = gameRuleManager(new HostingEvents() {
+        }, "realtime-drop", background);
+        primeRunningGameRuleManager(manager);
+        setField(manager, "lastHeartbeatAt", 1_000_000L);
+        setField(manager, "lastHeartbeatAttemptAt", 1_000_000L);
+        Method driveLiveLease = SharedWorldHostingManager.class.getDeclaredMethod("driveLiveLease", long.class);
+        driveLiveLease.setAccessible(true);
+
+        manager.setRealtimeConnectedSupplier(() -> false);
+        driveLiveLease.invoke(manager, 1_031_000L);
+        assertEquals(1, background.size());
+    }
+
+    @Test
+    void aPushedChangeRequestsAnImmediateHeartbeatWhileConnected() throws Exception {
+        ManualExecutor background = new ManualExecutor();
+        SharedWorldHostingManager manager = gameRuleManager(new HostingEvents() {
+        }, "realtime-immediate", background);
+        primeRunningGameRuleManager(manager);
+        setField(manager, "lastHeartbeatAt", 1_000_000L);
+        setField(manager, "lastHeartbeatAttemptAt", 1_000_000L);
+        Method driveLiveLease = SharedWorldHostingManager.class.getDeclaredMethod("driveLiveLease", long.class);
+        driveLiveLease.setAccessible(true);
+        manager.setRealtimeConnectedSupplier(() -> true);
+
+        manager.requestImmediateHeartbeat();
+        driveLiveLease.invoke(manager, 1_031_000L);
+        assertEquals(1, background.size());
+        // The trigger is one-shot: it clears when the heartbeat dispatches.
+        assertEquals(false, getField(manager, "immediateHeartbeatRequested"));
+    }
+
+    @Test
+    void gameRulesPollOnTheirOwnCadenceIndependentOfHeartbeats() throws Exception {
+        AtomicReference<java.util.function.Consumer<Map<String, Boolean>>> captured = new AtomicReference<>();
+        HostingEvents events = new HostingEvents() {
+            @Override
+            public void onWorldGameRulesSnapshotRequested(java.util.function.Consumer<Map<String, Boolean>> consumer) {
+                captured.set(consumer);
+            }
+        };
+        SharedWorldHostingManager manager = gameRuleManager(events, "realtime-gamerule-cadence", new ManualExecutor());
+        primeRunningGameRuleManager(manager);
+        SharedWorldDevSessionBridge.setHostingSharedWorld(true, HOST_UUID);
+        try {
+            Method driveRunningLoop = SharedWorldHostingManager.class.getDeclaredMethod("driveRunningLoop", long.class);
+            driveRunningLoop.setAccessible(true);
+
+            driveRunningLoop.invoke(manager, 6_000L);
+            assertNotNull(captured.get());
+
+            // Inside the 5s local cadence: no new snapshot request.
+            captured.set(null);
+            driveRunningLoop.invoke(manager, 8_000L);
+            assertNull(captured.get());
+
+            // Past it: the next local read happens with no heartbeat involved.
+            driveRunningLoop.invoke(manager, 12_000L);
+            assertNotNull(captured.get());
+        } finally {
+            SharedWorldDevSessionBridge.clear();
+        }
+    }
+
     private SharedWorldHostingManager gameRuleManager(HostingEvents events, String storeDir, Executor backgroundExecutor) {
         return new SharedWorldHostingManager(
                 apiClient(),

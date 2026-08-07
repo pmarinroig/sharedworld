@@ -35,7 +35,14 @@ const JAVA_ONLY_CONSTANTS = new Set([
   // the backend has no matching literal — env vars drive the suggestions.
   "host/SharedWorldHostingManager.java#MAX_SUGGESTED_HEARTBEAT_INTERVAL_MS",
   "host/SharedWorldHostingManager.java#MAX_SUGGESTED_AUTOSAVE_INTERVAL_MS",
-  "SharedWorldPresenceManager.java#MAX_SUGGESTED_HEARTBEAT_INTERVAL_MS"
+  "SharedWorldPresenceManager.java#MAX_SUGGESTED_HEARTBEAT_INTERVAL_MS",
+  // 0.3.0 push-fallback cadences: while the realtime channel is connected,
+  // polling is only a safety net, so these are mod-local pacing choices —
+  // the backend's lease survival never depends on them (the coordinator
+  // extends leases from socket keepalives).
+  "host/SharedWorldHostingManager.java#PUSH_CONNECTED_HEARTBEAT_INTERVAL_MS",
+  "host/SharedWorldHostingManager.java#GAMERULES_LOCAL_POLL_INTERVAL_MS",
+  "SharedWorldPresenceManager.java#PUSH_CONNECTED_HEARTBEAT_INTERVAL_MS"
 ]);
 
 /** Contract constants enforced only by the backend, with no mod-side literal. */

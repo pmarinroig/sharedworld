@@ -48,6 +48,13 @@ public final class SharedWorldHostingManager {
     // lease timeout; autosaves may stretch to an hour at most.
     private static final long MAX_SUGGESTED_HEARTBEAT_INTERVAL_MS = 60_000L;
     private static final long MAX_SUGGESTED_AUTOSAVE_INTERVAL_MS = 60 * 60_000L;
+    // 0.3.0: while the realtime channel is connected the coordinator extends
+    // the lease from socket keepalives and settings/membership changes arrive
+    // as pushes, so the live heartbeat drops to a safety-net cadence.
+    private static final long PUSH_CONNECTED_HEARTBEAT_INTERVAL_MS = 5 * 60_000L;
+    // Local gamerule reads are free; only diffs go over HTTP. Decoupled from
+    // the heartbeat so stretched heartbeats never delay gamerule persistence.
+    private static final long GAMERULES_LOCAL_POLL_INTERVAL_MS = 5_000L;
 
     private final SharedWorldApiClient apiClient;
     private final HostStartupProgressRelayController startupProgressRelay;
@@ -101,6 +108,10 @@ public final class SharedWorldHostingManager {
     private volatile boolean startupProgressRelayActive;
     private volatile long runtimeEpoch;
     private volatile String hostToken;
+    /** 0.3.0 realtime: connection state supplier + push-triggered heartbeats. */
+    private volatile java.util.function.BooleanSupplier realtimeConnected = () -> false;
+    private volatile boolean immediateHeartbeatRequested;
+    private volatile long lastGameRulesLocalPollAt;
     private volatile StartupMode startupMode = StartupMode.NORMAL;
     private volatile boolean startupRecoveringLocalCrash;
 
@@ -284,6 +295,8 @@ public final class SharedWorldHostingManager {
         this.errorMessage = null;
         this.lastHeartbeatAt = 0L;
         this.lastHeartbeatAttemptAt = 0L;
+        this.immediateHeartbeatRequested = false;
+        this.lastGameRulesLocalPollAt = 0L;
         this.consecutiveHeartbeatFailures = 0;
         this.lastAutosaveAt = 0L;
         this.heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS;
@@ -456,8 +469,36 @@ public final class SharedWorldHostingManager {
             }
             return;
         }
-        if (shouldAttemptHeartbeat(now)) {
+        if (shouldAttemptLiveHeartbeat(now)) {
             heartbeat(this.publishedJoinTarget, this.phase == Phase.SAVING);
+        }
+    }
+
+    /**
+     * The live heartbeat keeps its base cadence while the realtime channel is
+     * down (it is the lease), but stretches to a safety net while connected —
+     * the coordinator extends the lease from socket keepalives, and pushed
+     * settings/membership changes request an immediate heartbeat instead.
+     */
+    private boolean shouldAttemptLiveHeartbeat(long now) {
+        if (!shouldAttemptHeartbeat(now)) {
+            return false;
+        }
+        if (!this.realtimeConnected.getAsBoolean() || this.immediateHeartbeatRequested) {
+            return true;
+        }
+        return now - this.lastHeartbeatAt >= PUSH_CONNECTED_HEARTBEAT_INTERVAL_MS;
+    }
+
+    /** Wired by the client so heartbeat pacing can see the channel state. */
+    public void setRealtimeConnectedSupplier(java.util.function.BooleanSupplier supplier) {
+        this.realtimeConnected = Objects.requireNonNull(supplier, "supplier");
+    }
+
+    /** A pushed settings/membership change wants its heartbeat fetch now. */
+    public void requestImmediateHeartbeat() {
+        if (this.phase == Phase.RUNNING || this.phase == Phase.SAVING) {
+            this.immediateHeartbeatRequested = true;
         }
     }
 
@@ -467,6 +508,16 @@ public final class SharedWorldHostingManager {
         }
         if (now - this.lastAutosaveAt >= this.autosaveIntervalMs && this.saveInFlight.compareAndSet(0L, this.hostSessionGeneration)) {
             uploadSnapshot(false);
+        }
+        // Gamerule detection runs on its own local cadence (0.3.0): reading
+        // the integrated server is free, and only diffs are reported, so a
+        // stretched heartbeat never delays /gamerule persistence.
+        if (now - this.lastGameRulesLocalPollAt >= GAMERULES_LOCAL_POLL_INTERVAL_MS) {
+            this.lastGameRulesLocalPollAt = now;
+            HostAttemptContext context = currentAttemptContext();
+            if (context != null) {
+                maybeRequestGameRulesSnapshot(context);
+            }
         }
     }
 
@@ -700,6 +751,16 @@ public final class SharedWorldHostingManager {
         return this.phase;
     }
 
+    /** The hosted world id while a live session runs, else null (roster reporting). */
+    public String runningWorldId() {
+        return this.phase == Phase.RUNNING && this.world != null ? this.world.id() : null;
+    }
+
+    /** The current host authorization epoch; only meaningful while hosting. */
+    public long currentRuntimeEpoch() {
+        return this.runtimeEpoch;
+    }
+
     public String statusMessage() {
         return this.statusMessage;
     }
@@ -783,6 +844,7 @@ public final class SharedWorldHostingManager {
             return;
         }
         this.lastHeartbeatAttemptAt = System.currentTimeMillis();
+        this.immediateHeartbeatRequested = false;
         String heartbeatJoinTarget = joinTarget == null || joinTarget.isBlank() ? null : joinTarget;
         CompletableFuture.runAsync(() -> {
             try {
@@ -1344,6 +1406,8 @@ public final class SharedWorldHostingManager {
         this.publishedJoinTarget = null;
         this.lastHeartbeatAt = 0L;
         this.lastHeartbeatAttemptAt = 0L;
+        this.immediateHeartbeatRequested = false;
+        this.lastGameRulesLocalPollAt = 0L;
         this.consecutiveHeartbeatFailures = 0;
         this.lastAutosaveAt = 0L;
         this.heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS;

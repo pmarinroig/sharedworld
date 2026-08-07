@@ -44,6 +44,7 @@ public final class SharedWorldClient implements ClientModInitializer {
     private static final SharedWorldPlaySessionTracker PLAY_SESSION_TRACKER = new SharedWorldPlaySessionTracker();
     private static final link.sharedworld.realtime.RealtimeEvents REALTIME_EVENTS = new link.sharedworld.realtime.RealtimeEvents();
     private static link.sharedworld.realtime.SharedWorldPushChannel pushChannel;
+    private static link.sharedworld.realtime.HostRosterReporter hostRosterReporter;
     private static volatile boolean pushChannelStarted;
 
     @Override
@@ -90,6 +91,25 @@ public final class SharedWorldClient implements ClientModInitializer {
         REALTIME_EVENTS.subscribe(guestRuntimeWatcher);
         REALTIME_EVENTS.subscribe(guestCacheWarmer);
         REALTIME_EVENTS.subscribe(presenceManager);
+        hostingManager.setRealtimeConnectedSupplier(REALTIME_EVENTS::isConnected);
+        REALTIME_EVENTS.subscribe(new link.sharedworld.realtime.RealtimeEvents.Subscriber() {
+            @Override
+            public void onRealtimeEvent(link.sharedworld.api.SharedWorldModels.RealtimeEventDto event) {
+                // A pushed settings or membership change reaches the running
+                // host through an immediate heartbeat, reusing the existing
+                // fetch-and-apply path (HTTP stays the authority).
+                if (("settings-changed".equals(event.kind()) || "membership-changed".equals(event.kind()))
+                        && event.worldId().equals(hostingManager.runningWorldId())) {
+                    hostingManager.requestImmediateHeartbeat();
+                }
+            }
+        });
+        hostRosterReporter = new link.sharedworld.realtime.HostRosterReporter(
+                () -> hostingManager.runningWorldId(),
+                () -> hostingManager.currentRuntimeEpoch(),
+                REALTIME_EVENTS::isConnected,
+                (worldId, epoch, players) -> pushChannel.sendHostPlayers(worldId, epoch, players)
+        );
         link.sharedworld.command.SharedWorldCommands.register(
                 apiClient,
                 SharedWorldClient::hostingManager,
@@ -106,6 +126,7 @@ public final class SharedWorldClient implements ClientModInitializer {
             guestRuntimeWatcher.tick(client);
             guestCacheWarmer.tick(client);
             sessionCoordinator.tick(client);
+            hostRosterReporter.tick(client);
             if (SharedWorldClientLifecycleRouter.routeTick(client, releaseCoordinator)) {
                 return;
             }
@@ -113,6 +134,11 @@ public final class SharedWorldClient implements ClientModInitializer {
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
             PLAY_SESSION_TRACKER.onPlayJoin(handler, client.isLocalServer());
             sessionCoordinator.onGuestSessionJoined(PLAY_SESSION_TRACKER.currentSession(handler));
+            // Sessions that begin without passing through the SharedWorld
+            // screen (auto-rejoin, direct connect) still get the channel.
+            if (PLAY_SESSION_TRACKER.currentSession(handler) != null) {
+                ensureRealtimeStarted();
+            }
         });
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
             SharedWorldPlaySessionTracker.ActiveWorldSession activeSession = PLAY_SESSION_TRACKER.currentSession(handler);
