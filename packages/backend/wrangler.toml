@@ -35,3 +35,17 @@ SIGNED_URL_TTL_SECONDS = "900"
 MAX_ACTIVE_WORLDS = "1000"
 
 MOJANG_HAS_JOINED_ENDPOINT = "https://sessionserver.mojang.com/session/minecraft/hasJoined"
+
+# 0.3.0 realtime: per-world runtime coordinators + per-player WebSocket
+# gateways (see docs/realtime.md in the workspace repo).
+[[durable_objects.bindings]]
+name = "WORLD_COORDINATOR"
+class_name = "WorldCoordinatorDO"
+
+[[durable_objects.bindings]]
+name = "USER_GATEWAY"
+class_name = "UserGatewayDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["WorldCoordinatorDO", "UserGatewayDO"]

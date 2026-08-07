@@ -49,6 +49,7 @@ import type { RequestContext, SharedWorldRepository } from "./repository.ts";
 import type { StorageProvider } from "./storage.ts";
 import { StorageLinkDomainService } from "./storage/link-service.ts";
 import type { AuthVerifier, BlobUrlSigner, ServiceContext } from "./service/context.ts";
+import type { RealtimeService } from "./realtime/service.ts";
 import * as members from "./service/members.ts";
 import * as session from "./service/session.ts";
 import * as snapshots from "./service/snapshots.ts";
@@ -71,7 +72,8 @@ export class SharedWorldService {
     authVerifier: AuthVerifier,
     blobSigner: BlobUrlSigner,
     storageProvider: StorageProvider,
-    env: Env
+    env: Env,
+    realtime: RealtimeService
   ) {
     this.svc = {
       repository,
@@ -79,6 +81,7 @@ export class SharedWorldService {
       blobSigner,
       storageProvider,
       storageLinks: new StorageLinkDomainService(repository, env, storageProvider.provider),
+      realtime,
       env
     };
     this.authDomain = new AuthDomainService(repository, authVerifier, env);
@@ -271,6 +274,11 @@ export class SharedWorldService {
 
   async setPlayerPresence(ctx: RequestContext, worldId: string, request: PresenceHeartbeatRequest, now = new Date()) {
     return session.setPlayerPresence(this.svc, ctx, worldId, request, now);
+  }
+
+  /** 0.3.0 realtime: upgrade the caller's WebSocket onto their gateway. */
+  async connectRealtime(ctx: RequestContext, request: Request): Promise<Response> {
+    return this.svc.realtime.connect(ctx.playerUuid, request);
   }
 
   async beginFinalization(ctx: RequestContext, worldId: string, request: BeginFinalizationRequest, now = new Date()) {

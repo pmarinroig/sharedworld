@@ -78,8 +78,8 @@ describe("session entry decision matrix", () => {
   });
 
   test("guest connects to a live runtime with a join target", async () => {
-    const { repository, instance, worldId } = await setup();
-    await repository.upsertRuntimeRecord(liveRuntime(worldId));
+    const { instance, worldId } = await setup();
+    instance.realtimeLocal.seedRuntime(liveRuntime(worldId));
     const entered = await instance.enterSession(GUEST_1, worldId, {}, NOW);
     expect(entered.action).toBe("connect");
     expect(entered.assignment).toBeNull();
@@ -110,8 +110,8 @@ describe("session entry decision matrix", () => {
   });
 
   test("entry during host-finalizing waits", async () => {
-    const { repository, instance, worldId } = await setup();
-    await repository.upsertRuntimeRecord(liveRuntime(worldId, { phase: "host-finalizing", joinTarget: null, expiresAt: null }));
+    const { instance, worldId } = await setup();
+    instance.realtimeLocal.seedRuntime(liveRuntime(worldId, { phase: "host-finalizing", joinTarget: null, expiresAt: null }));
     const entered = await instance.enterSession(GUEST_1, worldId, {}, NOW);
     expect(entered.action).toBe("wait");
     expect(entered.runtime.phase).toBe("host-finalizing");
@@ -119,16 +119,16 @@ describe("session entry decision matrix", () => {
   });
 
   test("a revoked live runtime never direct-connects", async () => {
-    const { repository, instance, worldId } = await setup();
-    await repository.upsertRuntimeRecord(liveRuntime(worldId, { revokedAt: NOW.toISOString() }));
+    const { instance, worldId } = await setup();
+    instance.realtimeLocal.seedRuntime(liveRuntime(worldId, { revokedAt: NOW.toISOString() }));
     const entered = await instance.enterSession(GUEST_1, worldId, {}, NOW);
     expect(entered.action).toBe("wait");
     expect(entered.runtime.revokedAt).not.toBeNull();
   });
 
   test("an expired live runtime warns the next entrant, and acknowledging claims the next epoch", async () => {
-    const { repository, instance, worldId } = await setup();
-    await repository.upsertRuntimeRecord(liveRuntime(worldId, {
+    const { instance, worldId } = await setup();
+    instance.realtimeLocal.seedRuntime(liveRuntime(worldId, {
       runtimeEpoch: 7,
       expiresAt: new Date(NOW.getTime() - 60_000).toISOString()
     }));
@@ -147,8 +147,8 @@ describe("session entry decision matrix", () => {
   });
 
   test("entering while another player is the preferred idle candidate waits instead of claiming", async () => {
-    const { repository, instance, worldId } = await setup();
-    await repository.upsertWaiterSession(worldId, GUEST_1, "wait_g1", NOW);
+    const { instance, worldId } = await setup();
+    instance.realtimeLocal.seedWaiter(worldId, { playerUuid: GUEST_1.playerUuid, playerName: GUEST_1.playerName, waiterSessionId: "wait_g1", waiting: true, updatedAt: NOW.toISOString() });
     const entered = await instance.enterSession(GUEST_2, worldId, {}, NOW);
     expect(entered.action).toBe("wait");
     expect(entered.assignment).toBeNull();
@@ -174,16 +174,16 @@ describe("session entry decision matrix", () => {
   });
 
   test("observing a live runtime connects and cancels the waiter session", async () => {
-    const { repository, instance, worldId } = await setup();
+    const { instance, worldId } = await setup();
     await instance.enterSession(OWNER, worldId, {}, NOW);
     const entered = await instance.enterSession(GUEST_1, worldId, {}, NOW);
-    await repository.upsertRuntimeRecord(liveRuntime(worldId, { runtimeEpoch: 1, runtimeToken: null }));
+    instance.realtimeLocal.seedRuntime(liveRuntime(worldId, { runtimeEpoch: 1, runtimeToken: null }));
     const observed = await instance.observeWaiting(GUEST_1, worldId, { waiterSessionId: entered.waiterSessionId! }, LATER);
     expect(observed.action).toBe("connect");
     expect(observed.waiterSessionId).toBeNull();
     // The waiter session was cancelled server-side (connect is re-derived on
     // every observe, so a follow-up observe still connects).
-    const waiters = await repository.listActiveWaiters(worldId, LATER);
+    const waiters = instance.realtimeLocal.waiters(worldId);
     expect(waiters.filter((waiter) => waiter.waiting)).toHaveLength(0);
     const after = await instance.observeWaiting(GUEST_1, worldId, { waiterSessionId: entered.waiterSessionId! }, LATER);
     expect(after.action).toBe("connect");
@@ -198,12 +198,12 @@ describe("session entry decision matrix", () => {
   });
 
   test("the sole preferred waiter is promoted to host when the runtime is released", async () => {
-    const { repository, instance, worldId } = await setup();
+    const { instance, worldId } = await setup();
     await instance.enterSession(OWNER, worldId, {}, NOW);
     const entered = await instance.enterSession(GUEST_1, worldId, {}, NOW);
-    const runtime = await repository.getRuntimeRecord(worldId, NOW);
+    const runtime = instance.realtimeLocal.runtimeRecord(worldId);
     expect(runtime).not.toBeNull();
-    await repository.deleteRuntimeRecord(worldId, { runtimeEpoch: runtime!.runtimeEpoch, runtimeToken: runtime!.runtimeToken });
+    instance.realtimeLocal.deleteRuntime(worldId, { runtimeEpoch: runtime!.runtimeEpoch, runtimeToken: runtime!.runtimeToken });
     const observed = await instance.observeWaiting(GUEST_1, worldId, { waiterSessionId: entered.waiterSessionId! }, LATER);
     expect(observed.action).toBe("restart");
     expect(observed.runtime.phase).toBe("host-starting");
@@ -213,10 +213,10 @@ describe("session entry decision matrix", () => {
   });
 
   test("an expired live runtime during observe clears waiters and restarts with the warning", async () => {
-    const { repository, instance, worldId } = await setup();
-    await repository.upsertRuntimeRecord(liveRuntime(worldId));
-    await repository.upsertWaiterSession(worldId, GUEST_1, "wait_g1", NOW);
-    await repository.upsertRuntimeRecord(liveRuntime(worldId, { expiresAt: new Date(LATER.getTime() - 1000).toISOString() }));
+    const { instance, worldId } = await setup();
+    instance.realtimeLocal.seedRuntime(liveRuntime(worldId));
+    instance.realtimeLocal.seedWaiter(worldId, { playerUuid: GUEST_1.playerUuid, playerName: GUEST_1.playerName, waiterSessionId: "wait_g1", waiting: true, updatedAt: NOW.toISOString() });
+    instance.realtimeLocal.seedRuntime(liveRuntime(worldId, { expiresAt: new Date(LATER.getTime() - 1000).toISOString() }));
     const observed = await instance.observeWaiting(GUEST_1, worldId, { waiterSessionId: "wait_g1" }, LATER);
     expect(observed.action).toBe("restart");
     expect(observed.runtime.phase).toBe("idle");
@@ -224,12 +224,12 @@ describe("session entry decision matrix", () => {
   });
 
   test("observing while someone else is the preferred candidate keeps waiting", async () => {
-    const { repository, instance, worldId } = await setup();
+    const { instance, worldId } = await setup();
     await instance.enterSession(OWNER, worldId, {}, NOW);
     const enteredG1 = await instance.enterSession(GUEST_1, worldId, {}, NOW);
     const enteredG2 = await instance.enterSession(GUEST_2, worldId, {}, NOW);
-    const runtime = await repository.getRuntimeRecord(worldId, NOW);
-    await repository.deleteRuntimeRecord(worldId, { runtimeEpoch: runtime!.runtimeEpoch, runtimeToken: runtime!.runtimeToken });
+    const runtime = instance.realtimeLocal.runtimeRecord(worldId);
+    instance.realtimeLocal.deleteRuntime(worldId, { runtimeEpoch: runtime!.runtimeEpoch, runtimeToken: runtime!.runtimeToken });
     // GUEST_1 joined the world earlier, so it outranks GUEST_2 as candidate.
     const observed = await instance.observeWaiting(GUEST_2, worldId, { waiterSessionId: enteredG2.waiterSessionId! }, LATER);
     expect(observed.action).toBe("wait");

@@ -33,6 +33,7 @@ export type RouterService = Pick<
   | "kickMember"
   | "latestManifest"
   | "listSnapshots"
+  | "connectRealtime"
   | "listWorlds"
   | "observeWaiting"
   | "prepareUploads"

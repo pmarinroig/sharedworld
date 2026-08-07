@@ -11,6 +11,7 @@ import type {
 
 import type { Env, R2Bucket } from "../../src/env.ts";
 import { createSqliteRepository } from "./sqlite-d1.ts";
+import { LocalRealtimeService } from "./realtime-local.ts";
 import type { RequestContext, SharedWorldRepository } from "../../src/repository.ts";
 import { R2StorageProvider } from "../../src/storage.ts";
 import { SharedWorldService, type AuthVerifier, type BlobUrlSigner } from "../../src/service.ts";
@@ -118,17 +119,16 @@ function runtimeToTestHostStatusView(runtime: WorldRuntimeStatus): TestHostStatu
   };
 }
 
-async function authorizeFromCurrentRuntime(
-  repository: SharedWorldRepository,
+function authorizeFromCurrentRuntime(
+  realtime: LocalRealtimeService,
   ctx: { playerUuid: string; playerName: string },
   worldId: string,
-  request: RuntimeAuthorizedRequest,
-  now: Date
-): Promise<RuntimeAuthorizedRequest> {
+  request: RuntimeAuthorizedRequest
+): RuntimeAuthorizedRequest {
   if (request.runtimeEpoch != null && request.runtimeEpoch >= 0 && request.hostToken != null) {
     return request;
   }
-  const resolved = await repository.getRuntimeRecord(worldId, now);
+  const resolved = realtime.runtimeRecord(worldId);
   if (resolved == null || resolved.hostUuid !== ctx.playerUuid || resolved.runtimeToken == null) {
     return request;
   }
@@ -146,6 +146,8 @@ async function authorizeFromCurrentRuntime(
  * tests stay readable. It never bypasses the production service logic.
  */
 export class TestDriverSharedWorldService extends SharedWorldService {
+  readonly realtimeLocal: LocalRealtimeService;
+
   constructor(
     private readonly runtimeRepository: SharedWorldRepository,
     authVerifier: AuthVerifier,
@@ -154,13 +156,16 @@ export class TestDriverSharedWorldService extends SharedWorldService {
     maybeEnv?: Env
   ) {
     const [storageProvider, env] = resolveStorageProviderAndEnv(storageProviderOrEnv, maybeEnv);
+    const realtimeLocal = new LocalRealtimeService(runtimeRepository);
     super(
       runtimeRepository,
       authVerifier,
       blobSigner,
       storageProvider,
-      env
+      env,
+      realtimeLocal
     );
+    this.realtimeLocal = realtimeLocal;
   }
 
   async claimHost(
@@ -172,10 +177,10 @@ export class TestDriverSharedWorldService extends SharedWorldService {
     const entered = await this.enterSession(ctx, worldId, {}, now);
     let runtime = entered.runtime;
     if (entered.action === "host" && entered.assignment != null && runtime.phase === "host-starting") {
-      const current = await this.runtimeRepository.getRuntimeRecord(worldId, now);
+      const current = this.realtimeLocal.runtimeRecord(worldId);
       if (current != null && current.runtimeToken != null) {
         const extended = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
-        await this.runtimeRepository.upsertRuntimeRecord({
+        this.realtimeLocal.seedRuntime({
           ...current,
           phase: request.joinTarget == null ? current.phase : "host-live",
           joinTarget: request.joinTarget ?? current.joinTarget,
@@ -217,9 +222,15 @@ export class TestDriverSharedWorldService extends SharedWorldService {
     now = new Date()
   ): Promise<TestHostStatusView> {
     if (request.waiting) {
-      await this.runtimeRepository.upsertWaiterSession(worldId, ctx, `legacy_${ctx.playerUuid}`, now);
+      this.realtimeLocal.seedWaiter(worldId, {
+        playerUuid: ctx.playerUuid,
+        playerName: ctx.playerName,
+        waiterSessionId: `legacy_${ctx.playerUuid}`,
+        waiting: true,
+        updatedAt: now.toISOString()
+      });
     } else {
-      await this.runtimeRepository.clearWaitersForPlayer(worldId, ctx.playerUuid);
+      this.realtimeLocal.store(worldId).deleteWaiter(ctx.playerUuid);
     }
     const runtime = await this.runtimeStatus(ctx, worldId, now);
     return runtimeToTestHostStatusView(runtime);
@@ -229,7 +240,7 @@ export class TestDriverSharedWorldService extends SharedWorldService {
     return super.beginFinalization(
       ctx,
       worldId,
-      await authorizeFromCurrentRuntime(this.runtimeRepository, ctx, worldId, request, now) as BeginFinalizationRequest,
+      authorizeFromCurrentRuntime(this.realtimeLocal, ctx, worldId, request) as BeginFinalizationRequest,
       now
     );
   }
@@ -238,7 +249,7 @@ export class TestDriverSharedWorldService extends SharedWorldService {
     return super.completeFinalization(
       ctx,
       worldId,
-      await authorizeFromCurrentRuntime(this.runtimeRepository, ctx, worldId, request, now) as CompleteFinalizationRequest,
+      authorizeFromCurrentRuntime(this.realtimeLocal, ctx, worldId, request) as CompleteFinalizationRequest,
       now
     );
   }
@@ -251,7 +262,7 @@ export class TestDriverSharedWorldService extends SharedWorldService {
     return super.releaseHost(
       ctx,
       worldId,
-      await authorizeFromCurrentRuntime(this.runtimeRepository, ctx, worldId, request, now) as ReleaseHostRequest,
+      authorizeFromCurrentRuntime(this.realtimeLocal, ctx, worldId, request) as ReleaseHostRequest,
       now
     );
   }
@@ -261,7 +272,7 @@ export class TestDriverSharedWorldService extends SharedWorldService {
       return await super.setHostStartupProgress(
         ctx,
         worldId,
-        await authorizeFromCurrentRuntime(this.runtimeRepository, ctx, worldId, request, now) as HostStartupProgressRequest,
+        authorizeFromCurrentRuntime(this.realtimeLocal, ctx, worldId, request) as HostStartupProgressRequest,
         now
       );
     } catch (error) {
@@ -276,7 +287,7 @@ export class TestDriverSharedWorldService extends SharedWorldService {
     return super.prepareUploads(
       ctx,
       worldId,
-      await authorizeFromCurrentRuntime(this.runtimeRepository, ctx, worldId, request, new Date()) as UploadPlanRequest
+      authorizeFromCurrentRuntime(this.realtimeLocal, ctx, worldId, request) as UploadPlanRequest
     );
   }
 
@@ -284,7 +295,7 @@ export class TestDriverSharedWorldService extends SharedWorldService {
     return super.finalizeSnapshot(
       ctx,
       worldId,
-      await authorizeFromCurrentRuntime(this.runtimeRepository, ctx, worldId, request, now) as FinalizeSnapshotRequest,
+      authorizeFromCurrentRuntime(this.realtimeLocal, ctx, worldId, request) as FinalizeSnapshotRequest,
       now
     );
   }

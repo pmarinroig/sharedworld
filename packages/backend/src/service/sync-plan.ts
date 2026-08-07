@@ -33,9 +33,9 @@ import {
   type ServiceContext
 } from "./context.ts";
 import {
-  requireAuthorizedRuntime,
+  requireHostAuthority,
   requireMembership,
-  requireSessionAccess,
+  requireSessionAccessAllowingRevokedHost,
   requireWorldStorageBinding
 } from "./runtime-access.ts";
 
@@ -55,16 +55,20 @@ export async function prepareUploads(
   worldId: string,
   request: UploadPlanRequest
 ): Promise<UploadPlan> {
-  await requireSessionAccess(svc, ctx, worldId, { allowRevokedHost: true });
-  const authorizedRuntime = await requireAuthorizedRuntime(
+  await requireHostAuthority(
     svc,
     ctx,
     worldId,
-    new Date(),
     request.runtimeEpoch,
     request.hostToken,
-    ["host-starting", "host-live", "host-finalizing"]
+    ["host-starting", "host-live", "host-finalizing"],
+    new Date()
   );
+  // Validation passed, so the request's own epoch/token are the current
+  // authority tuple: they stamp the signed upload URLs.
+  const authorizedRuntime = {
+    runtime: { runtimeEpoch: request.runtimeEpoch ?? 0, runtimeToken: request.hostToken ?? null }
+  };
   const latest = await svc.repository.getLatestSnapshot(worldId);
   const latestPack = latest?.packs.find((pack) => pack.packId === NON_REGION_PACK_ID) ?? null;
   const latestRegionBundleById = new Map(
@@ -216,16 +220,15 @@ export async function uploadStorageBlob(
   storageKey: string,
   request: Request
 ): Promise<void> {
-  await requireSessionAccess(svc, ctx, worldId, { allowRevokedHost: true });
   const runtimeEpochHeader = request.headers.get(RUNTIME_EPOCH_HEADER);
-  await requireAuthorizedRuntime(
+  await requireHostAuthority(
     svc,
     ctx,
     worldId,
-    new Date(),
     runtimeEpochHeader == null ? null : Number(runtimeEpochHeader),
     request.headers.get(HOST_TOKEN_HEADER),
-    ["host-starting", "host-live", "host-finalizing"]
+    ["host-starting", "host-live", "host-finalizing"],
+    new Date()
   );
   const contentType = request.headers.get("content-type") ?? "application/octet-stream";
   await svc.storageProvider.put(await requireWorldStorageBinding(svc, worldId), storageKey, request.body ?? "", contentType);
@@ -237,7 +240,7 @@ export async function downloadStorageBlob(
   worldId: string,
   storageKey: string
 ): Promise<Response> {
-  await requireSessionAccess(svc, ctx, worldId, { allowRevokedHost: true });
+  await requireSessionAccessAllowingRevokedHost(svc, ctx, worldId);
   const blob = await svc.storageProvider.get(await requireWorldStorageBinding(svc, worldId), storageKey);
   if (!blob) {
     throw new HttpError(404, "blob_not_found", "Blob not found.");
@@ -283,7 +286,7 @@ async function prepareGroupedArtifactUpload(
   pack: LocalPackDescriptor | null,
   latestSnapshotId: string | null,
   latestPack: SnapshotPack | null,
-  runtime: WorldRuntimeRecord,
+  runtime: Pick<WorldRuntimeRecord, "runtimeEpoch" | "runtimeToken">,
   binding: WorldStorageBinding,
   maxChainDepth: number,
   fullStorageKeyForHash: (hash: string) => string,

@@ -12,7 +12,7 @@ import { HttpError } from "../http.ts";
 import { inviteCode as generateInviteCode, randomId } from "../ids.ts";
 import type { RequestContext } from "../repository.ts";
 import type { ServiceContext } from "./context.ts";
-import { requireOwner, requireWorldDetails, worldNotFoundError } from "./runtime-access.ts";
+import { publishWorldEvent, requireOwner, requireWorldDetails, worldNotFoundError } from "./runtime-access.ts";
 import { getWorld } from "./worlds.ts";
 
 export async function createInvite(svc: ServiceContext, ctx: RequestContext, worldId: string, now: Date): Promise<InviteCode> {
@@ -66,6 +66,7 @@ export async function redeemInvite(svc: ServiceContext, ctx: RequestContext, req
     deletedAt: null,
     canUseCommands: false
   });
+  await publishWorldEvent(svc, invite.worldId, "membership-changed");
 
   return getWorld(svc, ctx, invite.worldId, now);
 }
@@ -91,6 +92,7 @@ export async function setMemberCommandPermission(
   if (!membership) {
     throw new HttpError(404, "member_not_found", "SharedWorld member not found.");
   }
+  await publishWorldEvent(svc, worldId, "membership-changed");
   return membership;
 }
 
@@ -125,5 +127,12 @@ export async function kickMember(
   // seven days otherwise, and the kicked player could immediately rejoin with it.
   await svc.repository.revokeActiveInvites(worldId);
   await createInvite(svc, ctx, worldId, now);
+  // P6: if the kicked player is the current host, the coordinator marks the
+  // runtime revoked (they may still finalize their owned epoch, not stay live).
+  await svc.realtime.coordinator(worldId).memberRevoked(removedPlayerUuid, now);
+  await publishWorldEvent(svc, worldId, "membership-changed");
+  // The kicked player is no longer a member, so the member fan-out misses
+  // them — and they are exactly who needs the push most.
+  await svc.realtime.notifyUsers({ worldId, kind: "membership-changed" }, [removedPlayerUuid]);
   return result;
 }

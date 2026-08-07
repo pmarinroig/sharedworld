@@ -15,19 +15,18 @@ import type {
 } from "../../../shared/src/index.ts";
 
 import { HttpError } from "../http.ts";
-import { randomId, slugify } from "../ids.ts";
+import { slugify } from "../ids.ts";
 import type { RequestContext, WorldUpdateRecord } from "../repository.ts";
-import { assignHostStarting } from "../runtime-protocol.ts";
 import type { StorageBinding } from "../storage.ts";
 import { signDownloadForWorld, type ServiceContext } from "./context.ts";
 import {
-  hostNotActiveError,
-  requireAuthorizedRuntime,
+  publishWorldEvent,
+  requireHostAuthority,
   requireMembership,
   requireOwner,
-  requireSessionAccess,
   requireWorldDetails,
-  requireWorldStorageBinding
+  requireWorldStorageBinding,
+  sessionActorOf
 } from "./runtime-access.ts";
 import { maybeDeleteUnreferencedBlob, purgeWorldSnapshots } from "./snapshots.ts";
 import { parsePositiveInt } from "./sync-plan.ts";
@@ -129,6 +128,7 @@ export async function updateWorld(
     binding,
     world.customIconStorageKey !== updated.customIconStorageKey ? world.customIconStorageKey : null
   );
+  await publishWorldEvent(svc, worldId, "world-changed");
   return hydrateWorldDetails(svc, updated, ctx.requestOrigin);
 }
 
@@ -144,6 +144,7 @@ export async function updateWorldSettings(
   if (!await svc.repository.updateWorldSettings(worldId, JSON.stringify(settings))) {
     throw new HttpError(404, "world_not_found", "This Shared World no longer exists.");
   }
+  await publishWorldEvent(svc, worldId, "settings-changed");
   const updated = await requireWorldDetails(svc, worldId, ctx.playerUuid);
   return hydrateWorldDetails(svc, updated, ctx.requestOrigin);
 }
@@ -161,15 +162,11 @@ export async function reportHostGameRules(
   request: HostGameRulesReportRequest,
   now: Date
 ): Promise<HostGameRulesReportResponse> {
-  await requireSessionAccess(svc, ctx, worldId, { allowRevokedHost: true });
-  if (request.runtimeEpoch == null || request.runtimeEpoch < 0 || request.hostToken == null) {
-    throw hostNotActiveError();
-  }
   // host-finalizing is allowed so a shutdown flush can still land.
-  await requireAuthorizedRuntime(svc, ctx, worldId, now, request.runtimeEpoch, request.hostToken, [
+  await requireHostAuthority(svc, ctx, worldId, request.runtimeEpoch, request.hostToken, [
     "host-live",
     "host-finalizing"
-  ]);
+  ], now);
   const gamerules = validateGameRules(request.gamerules);
   // Merge-and-CAS: the owner's PUT bumps the revision blindly, so a report
   // racing an owner save must re-read and merge against the fresh base
@@ -184,6 +181,7 @@ export async function reportHostGameRules(
       gamerules: { ...(stored.settings?.gamerules ?? {}), ...gamerules }
     };
     if (await svc.repository.updateWorldSettingsIfRevision(worldId, JSON.stringify(merged), stored.settingsRevision)) {
+      await publishWorldEvent(svc, worldId, "settings-changed");
       return { settings: merged, settingsRevision: stored.settingsRevision + 1 };
     }
   }
@@ -193,10 +191,17 @@ export async function reportHostGameRules(
 export async function deleteWorld(svc: ServiceContext, ctx: RequestContext, worldId: string, now: Date): Promise<void> {
   await requireWorldDetails(svc, worldId, ctx.playerUuid);
   const binding = await requireWorldStorageBinding(svc, worldId);
+  // Capture the recipients before the membership rows go away: they are who
+  // must hear that the world vanished.
+  const recipients = (await svc.repository.listMemberships(worldId))
+    .filter((member) => member.deletedAt == null)
+    .map((member) => member.playerUuid);
   const result = await svc.repository.deleteWorldForPlayer(ctx, worldId, now);
   if (result.worldDeleted) {
     await purgeWorldSnapshots(svc, binding, worldId);
     await maybeDeleteUnreferencedBlob(svc, binding, result.deletedCustomIconStorageKey);
+    // P5: the coordinator drops every runtime trace and pushes world-deleted.
+    await svc.realtime.coordinator(worldId).destroyWorld(recipients);
   }
 }
 
@@ -236,27 +241,26 @@ async function createSeededWorldResult(
   world: WorldDetails,
   now: Date
 ): Promise<CreateWorldResult> {
-  const initialUpload = assignHostStarting(
-    world.id,
-    {
-      playerUuid: ctx.playerUuid,
-      playerName: ctx.playerName
-    },
-    null,
-    now,
-    () => randomId("rt")
-  );
-  await svc.repository.clearWaitersForPlayer(world.id, ctx.playerUuid);
-  if (!await svc.repository.claimRuntimeAssignment(initialUpload.runtime)) {
-    // P8: a failed create must leave nothing behind. The world row and owner
-    // membership were already inserted, so compensate before rejecting.
-    // (Any hash-keyed icon blob stays: it may be shared with other worlds.)
+  const actor = await sessionActorOf(svc, ctx, world.id);
+  let decision;
+  try {
+    decision = await svc.realtime.coordinator(world.id).enterSession(actor, {}, now);
+  } catch (error) {
+    // P8: a failed create must leave nothing behind — even a coordinator
+    // outage during the seed claim compensates instead of stranding rows.
+    await svc.repository.deleteWorldForPlayer(ctx, world.id, now);
+    throw error;
+  }
+  if (decision.action !== "host" || decision.assignment == null) {
+    // The world row and owner membership were already inserted, so
+    // compensate before rejecting. (Any hash-keyed icon blob stays: it may
+    // be shared with other worlds.)
     await svc.repository.deleteWorldForPlayer(ctx, world.id, now);
     throw new HttpError(409, "world_busy", "SharedWorld is already being set up.");
   }
   return {
     world: await hydrateWorldDetails(svc, world, ctx.requestOrigin),
-    initialUploadAssignment: initialUpload.assignment
+    initialUploadAssignment: decision.assignment
   };
 }
 

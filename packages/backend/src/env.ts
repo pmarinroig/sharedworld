@@ -1,6 +1,10 @@
 export interface Env {
   DB?: D1Database;
   BLOBS?: R2Bucket;
+  /** 0.3.0 realtime: per-world runtime coordinator Durable Objects. */
+  WORLD_COORDINATOR?: DurableObjectNamespace;
+  /** 0.3.0 realtime: per-player WebSocket gateway Durable Objects. */
+  USER_GATEWAY?: DurableObjectNamespace;
   ACTIVE_STORAGE_PROVIDER?: "google-drive" | "r2";
   SESSION_TTL_HOURS?: string;
   PUBLIC_BASE_URL?: string;

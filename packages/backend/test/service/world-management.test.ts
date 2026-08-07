@@ -637,19 +637,23 @@ describe("SharedWorldService world management", () => {
 
   test("[S15 fixed] [P8] a create whose runtime seed loses leaves no orphaned world behind", async () => {
     const repository = createSqliteRepository();
-    // Force the initial-upload runtime claim to lose, as a concurrent claimant
-    // would make it: the world/membership rows exist by then, and P8 requires
-    // the failed create to compensate rather than strand them.
-    const failingClaim: SharedWorldRepository = Object.assign(
-      Object.create(repository) as SharedWorldRepository,
-      { claimRuntimeAssignment: async () => false }
-    );
     const { signer } = createBlobSigner();
-    const instance = createTestService(failingClaim, authVerifier, signer, {});
+    const instance = createTestService(repository, authVerifier, signer, {});
     const ctx = { playerUuid: "player-owner", playerName: "Owner" };
+    // Force the initial-upload host claim to lose, as a concurrent claimant
+    // would make it: the world/membership rows exist by then, and P8 requires
+    // the failed create to compensate rather than strand them. The seam is
+    // the coordinator handle the create flow claims through.
+    const realCoordinator = instance.realtimeLocal.coordinator.bind(instance.realtimeLocal);
+    instance.realtimeLocal.coordinator = ((_worldId: string) => ({
+      enterSession: async () => {
+        throw Object.assign(new Error("lost the claim race"), { status: 409, code: "world_busy" });
+      }
+    } as unknown as ReturnType<typeof realCoordinator>)) as typeof instance.realtimeLocal.coordinator;
 
     await expect(instance.createWorld(ctx, { name: "Doomed World" })).rejects.toMatchObject({ code: "world_busy" });
 
+    instance.realtimeLocal.coordinator = realCoordinator;
     expect(await instance.listWorlds(ctx)).toEqual([]);
   });
 });

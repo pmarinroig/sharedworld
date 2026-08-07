@@ -31,10 +31,10 @@ describe("SharedWorldService handoff", () => {
       canUseCommands: false
     });
     const now = new Date();
-    await repository.upsertWaiterSession(world.id, { playerUuid: "player-b", playerName: "Bravo" }, "wait_b", now);
-    await repository.upsertWaiterSession(world.id, { playerUuid: "player-owner", playerName: "Owner" }, "wait_owner", now);
-
-    const waiters = await repository.listActiveWaiters(world.id, now);
+    const waiters = [
+      { playerUuid: "player-b", playerName: "Bravo", waiterSessionId: "wait_b", waiting: true, updatedAt: now.toISOString() },
+      { playerUuid: "player-owner", playerName: "Owner", waiterSessionId: "wait_owner", waiting: true, updatedAt: now.toISOString() }
+    ];
     const next = choosePreferredCandidate(waiters.filter((waiter) => waiter.waiting), await repository.listMemberships(world.id));
     expect(next?.playerUuid).toBe("player-owner");
   });
@@ -120,12 +120,13 @@ describe("SharedWorldService handoff", () => {
       canUseCommands: false
     });
 
-    await repository.upsertWaiterSession(
-      world.id,
-      { playerUuid: "player-owner", playerName: "Owner" },
-      "wait_owner_stale",
-      new Date("2000-01-03T00:00:00.000Z")
-    );
+    instance.realtimeLocal.seedWaiter(world.id, {
+      playerUuid: "player-owner",
+      playerName: "Owner",
+      waiterSessionId: "wait_owner_stale",
+      waiting: true,
+      updatedAt: new Date("2000-01-03T00:00:00.000Z").toISOString()
+    });
 
     const joinResolution = await instance.resolveJoin(
       { playerUuid: "player-guest", playerName: "Guest" },
@@ -290,7 +291,7 @@ describe("SharedWorldService handoff", () => {
       { joinTarget: "example.test:25565" },
       new Date("2099-01-03T00:00:00.000Z")
     );
-    const oldRuntime = await repository.getRuntimeRecord(world.id, new Date("2099-01-03T00:00:00.000Z"));
+    const oldRuntime = instance.realtimeLocal.runtimeRecord(world.id);
     expect(oldRuntime?.runtimeToken).toBeTruthy();
 
     await instance.handoffReady(

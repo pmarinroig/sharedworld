@@ -28,7 +28,7 @@ describe("server-driven client pacing suggestions", () => {
     const runtime = await instance.runtimeStatus(owner, world.id, new Date("2099-01-01T01:00:00.000Z"));
     expect(runtime.suggestedPollIntervalMs).toBeUndefined();
 
-    const heartbeat = await instance.heartbeatHost(owner, world.id, await hostAuthorization(repository, world.id), new Date("2099-01-01T01:00:00.000Z"));
+    const heartbeat = await instance.heartbeatHost(owner, world.id, await hostAuthorization(instance, world.id), new Date("2099-01-01T01:00:00.000Z"));
     expect(heartbeat.suggestedHeartbeatIntervalMs).toBeUndefined();
     expect(heartbeat.suggestedAutosaveIntervalMs).toBeUndefined();
 
@@ -50,7 +50,7 @@ describe("server-driven client pacing suggestions", () => {
     const runtime = await instance.runtimeStatus(owner, world.id, new Date("2099-01-01T01:00:00.000Z"));
     expect(runtime.suggestedPollIntervalMs).toBe(15000);
 
-    const heartbeat = await instance.heartbeatHost(owner, world.id, await hostAuthorization(repository, world.id), new Date("2099-01-01T01:00:00.000Z"));
+    const heartbeat = await instance.heartbeatHost(owner, world.id, await hostAuthorization(instance, world.id), new Date("2099-01-01T01:00:00.000Z"));
     expect(heartbeat.suggestedHeartbeatIntervalMs).toBe(60000);
     expect(heartbeat.suggestedAutosaveIntervalMs).toBe(900000);
     // The heartbeat body must remain a flat WorldRuntimeStatus superset.
@@ -78,7 +78,7 @@ describe("server-driven client pacing suggestions", () => {
   });
 });
 
-async function hostAuthorization(repository: ReturnType<typeof createSqliteRepository>, worldId: string) {
-  const runtime = await repository.getRuntimeRecord(worldId, new Date("2099-01-01T01:00:00.000Z"));
+async function hostAuthorization(service: { realtimeLocal: { runtimeRecord(worldId: string): { runtimeEpoch: number; runtimeToken: string | null } | null } }, worldId: string) {
+  const runtime = service.realtimeLocal.runtimeRecord(worldId);
   return { runtimeEpoch: runtime?.runtimeEpoch, hostToken: runtime?.runtimeToken };
 }

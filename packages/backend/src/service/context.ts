@@ -1,4 +1,5 @@
 import type { Env } from "../env.ts";
+import type { RealtimeService } from "../realtime/service.ts";
 import type { SharedWorldRepository } from "../repository.ts";
 import type { WorldRuntimeRecord } from "../runtime-protocol.ts";
 import type { StorageProvider } from "../storage.ts";
@@ -31,6 +32,7 @@ export interface ServiceContext {
   blobSigner: BlobUrlSigner;
   storageProvider: StorageProvider;
   storageLinks: StorageLinkDomainService;
+  realtime: RealtimeService;
   env: Env;
 }
 
@@ -45,7 +47,7 @@ export async function signUploadForWorld(
   svc: ServiceContext,
   worldId: string,
   storageKey: string,
-  runtime: WorldRuntimeRecord,
+  runtime: Pick<WorldRuntimeRecord, "runtimeEpoch" | "runtimeToken">,
   requestOrigin?: string
 ): Promise<SignedBlobRequest<"PUT">> {
   const signed = await svc.blobSigner.signUpload(worldId, storageKey, requestOrigin);

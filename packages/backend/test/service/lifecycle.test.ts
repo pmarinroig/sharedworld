@@ -23,8 +23,8 @@ describe("SharedWorldService lifecycle", () => {
 
     expect(created.initialUploadAssignment.playerUuid).toBe("player-owner");
     expect(created.initialUploadAssignment.runtimeEpoch).toBe(1);
-    expect(await repository.listActiveWaiters(created.world.id, new Date("2099-01-01T00:00:00.000Z"))).toEqual([]);
-    expect(await repository.getRuntimeRecord(created.world.id, new Date("2099-01-01T00:00:00.000Z"))).not.toBeNull();
+    expect(instance.realtimeLocal.waiters(created.world.id)).toEqual([]);
+    expect(instance.realtimeLocal.runtimeRecord(created.world.id)).not.toBeNull();
   });
 
   test("observe waiting restarts when the current waiter is promoted to host", async () => {
@@ -43,7 +43,13 @@ describe("SharedWorldService lifecycle", () => {
       deletedAt: null,
       canUseCommands: false
     });
-    await repository.upsertWaiterSession(world.id, { playerUuid: "player-member", playerName: "Member" }, "wait-member", new Date("2099-01-01T00:00:00.000Z"));
+    instance.realtimeLocal.seedWaiter(world.id, {
+      playerUuid: "player-member",
+      playerName: "Member",
+      waiterSessionId: "wait-member",
+      waiting: true,
+      updatedAt: new Date("2099-01-01T00:00:00.000Z").toISOString()
+    });
 
     const observed = await instance.observeWaiting(
       { playerUuid: "player-member", playerName: "Member" },
@@ -153,7 +159,7 @@ describe("SharedWorldService lifecycle", () => {
       { joinTarget: "example.test:25565" },
       new Date("2099-01-03T00:00:00.000Z")
     );
-    const runtimeBeforeFinalization = await repository.getRuntimeRecord(world.id, new Date("2099-01-03T00:00:00.000Z"));
+    const runtimeBeforeFinalization = instance.realtimeLocal.runtimeRecord(world.id);
     expect(runtimeBeforeFinalization?.joinTarget).toBe("example.test:25565");
 
     await instance.beginFinalization(
@@ -189,7 +195,7 @@ describe("SharedWorldService lifecycle", () => {
 
     expect(entered.action).toBe("host");
     expect(entered.assignment).not.toBeNull();
-    const initialRuntime = await repository.getRuntimeRecord(world.id, new Date("2099-01-03T00:00:00.000Z"));
+    const initialRuntime = instance.realtimeLocal.runtimeRecord(world.id);
     expect(initialRuntime?.phase).toBe("host-starting");
     expect(initialRuntime?.startupDeadlineAt).toBe("2099-01-03T00:01:30.000Z");
 
@@ -204,7 +210,7 @@ describe("SharedWorldService lifecycle", () => {
       new Date("2099-01-03T00:01:00.000Z")
     );
 
-    const refreshedRuntime = await repository.getRuntimeRecord(world.id, new Date("2099-01-03T00:01:00.000Z"));
+    const refreshedRuntime = instance.realtimeLocal.runtimeRecord(world.id);
     expect(refreshedRuntime?.phase).toBe("host-starting");
     expect(refreshedRuntime?.startupDeadlineAt).toBe("2099-01-03T00:02:30.000Z");
   });
@@ -255,7 +261,7 @@ describe("SharedWorldService lifecycle", () => {
     expect(heartbeat.runtimeEpoch).toBe(entered.assignment!.runtimeEpoch);
     expect(heartbeat.joinTarget).toBeNull();
 
-    const runtime = await repository.getRuntimeRecord(world.id, new Date("2099-01-03T00:00:30.000Z"));
+    const runtime = instance.realtimeLocal.runtimeRecord(world.id);
     expect(runtime?.phase).toBe("host-finalizing");
     expect(runtime?.joinTarget).toBeNull();
     expect(runtime?.lastProgressAt).toBe("2099-01-03T00:00:20.000Z");
@@ -324,7 +330,13 @@ describe("SharedWorldService lifecycle", () => {
       { runtimeEpoch: entered.assignment!.runtimeEpoch, hostToken: entered.assignment!.hostToken, joinTarget: "join.example" },
       new Date("2099-01-03T00:00:10.000Z")
     );
-    await repository.upsertWaiterSession(world.id, { playerUuid: "player-guest", playerName: "Guest" }, "wait-guest", new Date("2099-01-03T00:00:20.000Z"));
+    instance.realtimeLocal.seedWaiter(world.id, {
+      playerUuid: "player-guest",
+      playerName: "Guest",
+      waiterSessionId: "wait-guest",
+      waiting: true,
+      updatedAt: new Date("2099-01-03T00:00:20.000Z").toISOString()
+    });
 
     const runtime = await instance.runtimeStatus(
       { playerUuid: "player-guest", playerName: "Guest" },
@@ -340,8 +352,8 @@ describe("SharedWorldService lifecycle", () => {
       runtimeEpoch: entered.assignment!.runtimeEpoch,
       recordedAt: "2099-01-03T00:01:41.000Z"
     });
-    expect(await repository.getRuntimeRecord(world.id, new Date("2099-01-03T00:01:41.000Z"))).toBeNull();
-    expect(await repository.listActiveWaiters(world.id, new Date("2099-01-03T00:01:41.000Z"))).toEqual([]);
+    expect(instance.realtimeLocal.runtimeRecord(world.id)).toBeNull();
+    expect(instance.realtimeLocal.waiters(world.id)).toEqual([]);
   });
 
   test("host-finalizing timeout uses finalization activity and records warning", async () => {
@@ -550,6 +562,9 @@ describe("SharedWorldService lifecycle", () => {
       finalizingAt
     );
 
+    // In production the coordinator's alarm applies the finalizing timeout at
+    // its deadline; the local harness fires it explicitly.
+    await instance.realtimeLocal.fireAlarm(world.id, new Date());
     const [summary] = await instance.listWorlds({ playerUuid: "player-owner", playerName: "Owner" });
     const warned = await instance.enterSession(
       { playerUuid: "player-owner", playerName: "Owner" },
@@ -630,7 +645,7 @@ describe("SharedWorldService lifecycle", () => {
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
-    await repository.setUncleanShutdownWarning(world.id, {
+    instance.realtimeLocal.seedWarning(world.id, {
       hostUuid: "player-owner",
       hostPlayerName: "Owner",
       phase: "host-finalizing",
@@ -664,7 +679,7 @@ describe("SharedWorldService lifecycle", () => {
     const instance = createTestService(repository, authVerifier, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
-    await repository.setUncleanShutdownWarning(world.id, {
+    instance.realtimeLocal.seedWarning(world.id, {
       hostUuid: "player-owner",
       hostPlayerName: "Owner",
       phase: "host-live",
@@ -825,7 +840,7 @@ describe("SharedWorldService lifecycle", () => {
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "World", "world");
     await instance.enterSession({ playerUuid: "player-owner", playerName: "Owner" }, world.id, {}, new Date("2099-01-01T00:00:00.000Z"));
-    const runtime = await repository.getRuntimeRecord(world.id, new Date("2099-01-01T00:00:01.000Z"));
+    const runtime = instance.realtimeLocal.runtimeRecord(world.id);
     const auth = { runtimeEpoch: runtime?.runtimeEpoch, hostToken: runtime?.runtimeToken };
 
     const first = await instance.beginFinalization({ playerUuid: "player-owner", playerName: "Owner" }, world.id, auth, new Date("2099-01-01T00:00:02.000Z"));
@@ -843,7 +858,7 @@ describe("SharedWorldService lifecycle", () => {
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "World", "world");
     await instance.enterSession({ playerUuid: "player-owner", playerName: "Owner" }, world.id, {}, new Date("2099-01-01T00:00:00.000Z"));
-    const runtime = await repository.getRuntimeRecord(world.id, new Date("2099-01-01T00:00:01.000Z"));
+    const runtime = instance.realtimeLocal.runtimeRecord(world.id);
     const auth = { runtimeEpoch: runtime?.runtimeEpoch, hostToken: runtime?.runtimeToken };
 
     await instance.beginFinalization({ playerUuid: "player-owner", playerName: "Owner" }, world.id, auth, new Date("2099-01-01T00:00:02.000Z"));
@@ -860,7 +875,7 @@ describe("SharedWorldService lifecycle", () => {
       new Date("2099-01-01T00:00:05.000Z")
     );
     expect(retriedRelease.graceful).toBe(true);
-    expect(await repository.getRuntimeRecord(world.id, new Date("2099-01-01T00:00:06.000Z"))).toBeNull();
+    expect(instance.realtimeLocal.runtimeRecord(world.id)).toBeNull();
 
     // The replay never blocks the next real session: a fresh host claims epoch 2.
     const reentered = await instance.enterSession({ playerUuid: "player-owner", playerName: "Owner" }, world.id, {}, new Date("2099-01-01T00:00:07.000Z"));
@@ -875,7 +890,7 @@ describe("SharedWorldService lifecycle", () => {
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "World", "world");
     await instance.enterSession({ playerUuid: "player-owner", playerName: "Owner" }, world.id, {}, new Date("2099-01-01T00:00:00.000Z"));
-    const runtime = await repository.getRuntimeRecord(world.id, new Date("2099-01-01T00:00:01.000Z"));
+    const runtime = instance.realtimeLocal.runtimeRecord(world.id);
     const auth = { runtimeEpoch: runtime?.runtimeEpoch, hostToken: runtime?.runtimeToken };
     await instance.heartbeatHost(
       { playerUuid: "player-owner", playerName: "Owner" },
@@ -891,6 +906,6 @@ describe("SharedWorldService lifecycle", () => {
       { ...auth, graceful: true },
       new Date("2099-01-01T00:30:00.000Z")
     )).rejects.toThrow("hosting this world now");
-    expect(await repository.getUncleanShutdownWarning(world.id)).not.toBeNull();
+    expect(instance.realtimeLocal.warning(world.id)).not.toBeNull();
   });
 });

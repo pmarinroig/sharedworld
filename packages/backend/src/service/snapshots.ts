@@ -19,13 +19,14 @@ import type { RequestContext, WorldStorageBinding } from "../repository.ts";
 import type { StorageBinding } from "../storage.ts";
 import type { ServiceContext } from "./context.ts";
 import {
-  requireAuthorizedRuntime,
+  publishWorldEvent,
+  requireActiveMembership,
+  requireHostAuthority,
   requireMembership,
   requireOwner,
-  requireSessionAccess,
   requireWorldDetails,
   requireWorldStorageBinding,
-  resolveRuntimeState
+  sessionActorOf
 } from "./runtime-access.ts";
 
 const SNAPSHOT_RETENTION_ALL_RECENT_MS = 24 * 60 * 60_000;
@@ -37,7 +38,7 @@ export async function listSnapshots(svc: ServiceContext, ctx: RequestContext, wo
 }
 
 export async function latestManifest(svc: ServiceContext, ctx: RequestContext, worldId: string): Promise<SnapshotManifest | null> {
-  await requireSessionAccess(svc, ctx, worldId);
+  await requireActiveMembership(svc, ctx, worldId);
   return svc.repository.getLatestSnapshot(worldId);
 }
 
@@ -58,8 +59,9 @@ export async function restoreSnapshot(
 ): Promise<SnapshotActionResult> {
   const world = await requireWorldDetails(svc, worldId, ctx.playerUuid);
   requireOwner(world, ctx, "restore backups");
-  const resolved = await resolveRuntimeState(svc, worldId, now);
-  if (resolved.runtime != null) {
+  const actor = await sessionActorOf(svc, ctx, worldId);
+  const runtime = await svc.realtime.coordinator(worldId).runtimeStatus(actor, now);
+  if (runtime.phase === "host-starting" || runtime.phase === "host-live" || runtime.phase === "host-finalizing") {
     throw new HttpError(409, "world_busy", "SharedWorld backups cannot be restored while the world is being hosted.");
   }
   const snapshot = await svc.repository.getSnapshot(worldId, snapshotId);
@@ -116,19 +118,19 @@ export async function finalizeSnapshot(
   request: FinalizeSnapshotRequest,
   now: Date
 ): Promise<SnapshotManifest> {
-  await requireSessionAccess(svc, ctx, worldId, { allowRevokedHost: true });
-  await requireAuthorizedRuntime(
+  await requireHostAuthority(
     svc,
     ctx,
     worldId,
-    now,
     request.runtimeEpoch,
     request.hostToken,
-    ["host-starting", "host-live", "host-finalizing"]
+    ["host-starting", "host-live", "host-finalizing"],
+    now
   );
   await validateFinalizeSnapshotRequest(svc, worldId, request);
   const manifest = await svc.repository.finalizeSnapshot(worldId, ctx, request, now);
   await applySnapshotRetention(svc, worldId, now);
+  await publishWorldEvent(svc, worldId, "snapshot-changed");
   return manifest;
 }
 

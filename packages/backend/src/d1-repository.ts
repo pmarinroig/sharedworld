@@ -1,11 +1,8 @@
 import type {
-  CancelWaitingRequest,
   FileTransferMode,
   FinalizeSnapshotRequest,
   InviteCode,
   KickMemberResponse,
-  PresenceHeartbeatRequest,
-  RefreshWaitingRequest,
   StorageProviderType,
   StorageUsageSummary,
   SnapshotManifest,
@@ -15,7 +12,7 @@ import type {
   WorldSnapshotSummary,
   WorldSummary
 } from "../../shared/src/index.ts";
-import { HANDOFF_WAITER_TIMEOUT_MS, PLAYER_PRESENCE_TIMEOUT_MS, type SessionToken } from "../../shared/src/index.ts";
+import { type SessionToken } from "../../shared/src/index.ts";
 
 import type { D1Database } from "./env.ts";
 import type {
@@ -29,22 +26,14 @@ import type {
   StorageLinkSessionRecord,
   StorageObjectRecord,
   UserRecord,
-  WorldUpdateRecord,
-  UncleanShutdownWarning
+  WorldUpdateRecord
 } from "./repository.ts";
-import {
-  runtimePhaseToWorldStatus,
-  type RuntimeWaiter,
-  type WorldRuntimeRecord
-} from "./runtime-protocol.ts";
-import { reconcileRuntimeState } from "./runtime-reconciliation.ts";
+import { runtimePhaseToWorldStatus } from "./runtime-protocol.ts";
 import {
   mapInvite,
-  mapRuntimeRow,
   mapStorageAccount,
   mapStorageLinkSession,
-  mapStorageObject,
-  mapUncleanShutdownWarning
+  mapStorageObject
 } from "./repository/d1-row-mappers.ts";
 import {
   asNullableString,
@@ -327,9 +316,6 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       worldId,
       ctx.playerUuid
     );
-    await this.run("DELETE FROM handoff_waiters WHERE world_id = ? AND player_uuid = ?", worldId, ctx.playerUuid);
-    await this.retireWorldRuntime(worldId, ctx.playerUuid);
-    await this.run("DELETE FROM world_presence WHERE world_id = ? AND player_uuid = ?", worldId, ctx.playerUuid);
 
     const count = await this.first<Row>(
       "SELECT COUNT(*) AS count FROM world_memberships WHERE world_id = ? AND deleted_at IS NULL",
@@ -346,44 +332,7 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
   private async tearDownWorld(worldId: string, deletedAt: string, deletedCustomIconStorageKey: string | null): Promise<DeleteWorldResult> {
     await this.run("UPDATE worlds SET deleted_at = ? WHERE id = ?", deletedAt, worldId);
     await this.run("DELETE FROM invite_codes WHERE world_id = ?", worldId);
-    await this.run("DELETE FROM handoff_waiters WHERE world_id = ?", worldId);
-    await this.retireWorldRuntime(worldId, null);
-    await this.run("DELETE FROM world_presence WHERE world_id = ?", worldId);
     return { worldDeleted: true, deletedCustomIconStorageKey };
-  }
-
-  /**
-   * Deleting or leaving a world must never reset the epoch high-water mark
-   * (protocol invariant I3): retire the runtime's epoch into
-   * worlds.last_runtime_epoch before dropping the row.
-   */
-  private async retireWorldRuntime(worldId: string, hostUuid: string | null): Promise<void> {
-    if (hostUuid == null) {
-      await this.run(
-        `UPDATE worlds
-         SET last_runtime_epoch = MAX(
-           COALESCE(last_runtime_epoch, 0),
-           COALESCE((SELECT runtime_epoch FROM world_runtime WHERE world_id = ?), 0)
-         )
-         WHERE id = ?`,
-        worldId,
-        worldId
-      );
-      await this.run("DELETE FROM world_runtime WHERE world_id = ?", worldId);
-      return;
-    }
-    await this.run(
-      `UPDATE worlds
-       SET last_runtime_epoch = MAX(
-         COALESCE(last_runtime_epoch, 0),
-         COALESCE((SELECT runtime_epoch FROM world_runtime WHERE world_id = ? AND host_uuid = ?), 0)
-       )
-       WHERE id = ?`,
-      worldId,
-      hostUuid,
-      worldId
-    );
-    await this.run("DELETE FROM world_runtime WHERE world_id = ? AND host_uuid = ?", worldId, hostUuid);
   }
 
   async isStorageKeyReferenced(storageKey: string): Promise<boolean> {
@@ -786,258 +735,39 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       worldId,
       removedPlayerUuid
     );
-    await this.run("DELETE FROM handoff_waiters WHERE world_id = ? AND player_uuid = ?", worldId, removedPlayerUuid);
-    await this.run("DELETE FROM world_presence WHERE world_id = ? AND player_uuid = ?", worldId, removedPlayerUuid);
-    await this.run(
-      `UPDATE world_runtime
-       SET revoked_at = COALESCE(revoked_at, ?), updated_at = ?
-       WHERE world_id = ? AND host_uuid = ?`,
-      removedAt,
-      removedAt,
-      worldId,
-      removedPlayerUuid
-    );
     return {
       worldId,
       removedPlayerUuid
     };
   }
 
-  async getRuntimeRecord(worldId: string, _now: Date): Promise<WorldRuntimeRecord | null> {
-    const row = await this.first<Row>(
-      `SELECT world_id, host_uuid, host_player_name, runtime_phase, runtime_epoch, runtime_token,
-              claimed_at, expires_at, join_target, candidate_uuid, revoked_at,
-              startup_deadline_at, runtime_token_issued_at, last_progress_at,
-              startup_progress_label, startup_progress_mode, startup_progress_fraction, startup_progress_updated_at, updated_at,
-              host_minecraft_version
-       FROM world_runtime WHERE world_id = ?`,
-      worldId
-    );
-    return row ? mapRuntimeRow(row) : null;
-  }
-
-  /**
-   * Unfenced write used only for test seeding; production session flows go
-   * through claimRuntimeAssignment / updateAuthorizedRuntime so a stale writer
-   * can never overwrite a newer runtime epoch.
-   */
-  async upsertRuntimeRecord(runtime: WorldRuntimeRecord): Promise<void> {
-    await this.run(RUNTIME_INSERT_SQL, ...runtimeInsertValues(runtime));
-  }
-
-  /**
-   * Fresh host assignment. The conditional upsert only lands when no runtime row
-   * exists or the existing row carries a strictly older epoch, so two racing
-   * acquires can never both install the same epoch; the loser sees false.
-   */
-  async claimRuntimeAssignment(runtime: WorldRuntimeRecord): Promise<boolean> {
-    const changes = await this.runWithChanges(
-      `${RUNTIME_INSERT_SQL}
-       WHERE world_runtime.runtime_epoch < excluded.runtime_epoch`,
-      ...runtimeInsertValues(runtime)
-    );
-    return changes > 0;
-  }
-
-  /**
-   * Refresh-style write (heartbeat, progress, phase transition) fenced on the
-   * record's own epoch/token. A no-op means the caller's runtime was replaced
-   * between its read and this write, and the caller must treat that as lost
-   * authority instead of resurrecting the old row.
-   */
-  async updateAuthorizedRuntime(runtime: WorldRuntimeRecord): Promise<boolean> {
-    if (runtime.runtimeToken == null) {
-      return false;
-    }
-    const changes = await this.runWithChanges(RUNTIME_UPDATE_SQL, ...runtimeUpdateValues(runtime));
-    return changes > 0;
-  }
-
-  async deleteRuntimeRecord(worldId: string, expected: { runtimeEpoch: number; runtimeToken: string | null }): Promise<boolean> {
-    const changes = await this.runWithChanges(
-      `DELETE FROM world_runtime
-       WHERE world_id = ? AND runtime_epoch = ? AND COALESCE(runtime_token, '') = COALESCE(?, '')`,
-      worldId,
-      expected.runtimeEpoch,
-      expected.runtimeToken
-    );
-    // The epoch high-water mark feeds release-replay detection ([P1]/[I3]).
-    // A successful fenced delete records its own epoch. A delete that lost the
-    // fence may still record its epoch as retired history, but only strictly
-    // below the currently active runtime's epoch — a stale or hostile caller
-    // must never move the mark past (or up to) the active authority.
+  async upsertRuntimeMirror(worldId: string, statusJson: string | null, roomPlayersJson: string | null): Promise<void> {
     await this.run(
-      `UPDATE worlds
-       SET last_runtime_epoch = MAX(COALESCE(last_runtime_epoch, 0), ?)
-       WHERE id = ?
-         AND (? > 0 OR ? < COALESCE((SELECT runtime_epoch FROM world_runtime WHERE world_id = worlds.id), 0))`,
-      expected.runtimeEpoch,
-      worldId,
-      changes,
-      expected.runtimeEpoch
-    );
-    return changes > 0;
-  }
-
-  async getLastRuntimeEpoch(worldId: string): Promise<number> {
-    const row = await this.first<Row>(
-      "SELECT last_runtime_epoch FROM worlds WHERE id = ?",
-      worldId
-    );
-    return row?.last_runtime_epoch == null ? 0 : Number(row.last_runtime_epoch);
-  }
-
-  async getUncleanShutdownWarning(worldId: string): Promise<UncleanShutdownWarning | null> {
-    const row = await this.first<Row>(
-      `SELECT unclean_shutdown_host_uuid, unclean_shutdown_host_player_name, unclean_shutdown_phase, unclean_shutdown_runtime_epoch, unclean_shutdown_recorded_at
-       FROM worlds
-       WHERE id = ?`,
-      worldId
-    );
-    return mapUncleanShutdownWarning(row);
-  }
-
-  async setUncleanShutdownWarning(worldId: string, warning: UncleanShutdownWarning): Promise<void> {
-    await this.run(
-      `UPDATE worlds
-       SET unclean_shutdown_host_uuid = ?,
-           unclean_shutdown_host_player_name = ?,
-           unclean_shutdown_phase = ?,
-           unclean_shutdown_runtime_epoch = ?,
-           unclean_shutdown_recorded_at = ?
-       WHERE id = ?`,
-      warning.hostUuid,
-      warning.hostPlayerName,
-      warning.phase,
-      warning.runtimeEpoch,
-      warning.recordedAt,
-      worldId
-    );
-  }
-
-  async clearUncleanShutdownWarning(worldId: string): Promise<void> {
-    await this.run(
-      `UPDATE worlds
-       SET unclean_shutdown_host_uuid = NULL,
-           unclean_shutdown_host_player_name = NULL,
-           unclean_shutdown_phase = NULL,
-           unclean_shutdown_runtime_epoch = NULL,
-           unclean_shutdown_recorded_at = NULL
-       WHERE id = ?`,
-      worldId
-    );
-  }
-
-  async listActiveWaiters(worldId: string, now: Date): Promise<RuntimeWaiter[]> {
-    await this.run(
-      "DELETE FROM handoff_waiters WHERE world_id = ? AND updated_at < ?",
-      worldId,
-      new Date(now.getTime() - HANDOFF_WAITER_TIMEOUT_MS).toISOString()
-    );
-    const rows = await this.all<Row>(
-      `SELECT player_uuid, player_name, waiter_session_id, waiting, updated_at
-       FROM handoff_waiters
-       WHERE world_id = ?
-       ORDER BY updated_at DESC`,
-      worldId
-    );
-    return rows.map((row) => ({
-      playerUuid: String(row.player_uuid),
-      waiterSessionId: String(row.waiter_session_id),
-      playerName: String(row.player_name),
-      waiting: Number(row.waiting) === 1,
-      updatedAt: String(row.updated_at)
-    }));
-  }
-
-  async upsertWaiterSession(worldId: string, ctx: RequestContext, waiterSessionId: string, now: Date): Promise<void> {
-    await this.run(
-      `INSERT INTO handoff_waiters (world_id, player_uuid, player_name, waiter_session_id, waiting, updated_at)
-       VALUES (?, ?, ?, ?, 1, ?)
-       ON CONFLICT(world_id, player_uuid) DO UPDATE SET
-         player_name = excluded.player_name,
-         waiter_session_id = excluded.waiter_session_id,
-         waiting = 1,
+      `INSERT INTO world_runtime_mirror (world_id, status_json, room_players_json, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(world_id) DO UPDATE SET
+         status_json = COALESCE(excluded.status_json, world_runtime_mirror.status_json),
+         room_players_json = COALESCE(excluded.room_players_json, world_runtime_mirror.room_players_json),
          updated_at = excluded.updated_at`,
       worldId,
-      ctx.playerUuid,
-      ctx.playerName,
-      waiterSessionId,
-      now.toISOString()
+      statusJson,
+      roomPlayersJson,
+      new Date().toISOString()
     );
   }
 
-  async refreshWaiterSession(worldId: string, ctx: RequestContext, request: RefreshWaitingRequest, now: Date): Promise<boolean> {
-    await this.run(
-      `UPDATE handoff_waiters
-       SET player_name = ?, waiting = 1, updated_at = ?
-       WHERE world_id = ? AND player_uuid = ? AND waiter_session_id = ?`,
-      ctx.playerName,
-      now.toISOString(),
-      worldId,
-      ctx.playerUuid,
-      request.waiterSessionId
-    );
+  async getRuntimeMirror(worldId: string): Promise<{ statusJson: string | null; roomPlayersJson: string | null } | null> {
     const row = await this.first<Row>(
-      "SELECT 1 AS present FROM handoff_waiters WHERE world_id = ? AND player_uuid = ? AND waiter_session_id = ?",
-      worldId,
-      ctx.playerUuid,
-      request.waiterSessionId
+      "SELECT status_json, room_players_json FROM world_runtime_mirror WHERE world_id = ?",
+      worldId
     );
-    return Boolean(row);
-  }
-
-  async cancelWaiterSession(worldId: string, ctx: RequestContext, request: CancelWaitingRequest): Promise<boolean> {
-    const row = await this.first<Row>(
-      "SELECT 1 AS present FROM handoff_waiters WHERE world_id = ? AND player_uuid = ? AND waiter_session_id = ?",
-      worldId,
-      ctx.playerUuid,
-      request.waiterSessionId
-    );
-    await this.run(
-      "DELETE FROM handoff_waiters WHERE world_id = ? AND player_uuid = ? AND waiter_session_id = ?",
-      worldId,
-      ctx.playerUuid,
-      request.waiterSessionId
-    );
-    return Boolean(row);
-  }
-
-  async clearWaitersForPlayer(worldId: string, playerUuid: string): Promise<void> {
-    await this.run("DELETE FROM handoff_waiters WHERE world_id = ? AND player_uuid = ?", worldId, playerUuid);
-  }
-
-  async clearWaiters(worldId: string): Promise<void> {
-    await this.run("DELETE FROM handoff_waiters WHERE world_id = ?", worldId);
-  }
-
-  async setPlayerPresence(worldId: string, ctx: RequestContext, request: PresenceHeartbeatRequest, now: Date): Promise<void> {
-    await this.run(
-      `INSERT INTO world_presence (world_id, player_uuid, player_name, present, guest_session_epoch, presence_sequence, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(world_id, player_uuid) DO UPDATE SET
-         player_name = excluded.player_name,
-         present = excluded.present,
-         guest_session_epoch = excluded.guest_session_epoch,
-         presence_sequence = excluded.presence_sequence,
-         updated_at = excluded.updated_at
-       WHERE excluded.guest_session_epoch > world_presence.guest_session_epoch
-         OR (
-           excluded.guest_session_epoch = world_presence.guest_session_epoch
-           AND excluded.presence_sequence >= world_presence.presence_sequence
-         )`,
-      worldId,
-      ctx.playerUuid,
-      ctx.playerName,
-      request.present ? 1 : 0,
-      request.guestSessionEpoch,
-      request.presenceSequence,
-      now.toISOString()
-    );
-  }
-
-  async clearWorldPresence(worldId: string): Promise<void> {
-    await this.run("DELETE FROM world_presence WHERE world_id = ?", worldId);
+    if (!row) {
+      return null;
+    }
+    return {
+      statusJson: row.status_json == null ? null : String(row.status_json),
+      roomPlayersJson: row.room_players_json == null ? null : String(row.room_players_json)
+    };
   }
 
   async getLatestSnapshot(worldId: string): Promise<SnapshotManifest | null> {
@@ -1470,13 +1200,13 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       "SELECT COUNT(*) AS count FROM world_memberships WHERE world_id = ? AND deleted_at IS NULL",
       worldId
     );
-    const lifecycle = await this.summaryLifecycle(worldId, new Date());
+    const lifecycle = await this.summaryLifecycle(worldId);
     const latest = await this.getLatestSnapshot(worldId);
     const latestVersions = await this.first<Row>(
       "SELECT data_version, minecraft_version FROM snapshots WHERE world_id = ? ORDER BY created_at DESC, id DESC LIMIT 1",
       worldId
     );
-    const onlinePlayers = await this.listOnlinePlayers(worldId, new Date());
+    const onlinePlayers = await this.listOnlinePlayers(worldId);
     return {
       id: String(world.id),
       slug: String(world.slug),
@@ -1646,63 +1376,68 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     return asNullableString(row?.custom_icon_storage_key);
   }
 
-  private async summaryLifecycle(worldId: string, now: Date): Promise<{
+  private async mirroredRuntime(worldId: string): Promise<{
+    status: import("../../shared/src/index.ts").WorldRuntimeStatus | null;
+    roomPlayers: Array<{ playerUuid: string; playerName: string }>;
+  }> {
+    const mirror = await this.getRuntimeMirror(worldId);
+    return {
+      status: mirror?.statusJson == null
+        ? null
+        : JSON.parse(mirror.statusJson) as import("../../shared/src/index.ts").WorldRuntimeStatus,
+      roomPlayers: mirror?.roomPlayersJson == null
+        ? []
+        : JSON.parse(mirror.roomPlayersJson) as Array<{ playerUuid: string; playerName: string }>
+    };
+  }
+
+  private async summaryLifecycle(worldId: string): Promise<{
     status: WorldSummary["status"];
     activeHostUuid: string | null;
     activeHostPlayerName: string | null;
     activeJoinTarget: string | null;
   }> {
-    const resolved = await reconcileRuntimeState(this, worldId, now);
-    if (resolved.runtime != null) {
+    const { status } = await this.mirroredRuntime(worldId);
+    if (status != null && (status.phase === "host-starting" || status.phase === "host-live" || status.phase === "host-finalizing")) {
       return {
-        status: runtimePhaseToWorldStatus(resolved.runtime.phase),
-        activeHostUuid: resolved.runtime.hostUuid,
-        activeHostPlayerName: resolved.runtime.hostPlayerName,
-        activeJoinTarget: resolved.runtime.joinTarget
+        status: runtimePhaseToWorldStatus(status.phase),
+        activeHostUuid: status.hostUuid,
+        activeHostPlayerName: status.hostPlayerName,
+        activeJoinTarget: status.joinTarget
       };
     }
     return {
-      status: resolved.candidate == null ? "idle" : "handoff",
+      status: status?.phase === "handoff-waiting" ? "handoff" : "idle",
       activeHostUuid: null,
       activeHostPlayerName: null,
       activeJoinTarget: null
     };
   }
 
-  private async listOnlinePlayers(worldId: string, now: Date): Promise<Array<{ playerUuid: string; playerName: string }>> {
-    await this.run(
-      "DELETE FROM world_presence WHERE world_id = ? AND present = 1 AND updated_at < ?",
-      worldId,
-      new Date(now.getTime() - PLAYER_PRESENCE_TIMEOUT_MS).toISOString()
-    );
-
+  /**
+   * Online players come straight from the coordinator-maintained mirror: the
+   * room roster (host-reported, or legacy self-reports), plus the active
+   * host itself while a hosting session is up.
+   */
+  private async listOnlinePlayers(worldId: string): Promise<Array<{ playerUuid: string; playerName: string }>> {
+    const { status, roomPlayers } = await this.mirroredRuntime(worldId);
     const players = new Map<string, string>();
-    const runtime = (await reconcileRuntimeState(this, worldId, now)).runtime;
-    if ((runtime?.phase === "host-starting" || runtime?.phase === "host-live")
-      && runtime.hostUuid != null
-      && runtime.hostPlayerName != null) {
-      players.set(runtime.hostUuid, runtime.hostPlayerName);
+    if (status != null
+      && (status.phase === "host-starting" || status.phase === "host-live")
+      && status.hostUuid != null
+      && status.hostPlayerName != null) {
+      players.set(status.hostUuid, status.hostPlayerName);
     }
-
-    const rows = await this.all<Row>(
-      `SELECT wp.player_uuid, wp.player_name
-       FROM world_presence wp
-       JOIN world_memberships wm ON wm.world_id = wp.world_id AND wm.player_uuid = wp.player_uuid
-       WHERE wp.world_id = ? AND wm.deleted_at IS NULL
-         AND wp.present = 1
-       ORDER BY wp.player_name ASC, wp.player_uuid ASC`,
-      worldId
-    );
-    for (const row of rows) {
-      const playerUuid = String(row.player_uuid);
-      if (!players.has(playerUuid)) {
-        players.set(playerUuid, String(row.player_name));
+    for (const player of roomPlayers) {
+      if (!players.has(player.playerUuid)) {
+        players.set(player.playerUuid, player.playerName);
       }
     }
     return [...players.entries()].map(([playerUuid, playerName]) => ({ playerUuid, playerName }));
   }
 
 }
+
 
 function parseWorldSettings(raw: unknown): WorldSettings | null {
   const text = asNullableString(raw);
@@ -1715,84 +1450,4 @@ function parseWorldSettings(raw: unknown): WorldSettings | null {
   } catch {
     return null;
   }
-}
-
-/**
- * Single source of truth for the world_runtime column set. All three runtime
- * writes (seed upsert, fenced claim, fenced refresh) are generated from this
- * list, so adding a runtime column means editing it, runtimeRowValues, and
- * mapRuntimeRow — nowhere else.
- */
-const RUNTIME_COLUMNS = [
-  "world_id",
-  "host_uuid",
-  "host_player_name",
-  "runtime_phase",
-  "runtime_epoch",
-  "runtime_token",
-  "claimed_at",
-  "expires_at",
-  "join_target",
-  "candidate_uuid",
-  "revoked_at",
-  "startup_deadline_at",
-  "runtime_token_issued_at",
-  "last_progress_at",
-  "startup_progress_label",
-  "startup_progress_mode",
-  "startup_progress_fraction",
-  "startup_progress_updated_at",
-  "updated_at",
-  "host_minecraft_version"
-] as const;
-
-const RUNTIME_FENCE_COLUMNS: ReadonlyArray<string> = ["world_id", "runtime_epoch", "runtime_token"];
-
-const RUNTIME_INSERT_SQL = `INSERT INTO world_runtime (${RUNTIME_COLUMNS.join(", ")})
-       VALUES (${RUNTIME_COLUMNS.map(() => "?").join(", ")})
-       ON CONFLICT(world_id) DO UPDATE SET
-         ${RUNTIME_COLUMNS.filter((column) => column !== "world_id").map((column) => `${column} = excluded.${column}`).join(",\n         ")}`;
-
-const RUNTIME_UPDATE_SQL = `UPDATE world_runtime SET
-         ${RUNTIME_COLUMNS.filter((column) => !RUNTIME_FENCE_COLUMNS.includes(column)).map((column) => `${column} = ?`).join(",\n         ")}
-       WHERE world_id = ? AND runtime_epoch = ? AND runtime_token = ?`;
-
-function runtimeRowValues(runtime: WorldRuntimeRecord): Record<(typeof RUNTIME_COLUMNS)[number], unknown> {
-  return {
-    world_id: runtime.worldId,
-    host_uuid: runtime.hostUuid,
-    host_player_name: runtime.hostPlayerName,
-    runtime_phase: runtime.phase,
-    runtime_epoch: runtime.runtimeEpoch,
-    runtime_token: runtime.runtimeToken ?? null,
-    claimed_at: runtime.claimedAt ?? runtime.updatedAt,
-    expires_at: runtime.expiresAt ?? null,
-    join_target: runtime.joinTarget,
-    candidate_uuid: runtime.candidateUuid,
-    revoked_at: runtime.revokedAt ?? null,
-    startup_deadline_at: runtime.startupDeadlineAt ?? null,
-    runtime_token_issued_at: runtime.runtimeTokenIssuedAt ?? null,
-    last_progress_at: runtime.lastProgressAt ?? null,
-    startup_progress_label: runtime.startupProgress?.label ?? null,
-    startup_progress_mode: runtime.startupProgress?.mode ?? null,
-    startup_progress_fraction: runtime.startupProgress?.fraction ?? null,
-    startup_progress_updated_at: runtime.startupProgress?.updatedAt ?? null,
-    updated_at: runtime.updatedAt,
-    host_minecraft_version: runtime.hostMinecraftVersion ?? null
-  };
-}
-
-function runtimeInsertValues(runtime: WorldRuntimeRecord): unknown[] {
-  const values = runtimeRowValues(runtime);
-  return RUNTIME_COLUMNS.map((column) => values[column]);
-}
-
-function runtimeUpdateValues(runtime: WorldRuntimeRecord): unknown[] {
-  const values = runtimeRowValues(runtime);
-  return [
-    ...RUNTIME_COLUMNS.filter((column) => !RUNTIME_FENCE_COLUMNS.includes(column)).map((column) => values[column]),
-    values.world_id,
-    values.runtime_epoch,
-    values.runtime_token
-  ];
 }

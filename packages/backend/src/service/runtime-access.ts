@@ -2,72 +2,80 @@ import type { WorldDetails } from "../../../shared/src/index.ts";
 
 import { HttpError } from "../http.ts";
 import type { RequestContext, WorldStorageBinding } from "../repository.ts";
-import { matchesHostAuthorization, type WorldRuntimeRecord } from "../runtime-protocol.ts";
-import { reconcileRuntimeState } from "../runtime-reconciliation.ts";
-import type { AuthorizedRuntime, ResolvedRuntimeState } from "../runtime-service-support.ts";
+import type { SessionActor } from "../realtime/coordinator.ts";
 import type { ServiceContext } from "./context.ts";
 
 /**
- * Responsibility:
- * Resolve the single authoritative runtime record for a world after applying timeout and
- * current-candidate reconciliation.
- *
- * Postconditions:
- * The returned runtime reflects timeout expiry and current preferred candidate selection.
- *
- * Stale-work rule:
- * Timeout and candidate reconciliation happen before any caller reasons about the runtime.
+ * Membership facts for a session call, resolved from D1 (which owns worlds
+ * and memberships). The coordinator applies the access decision — including
+ * the revoked-host exception (I7) — against these facts plus its own runtime.
  */
-export async function resolveRuntimeState(svc: ServiceContext, worldId: string, now: Date): Promise<ResolvedRuntimeState> {
-  return reconcileRuntimeState(svc.repository, worldId, now);
-}
-
-/**
- * New host assignments must never reuse an epoch that an earlier runtime already used,
- * even when that runtime expired or ended in an unclean-shutdown warning.
- */
-export function runtimeEpochBaseline(resolved: ResolvedRuntimeState): Pick<WorldRuntimeRecord, "runtimeEpoch"> | null {
-  if (resolved.runtime != null) {
-    return resolved.runtime;
+export async function sessionActorOf(svc: ServiceContext, ctx: RequestContext, worldId: string): Promise<SessionActor> {
+  if (!await svc.repository.hasActiveWorld(worldId)) {
+    throw worldNotFoundError();
   }
-  if (resolved.warning != null) {
-    return { runtimeEpoch: resolved.warning.runtimeEpoch };
-  }
-  if (resolved.retiredRuntimeEpoch != null) {
-    return { runtimeEpoch: resolved.retiredRuntimeEpoch };
-  }
-  return null;
-}
-
-/**
- * Responsibility:
- * Enforce epoch/token authority for host-owned runtime mutations.
- *
- * Stale-work rule:
- * Any mismatched epoch/token is rejected, even if the same player used to be host.
- */
-export async function requireAuthorizedRuntime(
-  svc: ServiceContext,
-  ctx: RequestContext,
-  worldId: string,
-  now: Date,
-  runtimeEpoch: number | null | undefined,
-  hostToken: string | null | undefined,
-  allowedPhases: WorldRuntimeRecord["phase"][]
-): Promise<AuthorizedRuntime> {
-  const resolved = await resolveRuntimeState(svc, worldId, now);
-  if (!resolved.runtime
-    || !allowedPhases.includes(resolved.runtime.phase)
-    || !matchesHostAuthorization(resolved.runtime, ctx.playerUuid, runtimeEpoch, hostToken)) {
-    throw hostNotActiveError();
-  }
+  const membershipActive = await svc.repository.isWorldMember(worldId, ctx.playerUuid);
+  const everMember = membershipActive || await svc.repository.hasWorldMembership(worldId, ctx.playerUuid);
   return {
-    runtime: resolved.runtime
+    playerUuid: ctx.playerUuid,
+    playerName: ctx.playerName,
+    membershipActive,
+    everMember
   };
 }
 
-export function hostNotActiveError(): HttpError {
-  return new HttpError(409, "host_not_active", "Someone else is hosting this world now, so this upload was stopped.");
+/** Old requireSessionAccess without options: active member or a labeled 403. */
+export async function requireActiveMembership(svc: ServiceContext, ctx: RequestContext, worldId: string): Promise<void> {
+  const facts = await sessionActorOf(svc, ctx, worldId);
+  if (facts.membershipActive) {
+    return;
+  }
+  if (facts.everMember) {
+    throw new HttpError(403, "membership_revoked", "You were removed from this SharedWorld.");
+  }
+  throw new HttpError(403, "forbidden", "You do not have access to this SharedWorld server.");
+}
+
+/**
+ * Session access honoring the revoked-host exception (I7): resolved by the
+ * coordinator, which owns the runtime the exception depends on.
+ */
+export async function requireSessionAccessAllowingRevokedHost(
+  svc: ServiceContext,
+  ctx: RequestContext,
+  worldId: string
+): Promise<void> {
+  const facts = await sessionActorOf(svc, ctx, worldId);
+  await svc.realtime.coordinator(worldId).assertSessionAccess(facts, { allowRevokedHost: true });
+}
+
+/**
+ * Host authority for HTTP write paths (uploads, finalize-snapshot, gamerule
+ * reports): delegates to the coordinator, the only runtime truth. Includes
+ * session access with the revoked-host exception.
+ */
+export async function requireHostAuthority(
+  svc: ServiceContext,
+  ctx: RequestContext,
+  worldId: string,
+  runtimeEpoch: number | null | undefined,
+  hostToken: string | null | undefined,
+  allowedPhases: Array<"host-starting" | "host-live" | "host-finalizing">,
+  now: Date
+): Promise<void> {
+  const facts = await sessionActorOf(svc, ctx, worldId);
+  await svc.realtime.coordinator(worldId).validateHostAuthority(facts, runtimeEpoch, hostToken, allowedPhases, now);
+}
+
+/** Fan one change event out to the world's active members' gateways. */
+export async function publishWorldEvent(
+  svc: ServiceContext,
+  worldId: string,
+  kind: "membership-changed" | "settings-changed" | "world-changed" | "snapshot-changed"
+): Promise<void> {
+  const members = await svc.repository.listMemberships(worldId);
+  const recipients = members.filter((member) => member.deletedAt == null).map((member) => member.playerUuid);
+  await svc.realtime.notifyUsers({ worldId, kind }, recipients);
 }
 
 export async function requireMembership(svc: ServiceContext, ctx: RequestContext, worldId: string): Promise<void> {
@@ -78,34 +86,6 @@ export async function requireMembership(svc: ServiceContext, ctx: RequestContext
   if (!isMember) {
     throw new HttpError(403, "forbidden", "You do not have access to this SharedWorld server.");
   }
-}
-
-/**
- * Session access is membership access, except that a kicked host may still finish
- * shutting down the runtime it already owns (I7 in the protocol doc).
- */
-export async function requireSessionAccess(
-  svc: ServiceContext,
-  ctx: RequestContext,
-  worldId: string,
-  options: { allowRevokedHost?: boolean } = {}
-): Promise<void> {
-  if (!await svc.repository.hasActiveWorld(worldId)) {
-    throw worldNotFoundError();
-  }
-  if (await svc.repository.isWorldMember(worldId, ctx.playerUuid)) {
-    return;
-  }
-  if (options.allowRevokedHost) {
-    const resolved = await resolveRuntimeState(svc, worldId, new Date());
-    if (resolved.runtime?.hostUuid === ctx.playerUuid && resolved.runtime.revokedAt != null) {
-      return;
-    }
-  }
-  if (!await svc.repository.hasWorldMembership(worldId, ctx.playerUuid)) {
-    throw new HttpError(403, "forbidden", "You do not have access to this SharedWorld server.");
-  }
-  throw new HttpError(403, "membership_revoked", "You were removed from this SharedWorld.");
 }
 
 export async function requireWorldDetails(svc: ServiceContext, worldId: string, playerUuid: string): Promise<WorldDetails> {

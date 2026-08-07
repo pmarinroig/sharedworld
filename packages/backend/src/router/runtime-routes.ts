@@ -19,6 +19,7 @@ import { requireParam, RouteDefinition, UrlPattern } from "./shared.ts";
 export function runtimeRoutes(
   service: Pick<
     RouterService,
+    | "connectRealtime"
     | "abandonFinalization"
     | "beginFinalization"
     | "cancelWaiting"
@@ -34,6 +35,14 @@ export function runtimeRoutes(
   >
 ): RouteDefinition[] {
   return [
+    {
+      // 0.3.0 realtime: the one WebSocket per player. Authenticated like any
+      // route, then the upgrade is forwarded to the caller's gateway DO.
+      method: "GET",
+      pattern: new UrlPattern({ pathname: "/ws" }),
+      auth: true,
+      handler: async (request, _params, ctx) => service.connectRealtime(ctx, request)
+    },
     {
       method: "POST",
       pattern: new UrlPattern({ pathname: "/worlds/:worldId/session/enter" }),

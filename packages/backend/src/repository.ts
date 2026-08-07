@@ -1,10 +1,7 @@
 import type {
-  CancelWaitingRequest,
-  RefreshWaitingRequest,
   FinalizeSnapshotRequest,
   InviteCode,
   KickMemberResponse,
-  PresenceHeartbeatRequest,
   SessionToken,
   SnapshotManifest,
   StorageLinkSession,
@@ -18,7 +15,6 @@ import type {
   WorldSnapshotSummary,
   WorldSummary
 } from "../../shared/src/index.ts";
-import type { RuntimeWaiter, WorldRuntimeRecord } from "./runtime-protocol.ts";
 
 export interface AuthChallengeRecord {
   serverId: string;
@@ -173,28 +169,15 @@ export interface MembershipRepository {
   setMembershipCommandPermission(worldId: string, playerUuid: string, canUseCommands: boolean): Promise<boolean>;
 }
 
+/**
+ * 0.3.0: runtime truth lives in the per-world coordinator Durable Object.
+ * D1 keeps only a single-writer display mirror — written by the coordinator,
+ * read by summaries and legacy polling paths. Null fields leave the stored
+ * column untouched.
+ */
 export interface RuntimeRepository {
-  getRuntimeRecord(worldId: string, now: Date): Promise<WorldRuntimeRecord | null>;
-  /** Unfenced write for test seeding; session flows use the fenced methods below. */
-  upsertRuntimeRecord(runtime: WorldRuntimeRecord): Promise<void>;
-  /** Install a fresh assignment; false when a same-or-newer epoch already holds the row. */
-  claimRuntimeAssignment(runtime: WorldRuntimeRecord): Promise<boolean>;
-  /** Refresh the record fenced on its own epoch/token; false means authority was lost. */
-  updateAuthorizedRuntime(runtime: WorldRuntimeRecord): Promise<boolean>;
-  /** Retire the epoch high-water mark, then delete only the expected epoch/token row. */
-  deleteRuntimeRecord(worldId: string, expected: { runtimeEpoch: number; runtimeToken: string | null }): Promise<boolean>;
-  getLastRuntimeEpoch(worldId: string): Promise<number>;
-  getUncleanShutdownWarning(worldId: string): Promise<UncleanShutdownWarning | null>;
-  setUncleanShutdownWarning(worldId: string, warning: UncleanShutdownWarning): Promise<void>;
-  clearUncleanShutdownWarning(worldId: string): Promise<void>;
-  listActiveWaiters(worldId: string, now: Date): Promise<RuntimeWaiter[]>;
-  upsertWaiterSession(worldId: string, ctx: RequestContext, waiterSessionId: string, now: Date): Promise<void>;
-  refreshWaiterSession(worldId: string, ctx: RequestContext, request: RefreshWaitingRequest, now: Date): Promise<boolean>;
-  cancelWaiterSession(worldId: string, ctx: RequestContext, request: CancelWaitingRequest): Promise<boolean>;
-  clearWaitersForPlayer(worldId: string, playerUuid: string): Promise<void>;
-  clearWaiters(worldId: string): Promise<void>;
-  setPlayerPresence(worldId: string, ctx: RequestContext, request: PresenceHeartbeatRequest, now: Date): Promise<void>;
-  clearWorldPresence(worldId: string): Promise<void>;
+  upsertRuntimeMirror(worldId: string, statusJson: string | null, roomPlayersJson: string | null): Promise<void>;
+  getRuntimeMirror(worldId: string): Promise<{ statusJson: string | null; roomPlayersJson: string | null } | null>;
 }
 
 export interface SnapshotRepository {

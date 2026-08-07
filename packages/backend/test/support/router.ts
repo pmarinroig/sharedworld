@@ -290,6 +290,9 @@ const defaultRouterService = {
   },
   async uploadStorageBlob(_ctx, _worldId, _storageKey, _request) {
     return unexpectedRouteCall("uploadStorageBlob");
+  },
+  async connectRealtime(_ctx, _request) {
+    return unexpectedRouteCall("connectRealtime");
   }
 } satisfies RouterService;
 

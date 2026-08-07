@@ -74,59 +74,6 @@ CREATE TABLE IF NOT EXISTS invite_codes (
   FOREIGN KEY (created_by_uuid) REFERENCES users(player_uuid)
 );
 
-CREATE TABLE IF NOT EXISTS world_runtime (
-  world_id TEXT PRIMARY KEY,
-  host_uuid TEXT NOT NULL,
-  host_player_name TEXT NOT NULL,
-  runtime_phase TEXT NOT NULL,
-  runtime_epoch INTEGER NOT NULL DEFAULT 0,
-  runtime_token TEXT,
-  claimed_at TEXT NOT NULL,
-  expires_at TEXT,
-  join_target TEXT,
-  candidate_uuid TEXT,
-  revoked_at TEXT,
-  startup_deadline_at TEXT,
-  runtime_token_issued_at TEXT,
-  last_progress_at TEXT,
-  startup_progress_label TEXT,
-  startup_progress_mode TEXT,
-  startup_progress_fraction REAL,
-  startup_progress_updated_at TEXT,
-  updated_at TEXT NOT NULL,
-  host_minecraft_version TEXT,
-  FOREIGN KEY (world_id) REFERENCES worlds(id),
-  FOREIGN KEY (host_uuid) REFERENCES users(player_uuid)
-);
-
-CREATE TABLE IF NOT EXISTS handoff_waiters (
-  world_id TEXT NOT NULL,
-  player_uuid TEXT NOT NULL,
-  player_name TEXT NOT NULL,
-  -- Added by ALTER TABLE in migration 0010, which cannot declare NOT NULL;
-  -- schema.sql mirrors what migrated production databases actually enforce.
-  waiter_session_id TEXT,
-  waiting INTEGER NOT NULL,
-  updated_at TEXT NOT NULL,
-  PRIMARY KEY (world_id, player_uuid),
-  FOREIGN KEY (world_id) REFERENCES worlds(id),
-  FOREIGN KEY (player_uuid) REFERENCES users(player_uuid)
-);
-
-CREATE TABLE IF NOT EXISTS world_presence (
-  world_id TEXT NOT NULL,
-  player_uuid TEXT NOT NULL,
-  player_name TEXT NOT NULL,
-  -- Defaults mirror the ALTER TABLE migrations (0002/0013) that added these
-  -- columns on production databases; inserts always set them explicitly.
-  present INTEGER NOT NULL DEFAULT 1,
-  guest_session_epoch INTEGER NOT NULL DEFAULT 0,
-  presence_sequence INTEGER NOT NULL DEFAULT 0,
-  updated_at TEXT NOT NULL,
-  PRIMARY KEY (world_id, player_uuid),
-  FOREIGN KEY (world_id) REFERENCES worlds(id),
-  FOREIGN KEY (player_uuid) REFERENCES users(player_uuid)
-);
 
 CREATE TABLE IF NOT EXISTS snapshots (
   id TEXT PRIMARY KEY,
@@ -225,3 +172,14 @@ CREATE INDEX IF NOT EXISTS idx_snapshot_files_storage_key ON snapshot_files (sto
 CREATE INDEX IF NOT EXISTS idx_snapshot_packs_storage_key ON snapshot_packs (storage_key);
 CREATE INDEX IF NOT EXISTS idx_snapshots_world_created ON snapshots (world_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_world_memberships_player ON world_memberships (player_uuid);
+
+-- 0.3.0 realtime: single-writer display mirror maintained by the world's
+-- coordinator Durable Object. Summaries and legacy polls read it; nothing
+-- else ever writes it. status_json = WorldRuntimeStatus, room_players_json
+-- = RoomPlayer[].
+CREATE TABLE IF NOT EXISTS world_runtime_mirror (
+  world_id TEXT PRIMARY KEY,
+  status_json TEXT,
+  room_players_json TEXT,
+  updated_at TEXT NOT NULL
+);
