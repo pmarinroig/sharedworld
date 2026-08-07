@@ -340,7 +340,7 @@ public final class SharedWorldClient implements ClientModInitializer {
         }
 
         @Override
-        public void onWorldGameRulesSnapshotRequested(java.util.function.Consumer<java.util.Map<String, Boolean>> consumer) {
+        public void onWorldGameRulesSnapshotRequested(java.util.function.Consumer<link.sharedworld.host.WorldSettingsReader.Snapshot> consumer) {
             var server = Minecraft.getInstance().getSingleplayerServer();
             // Same identity guard as onWorldSettingsChanged ([P9]): a vanilla
             // singleplayer server is never even observed, so the consumer
@@ -350,7 +350,7 @@ public final class SharedWorldClient implements ClientModInitializer {
             }
             // Gamerule reads must run on the server thread; the consumer is
             // invoked there and the manager trampolines back itself.
-            server.execute(() -> consumer.accept(link.sharedworld.host.WorldSettingsReader.readGameRules(server)));
+            server.execute(() -> consumer.accept(link.sharedworld.host.WorldSettingsReader.readSnapshot(server)));
         }
 
         @Override

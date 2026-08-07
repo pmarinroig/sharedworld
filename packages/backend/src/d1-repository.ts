@@ -1421,19 +1421,24 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
    */
   private async listOnlinePlayers(worldId: string): Promise<Array<{ playerUuid: string; playerName: string }>> {
     const { status, roomPlayers } = await this.mirroredRuntime(worldId);
-    const players = new Map<string, string>();
+    // Identities arrive in mixed shapes (the in-game roster reports
+    // hyphenated UUIDs, backend records may be bare 32-char) — the project
+    // rule is hyphen-insensitive comparison, so the dedupe key must be too.
+    const canonical = (uuid: string) => uuid.replace(/-/g, "").toLowerCase();
+    const players = new Map<string, { playerUuid: string; playerName: string }>();
     if (status != null
       && (status.phase === "host-starting" || status.phase === "host-live")
       && status.hostUuid != null
       && status.hostPlayerName != null) {
-      players.set(status.hostUuid, status.hostPlayerName);
+      players.set(canonical(status.hostUuid), { playerUuid: status.hostUuid, playerName: status.hostPlayerName });
     }
     for (const player of roomPlayers) {
-      if (!players.has(player.playerUuid)) {
-        players.set(player.playerUuid, player.playerName);
+      const key = canonical(player.playerUuid);
+      if (!players.has(key)) {
+        players.set(key, { playerUuid: player.playerUuid, playerName: player.playerName });
       }
     }
-    return [...players.entries()].map(([playerUuid, playerName]) => ({ playerUuid, playerName }));
+    return [...players.values()];
   }
 
 }

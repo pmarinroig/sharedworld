@@ -16,6 +16,20 @@ public final class WorldSettingsReader {
     private WorldSettingsReader() {
     }
 
+    /**
+     * One atomic server-thread read of everything the host persists:
+     * the managed gamerules plus the current difficulty (0.3.0 — in-game
+     * /difficulty persists like /gamerule does). A null difficulty means
+     * "unknown, report nothing for it".
+     */
+    public record Snapshot(Map<String, Boolean> gamerules, String difficulty) {
+    }
+
+    /** Must run on the server thread (callers wrap in server.execute). */
+    public static Snapshot readSnapshot(MinecraftServer server) {
+        return new Snapshot(readGameRules(server), readDifficultyId(server));
+    }
+
     /** Must run on the server thread (callers wrap in server.execute). */
     public static Map<String, Boolean> readGameRules(MinecraftServer server) {
         Map<String, Boolean> values = new LinkedHashMap<>();
@@ -26,5 +40,14 @@ public final class WorldSettingsReader {
             values.put(rule.id(), link.sharedworld.versioned.ServerSettingsCompat.getGameRule(server, rule));
         }
         return values;
+    }
+
+    /** The settings-vocabulary difficulty id, or null when unavailable. */
+    static String readDifficultyId(MinecraftServer server) {
+        if (server == null) {
+            return null;
+        }
+        net.minecraft.world.Difficulty difficulty = link.sharedworld.versioned.ServerSettingsCompat.getDifficulty(server);
+        return difficulty == null ? null : difficulty.name().toLowerCase(java.util.Locale.ROOT);
     }
 }

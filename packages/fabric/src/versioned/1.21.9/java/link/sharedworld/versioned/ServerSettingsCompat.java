@@ -35,6 +35,11 @@ public final class ServerSettingsCompat {
     }
 
     /** Read the current value of a managed rule from the running server (server thread). */
+    /** Read side for host-reported difficulty persistence (0.3.0). */
+    public static Difficulty getDifficulty(MinecraftServer server) {
+        return server.getWorldData().getDifficulty();
+    }
+
     public static boolean getGameRule(MinecraftServer server, SharedWorldGameRule rule) {
         return switch (rule) {
             case KEEP_INVENTORY -> server.getGameRules().getRule(GameRules.RULE_KEEPINVENTORY).get();

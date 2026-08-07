@@ -180,6 +180,7 @@ export async function reportHostGameRules(
     "host-finalizing"
   ], now);
   const gamerules = validateGameRules(request.gamerules);
+  const difficulty = validateOptionalDifficulty(request.difficulty);
   // Merge-and-CAS: the owner's PUT bumps the revision blindly, so a report
   // racing an owner save must re-read and merge against the fresh base
   // instead of resurrecting stale difficulty/gameMode values.
@@ -192,6 +193,9 @@ export async function reportHostGameRules(
       ...(stored.settings ?? {}),
       gamerules: { ...(stored.settings?.gamerules ?? {}), ...gamerules }
     };
+    if (difficulty != null) {
+      merged.difficulty = difficulty;
+    }
     if (await svc.repository.updateWorldSettingsIfRevision(worldId, JSON.stringify(merged), stored.settingsRevision)) {
       await publishWorldEvent(svc, worldId, "settings-changed");
       return { settings: merged, settingsRevision: stored.settingsRevision + 1 };
@@ -334,6 +338,17 @@ function validateWorldSettings(raw: WorldSettings | undefined): WorldSettings {
     settings.gamerules = validateGameRules(raw.gamerules);
   }
   return settings;
+}
+
+/** Host-reported difficulty: absent means "no change", anything else must be valid. */
+function validateOptionalDifficulty(raw: WorldDifficulty | null | undefined): WorldDifficulty | null {
+  if (raw == null) {
+    return null;
+  }
+  if (!WORLD_DIFFICULTIES.includes(raw)) {
+    throw new HttpError(400, "invalid_world_settings", "That difficulty isn't one of the supported values.");
+  }
+  return raw;
 }
 
 /** Whitelist validation shared by the owner settings PUT and the host gamerule report. */

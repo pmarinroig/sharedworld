@@ -347,6 +347,11 @@ export interface HostGameRulesReportRequest {
   runtimeEpoch?: number | null;
   hostToken?: string | null;
   gamerules: Partial<Record<WorldGameRule, boolean>>;
+  /**
+   * 0.3.0: in-game /difficulty persists like gamerules do (last write wins
+   * with the owner's settings screen). Absent/null = no difficulty change.
+   */
+  difficulty?: WorldDifficulty | null;
 }
 
 export interface HostGameRulesReportResponse {

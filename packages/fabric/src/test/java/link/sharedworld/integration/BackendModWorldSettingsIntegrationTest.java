@@ -88,23 +88,25 @@ final class BackendModWorldSettingsIntegrationTest {
         owner.putWorldSettings(worldId, new SharedWorldModels.WorldSettingsDto(
                 "hard", "survival", Map.of("keepInventory", false)));
 
-        SharedWorldModels.HostGameRulesReportResponseDto reported = host.reportHostGameRules(
-                worldId, epoch, token, Map.of("keepInventory", true, "mobGriefing", false));
+        SharedWorldModels.HostGameRulesReportResponseDto reported = host.reportHostGameRules(worldId, epoch, token, Map.of("keepInventory", true, "mobGriefing", false), null);
         assertEquals(2L, (long) reported.settingsRevision());
         assertEquals("hard", reported.settings().difficulty(), "difficulty survives the merge");
         assertEquals("survival", reported.settings().defaultGameMode(), "game mode survives the merge");
         assertEquals(Boolean.TRUE, reported.settings().gamerules().get("keepInventory"));
         assertEquals(Boolean.FALSE, reported.settings().gamerules().get("mobGriefing"));
 
+        SharedWorldModels.HostGameRulesReportResponseDto difficultyReport =
+                host.reportHostGameRules(worldId, epoch, token, Map.of(), "peaceful");
+        assertEquals("peaceful", difficultyReport.settings().difficulty(), "host-reported difficulty persists");
+
         SharedWorldModels.HostHeartbeatResponseDto heartbeat = host.heartbeatHost(worldId, epoch, token, "join.example");
-        assertEquals(2L, (long) heartbeat.settingsRevision());
+        assertEquals(3L, (long) heartbeat.settingsRevision());
         assertEquals(Boolean.TRUE, heartbeat.settings().gamerules().get("keepInventory"));
-        assertEquals("hard", heartbeat.settings().difficulty());
+        assertEquals("peaceful", heartbeat.settings().difficulty());
 
         // A wrong host token is fenced out and writes nothing.
-        Exception denied = assertThrows(Exception.class, () -> host.reportHostGameRules(
-                worldId, epoch, "rt-wrong", Map.of("pvp", true)));
+        Exception denied = assertThrows(Exception.class, () -> host.reportHostGameRules(worldId, epoch, "rt-wrong", Map.of("pvp", true), null));
         assertTrue(denied.getMessage().toLowerCase().contains("hosting"), denied.getMessage());
-        assertEquals(2L, (long) owner.getWorld(worldId).settingsRevision());
+        assertEquals(3L, (long) owner.getWorld(worldId).settingsRevision());
     }
 }

@@ -66,6 +66,29 @@ describe("SharedWorldService world management", () => {
     expect(worlds[0].onlinePlayerNames).toEqual(["Owner", "Guest"]);
   });
 
+  test("a host-reported roster with hyphenated UUIDs never duplicates the host", async () => {
+    const repository = createSqliteRepository();
+    const { signer } = createBlobSigner();
+    const instance = createTestService(repository, authVerifier, signer, {});
+    await repository.upsertUser({ playerUuid: "11111111111111111111111111111111", playerName: "HostA", createdAt: new Date().toISOString() });
+    const owner = { playerUuid: "11111111111111111111111111111111", playerName: "HostA" };
+    const world = await repository.createWorld(owner, "Roster SMP", "roster-smp");
+
+    await instance.claimHost(owner, world.id, { joinTarget: "join.example" }, new Date("2099-01-03T00:00:00.000Z"));
+    // The in-game roster reports Java UUID.toString() — always hyphenated —
+    // while the backend record holds the bare 32-char form of the SAME player.
+    await instance.realtimeLocal.coordinator(world.id).reportHostPlayers(
+      owner.playerUuid,
+      instance.realtimeLocal.runtimeRecord(world.id)!.runtimeEpoch,
+      [{ playerUuid: "11111111-1111-1111-1111-111111111111", playerName: "HostA" }],
+      new Date("2099-01-03T00:00:05.000Z")
+    );
+
+    const worlds = await instance.listWorlds(owner);
+    expect(worlds[0].onlinePlayerCount).toBe(1);
+    expect(worlds[0].onlinePlayerNames).toEqual(["HostA"]);
+  });
+
   test("different players can create worlds with the same name", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();

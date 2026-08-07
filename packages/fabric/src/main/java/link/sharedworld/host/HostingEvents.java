@@ -32,12 +32,13 @@ public interface HostingEvents {
     }
 
     /**
-     * Read the hosted server's current managed-gamerule values. The read runs
+     * Read the hosted server's current persistable settings (managed
+     * gamerules + difficulty). The read runs
      * on the server thread and the consumer is invoked there; the caller must
      * trampoline back to its own thread. Off a managed shared-world host the
      * consumer is simply never invoked (P9: vanilla worlds are never observed).
      */
-    default void onWorldGameRulesSnapshotRequested(java.util.function.Consumer<java.util.Map<String, Boolean>> consumer) {
+    default void onWorldGameRulesSnapshotRequested(java.util.function.Consumer<WorldSettingsReader.Snapshot> consumer) {
     }
 
     /** The backend reported the hosted world as deleted. */

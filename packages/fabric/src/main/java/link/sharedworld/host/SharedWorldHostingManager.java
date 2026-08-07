@@ -100,7 +100,7 @@ public final class SharedWorldHostingManager {
      * records values, so owner-applied settings are never echoed back as a
      * host report; later snapshots that differ are pushed to the backend.
      */
-    private volatile Map<String, Boolean> lastConfirmedGameRules;
+    private volatile WorldSettingsReader.Snapshot lastConfirmedGameRules;
     private final AtomicLong gameRulesPushInFlight = new AtomicLong();
     private volatile long startupAttemptId;
     private volatile long hostSessionGeneration;
@@ -651,9 +651,9 @@ public final class SharedWorldHostingManager {
             return;
         }
         this.events.onWorldGameRulesSnapshotRequested(snapshot -> dispatchToMainThread(() -> {
-            Map<String, Boolean> baseline = this.lastConfirmedGameRules;
+            WorldSettingsReader.Snapshot baseline = this.lastConfirmedGameRules;
             if (snapshot == null
-                    || snapshot.isEmpty()
+                    || snapshot.gamerules().isEmpty()
                     || !isCurrentAttempt(context)
                     || baseline == null
                     || baseline.equals(snapshot)) {
@@ -966,16 +966,16 @@ public final class SharedWorldHostingManager {
                 dispatchToMainThread(() -> handleGameRulesSnapshot(context, snapshot)));
     }
 
-    private void handleGameRulesSnapshot(HostAttemptContext context, Map<String, Boolean> snapshot) {
+    private void handleGameRulesSnapshot(HostAttemptContext context, WorldSettingsReader.Snapshot snapshot) {
         if (snapshot == null
-                || snapshot.isEmpty()
+                || snapshot.gamerules().isEmpty()
                 || !isCurrentAttempt(context)
                 || this.phase != Phase.RUNNING
                 || this.coordinatedRelease != CoordinatedRelease.NONE
                 || !SharedWorldDevSessionBridge.isHostingSharedWorld()) {
             return;
         }
-        Map<String, Boolean> baseline = this.lastConfirmedGameRules;
+        WorldSettingsReader.Snapshot baseline = this.lastConfirmedGameRules;
         if (baseline == null) {
             this.lastConfirmedGameRules = snapshot;
             return;
@@ -990,14 +990,15 @@ public final class SharedWorldHostingManager {
         pushGameRules(context, snapshot);
     }
 
-    private void pushGameRules(HostAttemptContext context, Map<String, Boolean> snapshot) {
+    private void pushGameRules(HostAttemptContext context, WorldSettingsReader.Snapshot snapshot) {
         CompletableFuture.runAsync(() -> {
             try {
                 SharedWorldModels.HostGameRulesReportResponseDto response = this.apiClient.reportHostGameRules(
                         context.worldId(),
                         context.runtimeEpoch(),
                         context.hostToken(),
-                        snapshot
+                        snapshot.gamerules(),
+                        snapshot.difficulty()
                 );
                 dispatchToMainThread(() -> onGameRulesPushSucceeded(context, snapshot, response));
             } catch (Exception exception) {
@@ -1009,7 +1010,7 @@ public final class SharedWorldHostingManager {
 
     private void onGameRulesPushSucceeded(
             HostAttemptContext context,
-            Map<String, Boolean> snapshot,
+            WorldSettingsReader.Snapshot snapshot,
             SharedWorldModels.HostGameRulesReportResponseDto response
     ) {
         if (!isCurrentAttempt(context) || response == null || response.settingsRevision() == null) {
