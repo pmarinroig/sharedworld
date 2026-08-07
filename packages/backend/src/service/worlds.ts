@@ -89,7 +89,19 @@ export async function createWorld(
 export async function getWorld(svc: ServiceContext, ctx: RequestContext, worldId: string, now: Date): Promise<WorldDetails> {
   const world = await requireWorldDetails(svc, worldId, ctx.playerUuid);
   const hydrated = await hydrateWorldDetails(svc, world, ctx.requestOrigin);
-  hydrated.storageUsage = await getStorageUsage(svc, ctx, worldId);
+  // Best-effort: the storage display must never block world details — and
+  // world details must never block joining a session. A world whose Drive
+  // token is expired or tombstoned still hosts and joins fine; only the
+  // usage numbers go missing (clients already tolerate null here).
+  try {
+    hydrated.storageUsage = await getStorageUsage(svc, ctx, worldId);
+  } catch (error) {
+    console.warn("SharedWorld storage usage unavailable for world details", {
+      worldId,
+      error: error instanceof Error ? error.message : String(error)
+    });
+    hydrated.storageUsage = null;
+  }
   hydrated.activeInviteCode = world.ownerUuid === ctx.playerUuid
     ? await svc.repository.getActiveInvite(worldId, now)
     : null;

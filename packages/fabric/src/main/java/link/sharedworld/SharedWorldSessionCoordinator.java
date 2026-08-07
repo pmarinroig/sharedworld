@@ -297,11 +297,15 @@ public final class SharedWorldSessionCoordinator {
                 return;
             }
             if (error != null) {
-                state.cancelInFlight = false;
-                state.statusMessage = Component.translatable("screen.sharedworld.waiting").getString();
-                state.progressState = progress(state.hostChangeFlow, Component.translatable("screen.sharedworld.progress.waiting_for_host"), state.progressState);
-                state.discardErrorMessage = SharedWorldApiClient.friendlyErrorMessage(error);
-                return;
+                // Cancel is best-effort by protocol design: the waiter entry
+                // expires server-side and election recomputes without it
+                // ([P3]/[P4]), so an unreachable backend must never trap the
+                // player on the waiting screen. Leave anyway.
+                LOGGER.warn(
+                        "SharedWorld waiting cancel did not reach the backend for {}; leaving anyway (the waiter entry expires on its own)",
+                        state.worldId,
+                        error
+                );
             }
             exitWaitingFlowToParent(state);
         });

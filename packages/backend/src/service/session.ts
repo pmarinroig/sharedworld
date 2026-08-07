@@ -41,11 +41,16 @@ export async function enterSession(
   now: Date
 ): Promise<EnterSessionResponse> {
   const actor = await sessionActorOf(svc, ctx, worldId);
-  // The coordinator's access check runs first so a kicked member gets its
-  // membership_revoked 403 instead of the world lookup's 404.
-  const decision = await svc.realtime.coordinator(worldId).enterSession(actor, request, now);
+  // Access verdicts come first (a kicked member gets 403 membership_revoked,
+  // not the world lookup's 404) — but WITHOUT touching the coordinator yet:
+  // every read must succeed before the coordinator mutates any state, or a
+  // failing world read would strand freshly registered waiters and claims.
+  if (!actor.membershipActive) {
+    await svc.realtime.coordinator(worldId).assertSessionAccess(actor);
+  }
   const world = await getWorld(svc, ctx, worldId, now);
   const latestManifest = await svc.repository.getLatestSnapshot(worldId);
+  const decision = await svc.realtime.coordinator(worldId).enterSession(actor, request, now);
   return {
     action: decision.action,
     world,
