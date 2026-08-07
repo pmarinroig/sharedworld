@@ -1,5 +1,6 @@
 package link.sharedworld.api;
 
+import java.util.List;
 import java.util.Map;
 
 public final class SharedWorldModels {
@@ -638,6 +639,28 @@ public final class SharedWorldModels {
             WorldSettingsDto settings,
             Long settingsRevision
     ) {
+    }
+
+    /** A player on the hosted server, as carried by realtime presence frames. */
+    public record RoomPlayerDto(String playerUuid, String playerName) {
+    }
+
+    /**
+     * One pushed change notification from the realtime channel (0.3.0 wire,
+     * protocol v1). {@code runtime} rides along on runtime-changed so hot
+     * paths need no follow-up fetch; other kinds are invalidations answered
+     * by the existing HTTP reads.
+     */
+    public record RealtimeEventDto(
+            String worldId,
+            String kind,
+            WorldRuntimeStatusDto runtime,
+            List<RoomPlayerDto> roomPlayers
+    ) {
+    }
+
+    /** Envelope for server frames on the realtime WebSocket. */
+    public record RealtimeFrameDto(Integer v, String type, RealtimeEventDto event) {
     }
 
     /**
