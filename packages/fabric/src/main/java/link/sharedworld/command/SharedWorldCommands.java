@@ -213,6 +213,21 @@ public final class SharedWorldCommands {
         return true;
     }
 
+    /**
+     * Cancel a vanilla /whitelist mutation (on/off/add/remove/reload — e4mc
+     * restores the command on integrated servers) while a shared world is
+     * hosted: membership is the only join authority, and an enabled whitelist
+     * would silently refuse legit members. Reads (/whitelist list) stay
+     * untouched, and other sessions keep the e4mc-given behavior.
+     */
+    public static boolean interceptVanillaWhitelistMutation(CommandSourceStack source) {
+        if (!SharedWorldDevSessionBridge.isHostingSharedWorld()) {
+            return false;
+        }
+        source.sendFailure(Component.translatable("sharedworld.command.whitelist.managed"));
+        return true;
+    }
+
     private static int executeBanByName(
             CommandSourceStack source,
             String playerName,
@@ -333,7 +348,12 @@ public final class SharedWorldCommands {
             return null;
         }
         if (CanonicalPlayerIdentity.sameUuid(member.get().playerUuid(), ownerUuid)) {
-            source.sendFailure(Component.translatable("sharedworld.command.cannot_target_owner"));
+            // The shared /op-deop message ("the owner always has command
+            // permissions") reads wrong as a ban refusal; the ban path
+            // (forbidSelf) explains the actual rule.
+            source.sendFailure(Component.translatable(forbidSelf
+                    ? "sharedworld.command.ban.cannot_target_owner"
+                    : "sharedworld.command.cannot_target_owner"));
             return null;
         }
         if (forbidSelf && CanonicalPlayerIdentity.sameUuid(member.get().playerUuid(), runner.getUUID().toString())) {

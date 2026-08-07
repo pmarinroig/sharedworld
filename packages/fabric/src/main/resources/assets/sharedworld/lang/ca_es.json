@@ -265,6 +265,8 @@
   "sharedworld.command.unknown_member": "Cap membre d'aquest món compartit es diu %s.",
   "sharedworld.command.cannot_target_owner": "El propietari sempre té permisos d'ordres.",
   "sharedworld.command.cannot_target_self": "No et pots eliminar del teu propi món compartit.",
+  "sharedworld.command.ban.cannot_target_owner": "El propietari del món no pot ser expulsat del seu propi món compartit.",
+  "sharedworld.command.whitelist.managed": "Qui pot entrar ja ho controlen els membres d'aquest món compartit. Convida o elimina membres a la pantalla de SharedWorld.",
   "sharedworld.command.op.success": "%s ara pot usar ordres.",
   "sharedworld.command.op.already": "%s ja pot usar ordres.",
   "sharedworld.command.deop.success": "%s ja no pot usar ordres.",

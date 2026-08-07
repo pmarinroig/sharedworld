@@ -265,6 +265,8 @@
   "sharedworld.command.unknown_member": "No member of this shared world is named %s.",
   "sharedworld.command.cannot_target_owner": "The owner always has command permissions.",
   "sharedworld.command.cannot_target_self": "You cannot remove yourself from your own shared world.",
+  "sharedworld.command.ban.cannot_target_owner": "The world owner cannot be banned from their own shared world.",
+  "sharedworld.command.whitelist.managed": "Who can join is already controlled by this shared world's members. Invite or remove members in the SharedWorld screen.",
   "sharedworld.command.op.success": "%s can now use commands.",
   "sharedworld.command.op.already": "%s can already use commands.",
   "sharedworld.command.deop.success": "%s can no longer use commands.",

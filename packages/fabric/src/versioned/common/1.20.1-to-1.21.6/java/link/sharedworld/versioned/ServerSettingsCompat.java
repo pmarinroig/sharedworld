@@ -75,4 +75,16 @@ public final class ServerSettingsCompat {
             server.getPlayerList().getBans().remove(profile);
         }
     }
+
+    /**
+     * Membership is the only join authority on a hosted shared world; a
+     * whitelist left enabled (an earlier session's /whitelist on, or e4mc's
+     * useWhiteList config) would silently refuse legit members (server
+     * thread). The toggle moved to MinecraftServer in 1.21.9.
+     */
+    public static void forceWhitelistOff(MinecraftServer server) {
+        if (server.getPlayerList().isUsingWhitelist()) {
+            server.getPlayerList().setUsingWhiteList(false);
+        }
+    }
 }

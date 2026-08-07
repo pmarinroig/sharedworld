@@ -60,6 +60,8 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
         GAMERULE_DRILL_AWAIT_CHANGE,
         BAN_DRILL_AWAIT_COMMAND,
         BAN_DRILL_AWAIT_SURVIVAL,
+        WHITELIST_DRILL_AWAIT_COMMAND,
+        WHITELIST_DRILL_AWAIT_BLOCKED,
         AWAIT_SHUTDOWN_COMMAND,
         AWAIT_RELEASE_COMPLETE,
         AWAIT_EXIT
@@ -131,7 +133,7 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
     private boolean driveLinkPressed;
     private boolean driveLinkFetched;
     private boolean joinTargetInjected;
-    private long banDrillSentAt;
+    private long drillSentAt;
     private boolean cancelDrillDone;
     private boolean sawErrorScreen;
     private int ticksInStep;
@@ -404,7 +406,7 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
                     // survives and no local banlist entry appears.
                     minecraft.player.connection.sendCommand("ban " + minecraft.player.getName().getString());
                     this.markers.emit("ban-drill-sent", null);
-                    this.banDrillSentAt = System.currentTimeMillis();
+                    this.drillSentAt = System.currentTimeMillis();
                     this.hostStep = HostStep.BAN_DRILL_AWAIT_SURVIVAL;
                 }
             }
@@ -412,7 +414,7 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
                 // The failure mode is the host being kicked out of its own
                 // server; give a wrongly executed vanilla ban time to land,
                 // then assert everything still stands.
-                if (System.currentTimeMillis() - this.banDrillSentAt < 3_000L) {
+                if (System.currentTimeMillis() - this.drillSentAt < 3_000L) {
                     return;
                 }
                 IntegratedServer server = minecraft.getSingleplayerServer();
@@ -430,6 +432,36 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
                     return;
                 }
                 this.markers.emit("ban-drill-survived", null);
+                this.hostStep = HostStep.WHITELIST_DRILL_AWAIT_COMMAND;
+            }
+            case WHITELIST_DRILL_AWAIT_COMMAND -> {
+                if (minecraft.player == null) {
+                    return;
+                }
+                if ("whitelist-drill".equals(this.commands.poll())) {
+                    // e4mc also restores vanilla /whitelist; enabling it on a
+                    // hosted shared world would silently lock members out.
+                    // The mutation must be refused and the flag stay off.
+                    minecraft.player.connection.sendCommand("whitelist on");
+                    this.markers.emit("whitelist-drill-sent", null);
+                    this.drillSentAt = System.currentTimeMillis();
+                    this.hostStep = HostStep.WHITELIST_DRILL_AWAIT_BLOCKED;
+                }
+            }
+            case WHITELIST_DRILL_AWAIT_BLOCKED -> {
+                if (System.currentTimeMillis() - this.drillSentAt < 3_000L) {
+                    return;
+                }
+                IntegratedServer server = minecraft.getSingleplayerServer();
+                if (server == null) {
+                    this.markers.emit("whitelist-drill-failed", "server gone after /whitelist on");
+                    return;
+                }
+                if (server.getPlayerList().isUsingWhitelist()) {
+                    this.markers.emit("whitelist-drill-failed", "whitelist was enabled on a hosted shared world");
+                    return;
+                }
+                this.markers.emit("whitelist-drill-blocked", null);
                 this.hostStep = HostStep.AWAIT_SHUTDOWN_COMMAND;
             }
             case AWAIT_SHUTDOWN_COMMAND -> {

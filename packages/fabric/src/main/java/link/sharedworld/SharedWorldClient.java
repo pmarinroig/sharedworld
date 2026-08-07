@@ -310,7 +310,12 @@ public final class SharedWorldClient implements ClientModInitializer {
             // (owner included) changes it from the pause menu mid-session.
             var server = Minecraft.getInstance().getSingleplayerServer();
             if (server != null && link.sharedworld.host.SharedWorldServerIdentity.isManagedWorldServer(server)) {
-                server.execute(() -> link.sharedworld.versioned.ServerSettingsCompat.setDifficultyLocked(server, true));
+                server.execute(() -> {
+                    link.sharedworld.versioned.ServerSettingsCompat.setDifficultyLocked(server, true);
+                    // Membership is the join authority; never let a stale
+                    // whitelist (or e4mc's useWhiteList) refuse members.
+                    link.sharedworld.versioned.ServerSettingsCompat.forceWhitelistOff(server);
+                });
             }
         }
 
@@ -343,6 +348,10 @@ public final class SharedWorldClient implements ClientModInitializer {
             }
             var grants = SharedWorldDevSessionBridge.hostedMemberGrants().values();
             server.execute(() -> {
+                // Same authority rule for the whitelist: an enabled one (an
+                // earlier session's /whitelist on, or e4mc's useWhiteList
+                // config) would silently refuse legit members.
+                link.sharedworld.versioned.ServerSettingsCompat.forceWhitelistOff(server);
                 for (link.sharedworld.host.MemberCommandGrant grant : grants) {
                     try {
                         java.util.UUID uuid = java.util.UUID.fromString(

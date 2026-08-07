@@ -10,7 +10,8 @@
     "E4mcSingleplayerOwnerCompatNamedMixin",
     "IntegratedServerForcedGameTypeMixin",
     "ServerboundKeyPacketCompatMixin",
-    "VanillaBanCommandInterceptMixin"
+    "VanillaBanCommandInterceptMixin",
+    "VanillaWhitelistCommandInterceptMixin"
   ],
   "injectors": {
     "defaultRequire": 1
