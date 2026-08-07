@@ -241,6 +241,37 @@ describe("connection-driven liveness (signal, never truth)", () => {
     expect(h.store.getRuntime()?.phase).toBe("host-live");
   });
 
+  test("a due grace deadline is verified against the keepalive before forfeiting (lost reconnect poke)", async () => {
+    const h = makeCoordinator();
+    seedMembers(h);
+    await becomeLiveHost(h);
+    // Socket closed at +10; the reconnect happened but its hostSocketConnected
+    // poke was lost to a coordinator reset. The keepalive timestamp is the
+    // ground truth: fresh keepalives must cancel the forfeiture and repair
+    // the link state.
+    await h.coordinator.hostSocketClosed(OWNER.playerUuid, at(10));
+    h.effects.lastKeepaliveAt = at(39);
+    await h.coordinator.onAlarm(at(41));
+    expect(h.store.getRuntime()?.phase).toBe("host-live");
+    expect(h.store.getHostLink()).toEqual({ connected: true, graceDeadlineAt: null });
+    // With the link repaired and keepalives gone stale, expiry still works.
+    await h.coordinator.onAlarm(at(41 + 92));
+    expect(h.store.getRuntime()).toBeNull();
+  });
+
+  test("a lease deadline probes the keepalive even when the connected signal never arrived", async () => {
+    const h = makeCoordinator();
+    seedMembers(h);
+    await becomeLiveHost(h);
+    // The gateway's hostSocketConnected poke was lost (coordinator reset), so
+    // link.connected stayed false while the client stretched its heartbeats;
+    // the probe must still keep a reachable host alive.
+    h.effects.lastKeepaliveAt = at(85);
+    await h.coordinator.onAlarm(at(95));
+    expect(h.store.getRuntime()?.phase).toBe("host-live");
+    expect(h.store.getHostLink().connected).toBe(true);
+  });
+
   test("a reachable host's lease extends from its socket keepalive without any heartbeat", async () => {
     const h = makeCoordinator();
     seedMembers(h);

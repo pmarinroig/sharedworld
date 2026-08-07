@@ -120,16 +120,42 @@ interface NamespaceLike {
 }
 
 async function callStub(stub: StubLike, path: string, method: string, args: unknown[]): Promise<unknown> {
-  const response = await stub.fetch(`https://do${path}`, { method: "POST", body: encodeCallBody(method, args) });
-  const text = await response.text();
-  const parsed: unknown = text.length > 0 ? JSON.parse(text) : null;
-  if (isErrorEnvelope(parsed)) {
-    rethrowEnvelope(parsed);
+  for (let attempt = 0; ; attempt += 1) {
+    let parsed: unknown;
+    let ok: boolean;
+    try {
+      const response = await stub.fetch(`https://do${path}`, { method: "POST", body: encodeCallBody(method, args) });
+      const text = await response.text();
+      parsed = text.length > 0 ? JSON.parse(text) : null;
+      ok = response.ok;
+    } catch (error) {
+      // A Durable Object mid-reset ("Internal error in Durable Object
+      // storage caused object to be reset", a code update, or a transient
+      // in-colo network loss) rejects the stub fetch outright — seen in
+      // production. Every coordinator method writes level-based state, so
+      // one immediate retry against the freshly restarted object is safe;
+      // a second failure becomes a clean retryable 503 instead of an
+      // unhandled 500 with a stack trace in the logs.
+      if (attempt === 0) {
+        continue;
+      }
+      console.warn("SharedWorld realtime stub call failed twice", { method, error: String(error) });
+      const unavailable = new HttpError(
+        503,
+        "realtime_unavailable",
+        "SharedWorld realtime coordination is briefly unavailable. Please try again."
+      );
+      unavailable.retryAfterSeconds = 2;
+      throw unavailable;
+    }
+    if (isErrorEnvelope(parsed)) {
+      rethrowEnvelope(parsed);
+    }
+    if (!ok) {
+      throw new HttpError(502, "internal_error", "SharedWorld realtime coordination failed. Please try again.");
+    }
+    return (parsed as { ok: unknown } | null)?.ok ?? null;
   }
-  if (!response.ok) {
-    throw new HttpError(502, "internal_error", "SharedWorld realtime coordination failed. Please try again.");
-  }
-  return (parsed as { ok: unknown } | null)?.ok ?? null;
 }
 
 /** Production RealtimeService over the two Durable Object namespaces. */

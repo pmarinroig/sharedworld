@@ -542,12 +542,22 @@ export class WorldCoordinator {
     if (runtime != null && (runtime.phase === "host-starting" || runtime.phase === "host-live")) {
       const link = this.store.getHostLink();
       const graceDeadline = link.graceDeadlineAt != null ? new Date(link.graceDeadlineAt) : null;
-      if (graceDeadline != null && graceDeadline.getTime() <= now.getTime()) {
-        await this.expireRuntime(runtime, now);
-      } else if (link.connected && leaseDeadlinePassed(runtime, now)) {
+      const graceDue = graceDeadline != null && graceDeadline.getTime() <= now.getTime();
+      if (graceDue || leaseDeadlinePassed(runtime, now)) {
+        // Connection signals are lossy: the gateway's connected/closed pokes
+        // can die with a coordinator mid-reset ("Internal error in Durable
+        // Object storage caused object to be reset" seen in production), so
+        // neither link.connected nor an armed grace deadline is trusted on
+        // its own. The gateway's keepalive timestamp is the ground truth —
+        // verify with a probe before declaring the host gone, and repair the
+        // link state when the host turns out to be reachable.
         const lastSeen = await this.effects.probeHostReachability(runtime.hostUuid ?? "");
-        if (lastSeen != null && now.getTime() - lastSeen.getTime() < HOST_LEASE_TIMEOUT_MS) {
+        const reachable = lastSeen != null && now.getTime() - lastSeen.getTime() < HOST_LEASE_TIMEOUT_MS;
+        if (reachable) {
           this.store.putRuntime(refreshLiveRuntime(runtime, null, now));
+          this.store.setHostLink({ connected: true, graceDeadlineAt: null });
+        } else if (graceDue) {
+          await this.expireRuntime(runtime, now);
         }
       }
     }

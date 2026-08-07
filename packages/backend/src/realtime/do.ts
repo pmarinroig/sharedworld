@@ -305,6 +305,26 @@ export class UserGatewayDO {
     });
   }
 
+  /**
+   * Awareness pokes must never break the socket lifecycle they ride on: a
+   * coordinator mid-reset gets one retry, then the signal is dropped — the
+   * coordinator's alarm probe re-derives host liveness from this gateway's
+   * keepalive timestamp on its own, so a lost poke costs latency, not truth.
+   */
+  private async pokeCoordinator(worldId: string, method: string, args: unknown[]): Promise<void> {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await this.callCoordinator(worldId, method, args);
+        return;
+      } catch (error) {
+        if (attempt > 0) {
+          console.warn("SharedWorld gateway dropped a coordinator poke", { worldId, method, error: String(error) });
+          return;
+        }
+      }
+    }
+  }
+
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/connect") {
@@ -326,7 +346,7 @@ export class UserGatewayDO {
       const watches = await this.watches();
       const now = new Date();
       for (const worldId of watches) {
-        await this.serializer.run(() => this.callCoordinator(worldId, "hostSocketConnected", [this.playerUuid(), now]));
+        await this.serializer.run(() => this.pokeCoordinator(worldId, "hostSocketConnected", [this.playerUuid(), now]));
       }
       return new Response(null, { status: 101, webSocket: client });
     }
@@ -369,7 +389,7 @@ export class UserGatewayDO {
     }
     if (frame.type === "host-players" && typeof frame.worldId === "string") {
       const attachment = ws.deserializeAttachment() as GatewayAttachment;
-      await this.serializer.run(() => this.callCoordinator(frame.worldId, "reportHostPlayers", [
+      await this.serializer.run(() => this.pokeCoordinator(frame.worldId, "reportHostPlayers", [
         attachment.playerUuid,
         frame.runtimeEpoch,
         frame.players ?? [],
@@ -393,7 +413,7 @@ export class UserGatewayDO {
     const watches = await this.watches();
     const now = new Date();
     for (const worldId of watches) {
-      await this.serializer.run(() => this.callCoordinator(worldId, "hostSocketClosed", [this.playerUuid(), now]));
+      await this.serializer.run(() => this.pokeCoordinator(worldId, "hostSocketClosed", [this.playerUuid(), now]));
     }
   }
 }
