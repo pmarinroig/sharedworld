@@ -148,6 +148,21 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
         this.commands = new E2eCommands(commandFile == null || commandFile.isBlank() ? null : Path.of(commandFile));
         this.worldName = System.getProperty("sharedworld.e2e.worldName", "E2E Fixture");
         this.markers.emit("driver-armed", this.role);
+        // 0.3.0: surface the realtime channel's lifecycle as markers so the
+        // orchestrator can assert real clients actually connect and push.
+        link.sharedworld.SharedWorldClient.realtimeEvents().subscribe(
+                new link.sharedworld.realtime.RealtimeEvents.Subscriber() {
+                    @Override
+                    public void onRealtimeConnectionChanged(boolean connected) {
+                        SharedWorldE2eDriver.this.markers.emit(
+                                connected ? "realtime-connected" : "realtime-disconnected", SharedWorldE2eDriver.this.role);
+                    }
+
+                    @Override
+                    public void onRealtimeEvent(link.sharedworld.api.SharedWorldModels.RealtimeEventDto event) {
+                        SharedWorldE2eDriver.this.markers.emit("realtime-event", event.kind() + " " + event.worldId());
+                    }
+                });
         ClientTickEvents.END_CLIENT_TICK.register(this::tick);
     }
 

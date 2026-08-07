@@ -12,6 +12,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * connected — push accelerates polling, it never replaces its correctness.
  */
 public final class RealtimeEvents {
+    private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger("sharedworld");
+
     public interface Subscriber {
         default void onRealtimeEvent(RealtimeEventDto event) {
         }
@@ -52,6 +54,7 @@ public final class RealtimeEvents {
                 subscriber.onRealtimeEvent(event);
             } catch (RuntimeException error) {
                 // One consumer's bug must not starve the others.
+                LOGGER.warn("SharedWorld realtime subscriber failed on event {}", event.kind(), error);
             }
         }
     }
@@ -59,11 +62,12 @@ public final class RealtimeEvents {
     /** Called on the main thread by the channel listener. */
     public void dispatchConnectionChanged(boolean nowConnected) {
         this.connected = nowConnected;
+        LOGGER.debug("SharedWorld realtime connection change dispatch: connected={}, subscribers={}", nowConnected, subscribers.size());
         for (Subscriber subscriber : subscribers) {
             try {
                 subscriber.onRealtimeConnectionChanged(nowConnected);
             } catch (RuntimeException error) {
-                // Ignore per-subscriber failures.
+                LOGGER.warn("SharedWorld realtime subscriber failed on connection change", error);
             }
         }
     }
