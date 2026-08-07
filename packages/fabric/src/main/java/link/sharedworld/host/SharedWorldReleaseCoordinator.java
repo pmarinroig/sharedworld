@@ -319,6 +319,7 @@ public final class SharedWorldReleaseCoordinator {
         }
         ReleaseState current = this.state;
         if (current == null) {
+            beginOrphanedHostReleaseIfNeeded();
             return;
         }
         if (shouldMarkLocalDisconnectObserved(current.record)
@@ -940,6 +941,37 @@ public final class SharedWorldReleaseCoordinator {
         this.state = new ReleaseState(record, SharedWorldReleasePolicy.blockingProgress(Component.translatable("screen.sharedworld.progress.uploading_world"), "release_finishing"), null);
         persistAndApply(record);
         requestLocalDisconnect(record.releaseAttemptId);
+    }
+
+    /**
+     * The play session disconnected with no release state at all. For a guest
+     * that is routine, but for a live host it means the integrated server was
+     * torn down outside SharedWorld's exit flow (for example another mod's
+     * command kicked or banned the hosting player out of their own server).
+     * Without a release the backend keeps the runtime host-live indefinitely:
+     * the player's realtime socket stays connected from the menu, so the
+     * disconnect grace never fires. Run the same coordinated finalization the
+     * menu exit uses; vanilla already saved the world during its server stop.
+     */
+    private void beginOrphanedHostReleaseIfNeeded() {
+        if (this.hostControl.isStartupCancelable()) {
+            return;
+        }
+        SharedWorldHostingManager.ActiveHostSession session = this.hostControl.activeHostSession();
+        if (session == null) {
+            return;
+        }
+        LOGGER.warn(
+                "SharedWorld host session for {} lost its integrated server without a coordinated exit; releasing the runtime now",
+                session.worldId()
+        );
+        this.hostControl.beginCoordinatedRelease();
+        SharedWorldReleaseStore.ReleaseRecord record = newRecordForSession(session, SharedWorldReleasePhase.BEGINNING_BACKEND_FINALIZATION);
+        record.localDisconnectObserved = true;
+        this.terminalState = null;
+        this.state = new ReleaseState(record, SharedWorldReleasePolicy.blockingProgress(Component.translatable("screen.sharedworld.progress.uploading_world")), null);
+        persistAndApply(record);
+        scheduleBeginFinalization(record.releaseAttemptId);
     }
 
     private void beginRevokedHostRelease(SharedWorldHostingManager.ActiveHostSession session) {

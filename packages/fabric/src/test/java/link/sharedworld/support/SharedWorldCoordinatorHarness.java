@@ -711,6 +711,7 @@ public final class SharedWorldCoordinatorHarness {
         private final ScriptedFailures failures = new ScriptedFailures();
         private SharedWorldHostingManager.ActiveHostSession activeHostSession;
         private boolean backgroundSaveInFlight;
+        private boolean startupCancelable;
         private boolean coordinatedReleaseStarted;
         private boolean backendFinalizationStarted;
         private int clearProgressCalls;
@@ -779,7 +780,11 @@ public final class SharedWorldCoordinatorHarness {
 
         @Override
         public boolean isStartupCancelable() {
-            return false;
+            return this.startupCancelable;
+        }
+
+        public void setStartupCancelable(boolean startupCancelable) {
+            this.startupCancelable = startupCancelable;
         }
 
         public void setActiveHostSession(String worldId, String worldName, long runtimeEpoch, String hostToken, String joinTarget) {

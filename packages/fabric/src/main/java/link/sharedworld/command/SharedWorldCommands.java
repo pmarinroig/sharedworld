@@ -39,12 +39,24 @@ public final class SharedWorldCommands {
     private SharedWorldCommands() {
     }
 
+    /** Dependencies the vanilla /ban interception needs outside a command context. */
+    private record BanCommandWiring(
+            SharedWorldApiClient apiClient,
+            Supplier<SharedWorldHostingManager> hostingManager,
+            Executor ioExecutor,
+            Executor clientMainThreadExecutor
+    ) {
+    }
+
+    private static volatile BanCommandWiring banWiring;
+
     public static void register(
             SharedWorldApiClient apiClient,
             Supplier<SharedWorldHostingManager> hostingManager,
             Executor ioExecutor,
             Executor clientMainThreadExecutor
     ) {
+        banWiring = new BanCommandWiring(apiClient, hostingManager, ioExecutor, clientMainThreadExecutor);
         SuggestionProvider<CommandSourceStack> memberNames = (context, builder) -> {
             for (MemberCommandGrant grant : SharedWorldDevSessionBridge.hostedMemberGrants().values()) {
                 if (grant.playerName() != null && !grant.playerName().isBlank()) {
@@ -107,7 +119,8 @@ public final class SharedWorldCommands {
             Executor clientMainThreadExecutor
     ) {
         CommandSourceStack source = context.getSource();
-        OwnerCommandTarget target = resolveOwnerCommandTarget(context, hostingManager, false);
+        OwnerCommandTarget target = resolveOwnerCommandTarget(
+                source, StringArgumentType.getString(context, "player"), hostingManager, false);
         if (target == null) {
             return 0;
         }
@@ -156,8 +169,59 @@ public final class SharedWorldCommands {
             Executor ioExecutor,
             Executor clientMainThreadExecutor
     ) {
-        CommandSourceStack source = context.getSource();
-        OwnerCommandTarget target = resolveOwnerCommandTarget(context, hostingManager, true);
+        return executeBanByName(
+                context.getSource(),
+                StringArgumentType.getString(context, "player"),
+                apiClient,
+                hostingManager,
+                ioExecutor,
+                clientMainThreadExecutor
+        );
+    }
+
+    /**
+     * Reroute a vanilla /ban into the SharedWorld membership ban while a shared
+     * world is hosted; returns true when the vanilla execution must be
+     * cancelled. e4mc's "restoreDedicatedCommands" registers vanilla's ban on
+     * integrated servers, where it would kick any target from the server —
+     * including the hosting player, tearing the session down with no release —
+     * and record it in a banned-players.json that outlives the session on
+     * whichever machine happened to host. Outside a hosted shared world the
+     * vanilla command keeps its e4mc-given behavior.
+     */
+    public static boolean interceptVanillaBan(CommandSourceStack source, java.util.Collection<?> targets) {
+        if (!SharedWorldDevSessionBridge.isHostingSharedWorld()) {
+            return false;
+        }
+        BanCommandWiring wiring = banWiring;
+        if (wiring == null) {
+            // Hosted session but the mod never wired commands: refusing outright
+            // beats letting a vanilla ban corrupt the session.
+            return true;
+        }
+        for (Object target : targets) {
+            String playerName = link.sharedworld.versioned.ServerSettingsCompat.profileDisplayName(target);
+            executeBanByName(
+                    source,
+                    playerName == null ? "" : playerName,
+                    wiring.apiClient(),
+                    wiring.hostingManager(),
+                    wiring.ioExecutor(),
+                    wiring.clientMainThreadExecutor()
+            );
+        }
+        return true;
+    }
+
+    private static int executeBanByName(
+            CommandSourceStack source,
+            String playerName,
+            SharedWorldApiClient apiClient,
+            Supplier<SharedWorldHostingManager> hostingManager,
+            Executor ioExecutor,
+            Executor clientMainThreadExecutor
+    ) {
+        OwnerCommandTarget target = resolveOwnerCommandTarget(source, playerName, hostingManager, true);
         if (target == null) {
             return 0;
         }
@@ -241,12 +305,11 @@ public final class SharedWorldCommands {
      * null when the command must not proceed.
      */
     private static OwnerCommandTarget resolveOwnerCommandTarget(
-            CommandContext<CommandSourceStack> context,
+            CommandSourceStack source,
+            String playerName,
             Supplier<SharedWorldHostingManager> hostingManager,
             boolean forbidSelf
     ) {
-        CommandSourceStack source = context.getSource();
-        String playerName = StringArgumentType.getString(context, "player");
         SharedWorldHostingManager manager = hostingManager.get();
         SharedWorldHostingManager.ActiveHostSession session = manager == null ? null : manager.activeHostSession();
         String ownerUuid = SharedWorldDevSessionBridge.hostingSharedWorldOwnerUuid();

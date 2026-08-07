@@ -58,4 +58,21 @@ public final class ServerSettingsCompat {
             case PVP -> server.isPvpAllowed();
         };
     }
+
+    /** Display name of a vanilla ban-command target (GameProfile here; NameAndId on 1.21.9+). */
+    public static String profileDisplayName(Object banTarget) {
+        return banTarget instanceof com.mojang.authlib.GameProfile profile ? profile.getName() : null;
+    }
+
+    /**
+     * Drop a player from the server's local vanilla ban list. Membership is the
+     * only ban authority on a hosted shared world, and banned-players.json
+     * outlives sessions on whichever machine happened to host (server thread).
+     */
+    public static void pruneLocalBan(MinecraftServer server, java.util.UUID playerUuid, String playerName) {
+        com.mojang.authlib.GameProfile profile = new com.mojang.authlib.GameProfile(playerUuid, playerName);
+        if (server.getPlayerList().getBans().isBanned(profile)) {
+            server.getPlayerList().getBans().remove(profile);
+        }
+    }
 }

@@ -1047,6 +1047,63 @@ final class SharedWorldReleaseCoordinatorTest {
         }
     }
 
+    @Test
+    void hostServerLostWithoutCoordinatedExitReleasesTheRuntime() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            harness.hostControl.setActiveHostSession("world-1", "World", 7L, "token-7", "join.example");
+            harness.releaseBackend.setRuntime(SharedWorldCoordinatorHarness.runtime("world-1", "host-live", 7L, null, "join.example"));
+            // The integrated server dies out-of-band (e.g. another mod's command
+            // kicked the hosting player out of their own server): the disconnect
+            // arrives with no release state anywhere.
+            harness.clientShell.setLocalServerState(false, false, false);
+
+            assertNotNull(harness.releaseCoordinator.onClientDisconnectReturnDisplay(null));
+
+            driveRelease(harness);
+
+            assertEquals(SharedWorldReleasePhase.COMPLETE, harness.releaseCoordinator.view().phase());
+            assertEquals(1, harness.releaseBackend.beginCalls());
+            assertEquals(1, harness.releaseBackend.completeCalls());
+            assertEquals(1, harness.snapshotDriver.uploads().size());
+            assertNull(harness.releaseStore.load());
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
+    void disconnectWithoutAnyHostSessionStartsNoRelease() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            // A guest disconnect (or any world exit outside hosting) must stay
+            // a no-op: no session, no release.
+            assertNull(harness.releaseCoordinator.onClientDisconnectReturnDisplay(null));
+            assertEquals(0, harness.releaseBackend.beginCalls());
+            assertNull(harness.releaseStore.load());
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
+    void cancelableStartupDisconnectStartsNoOrphanRelease() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            harness.hostControl.setActiveHostSession("world-1", "World", 7L, "token-7", "join.example");
+            harness.hostControl.setStartupCancelable(true);
+            harness.clientShell.setLocalServerState(false, false, false);
+
+            // The cancel flow owns the backend cleanup during a cancelable
+            // startup; the disconnect hook must not race it with a release.
+            assertNull(harness.releaseCoordinator.onClientDisconnectReturnDisplay(null));
+            assertEquals(0, harness.releaseBackend.beginCalls());
+            assertNull(harness.releaseStore.load());
+        } finally {
+            harness.close();
+        }
+    }
+
     private static void driveRelease(SharedWorldCoordinatorHarness harness) {
         for (int i = 0; i < 16; i++) {
             harness.tickRelease();

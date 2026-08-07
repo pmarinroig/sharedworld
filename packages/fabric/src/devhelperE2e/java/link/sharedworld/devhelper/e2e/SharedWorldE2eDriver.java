@@ -58,6 +58,8 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
         OP_DRILL_AWAIT_GRANT,
         OP_DRILL_AWAIT_DIFFICULTY,
         GAMERULE_DRILL_AWAIT_CHANGE,
+        BAN_DRILL_AWAIT_COMMAND,
+        BAN_DRILL_AWAIT_SURVIVAL,
         AWAIT_SHUTDOWN_COMMAND,
         AWAIT_RELEASE_COMPLETE,
         AWAIT_EXIT
@@ -129,6 +131,7 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
     private boolean driveLinkPressed;
     private boolean driveLinkFetched;
     private boolean joinTargetInjected;
+    private long banDrillSentAt;
     private boolean cancelDrillDone;
     private boolean sawErrorScreen;
     private int ticksInStep;
@@ -386,8 +389,48 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
                 if (server != null && Boolean.TRUE.equals(
                         link.sharedworld.host.WorldSettingsReader.readGameRules(server).get("keepInventory"))) {
                     this.markers.emit("gamerule-changed", "keepInventory=true");
-                    this.hostStep = HostStep.AWAIT_SHUTDOWN_COMMAND;
+                    this.hostStep = HostStep.BAN_DRILL_AWAIT_COMMAND;
                 }
+            }
+            case BAN_DRILL_AWAIT_COMMAND -> {
+                if (minecraft.player == null) {
+                    return;
+                }
+                if ("ban-self-drill".equals(this.commands.poll())) {
+                    // The field-reported footgun verbatim: the hosting owner types
+                    // /ban on themselves. e4mc restores vanilla's ban on integrated
+                    // servers; SharedWorld must reroute it into the membership ban,
+                    // whose guards refuse owner and self targets — the session
+                    // survives and no local banlist entry appears.
+                    minecraft.player.connection.sendCommand("ban " + minecraft.player.getName().getString());
+                    this.markers.emit("ban-drill-sent", null);
+                    this.banDrillSentAt = System.currentTimeMillis();
+                    this.hostStep = HostStep.BAN_DRILL_AWAIT_SURVIVAL;
+                }
+            }
+            case BAN_DRILL_AWAIT_SURVIVAL -> {
+                // The failure mode is the host being kicked out of its own
+                // server; give a wrongly executed vanilla ban time to land,
+                // then assert everything still stands.
+                if (System.currentTimeMillis() - this.banDrillSentAt < 3_000L) {
+                    return;
+                }
+                IntegratedServer server = minecraft.getSingleplayerServer();
+                if (server == null || minecraft.player == null || minecraft.level == null) {
+                    this.markers.emit("ban-drill-failed", "host lost its own server after self /ban");
+                    return;
+                }
+                if (SharedWorldClient.hostingManager().phase() != SharedWorldHostingManager.Phase.RUNNING) {
+                    this.markers.emit("ban-drill-failed", "hosting phase left RUNNING after self /ban");
+                    return;
+                }
+                if (server.getPlayerList().getBans().isBanned(
+                        new net.minecraft.server.players.NameAndId(minecraft.player.getUUID(), minecraft.player.getName().getString()))) {
+                    this.markers.emit("ban-drill-failed", "vanilla banlist recorded the hosting player");
+                    return;
+                }
+                this.markers.emit("ban-drill-survived", null);
+                this.hostStep = HostStep.AWAIT_SHUTDOWN_COMMAND;
             }
             case AWAIT_SHUTDOWN_COMMAND -> {
                 if ("shutdown".equals(this.commands.poll())) {

@@ -54,4 +54,21 @@ public final class ServerSettingsCompat {
             case PVP -> server.getGameRules().getRule(GameRules.RULE_PVP).get();
         };
     }
+
+    /** Display name of a vanilla ban-command target (NameAndId on this version; GameProfile before 1.21.9). */
+    public static String profileDisplayName(Object banTarget) {
+        return banTarget instanceof net.minecraft.server.players.NameAndId nameAndId ? nameAndId.name() : null;
+    }
+
+    /**
+     * Drop a player from the server's local vanilla ban list. Membership is the
+     * only ban authority on a hosted shared world, and banned-players.json
+     * outlives sessions on whichever machine happened to host (server thread).
+     */
+    public static void pruneLocalBan(MinecraftServer server, java.util.UUID playerUuid, String playerName) {
+        net.minecraft.server.players.NameAndId nameAndId = new net.minecraft.server.players.NameAndId(playerUuid, playerName);
+        if (server.getPlayerList().getBans().isBanned(nameAndId)) {
+            server.getPlayerList().getBans().remove(nameAndId);
+        }
+    }
 }

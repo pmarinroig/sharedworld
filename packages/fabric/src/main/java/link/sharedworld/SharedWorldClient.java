@@ -326,6 +326,33 @@ public final class SharedWorldClient implements ClientModInitializer {
         @Override
         public void onHostedMemberPermissionsChanged() {
             refreshHostedPermissionLevels();
+            pruneLocalBansForMembers();
+        }
+
+        /**
+         * Membership is the only ban authority on a hosted shared world, but
+         * e4mc's restored vanilla /ban used to write banned-players.json on
+         * whichever machine hosted. Heal those stale entries so an active
+         * member is never refused by a leftover local ban; fires with the
+         * grant sync, which lands before the join target is published.
+         */
+        private void pruneLocalBansForMembers() {
+            var server = Minecraft.getInstance().getSingleplayerServer();
+            if (server == null || !link.sharedworld.host.SharedWorldServerIdentity.isManagedWorldServer(server)) {
+                return;
+            }
+            var grants = SharedWorldDevSessionBridge.hostedMemberGrants().values();
+            server.execute(() -> {
+                for (link.sharedworld.host.MemberCommandGrant grant : grants) {
+                    try {
+                        java.util.UUID uuid = java.util.UUID.fromString(
+                                CanonicalPlayerIdentity.normalizeUuidWithHyphens(grant.playerUuid(), "member UUID"));
+                        link.sharedworld.versioned.ServerSettingsCompat.pruneLocalBan(server, uuid, grant.playerName());
+                    } catch (RuntimeException exception) {
+                        LOGGER.warn("SharedWorld could not prune a stale local ban for {}", grant.playerName(), exception);
+                    }
+                }
+            });
         }
 
         @Override
