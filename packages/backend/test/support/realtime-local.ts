@@ -10,6 +10,13 @@ interface LocalWorldRealtime {
   coordinator: WorldCoordinator;
   store: InMemoryCoordinatorStore;
   alarmAt: Date | null;
+  alarmTimer: ReturnType<typeof setTimeout> | null;
+}
+
+/** What the harness's Bun WebSocket server reports about live sockets. */
+export interface SocketBridge {
+  isConnected(playerUuid: string): boolean;
+  lastSeenAt(playerUuid: string): Date | null;
 }
 
 /**
@@ -23,18 +30,47 @@ interface LocalWorldRealtime {
  */
 export class LocalRealtimeService implements RealtimeService {
   private readonly worlds = new Map<string, LocalWorldRealtime>();
+  /** worldId → hostUuid whose socket state the coordinator wants reported. */
+  private readonly hostWatches = new Map<string, string>();
   readonly published: Array<{ event: RealtimeEvent; recipients: string[] | undefined }> = [];
   /** Optional bridge for the integration harness (WS delivery). */
   onPublish: ((event: RealtimeEvent, recipients: string[] | undefined) => void) | null = null;
+  /** Live-socket facts, provided by the harness server when one exists. */
+  socketBridge: SocketBridge | null = null;
+  /** Real-time alarm timers (integration harness only; unit tests fire manually). */
+  private alarmTimersEnabled = false;
 
   constructor(private readonly repository: SharedWorldRepository) {}
+
+  /**
+   * Run alarms on real timers, like the DO runtime would. Only the harness
+   * server enables this — unit tests keep frozen clocks and fireAlarm().
+   */
+  enableAlarmTimers(): void {
+    this.alarmTimersEnabled = true;
+  }
+
+  /** The harness server reports socket open/close for a player. */
+  async socketStateChanged(playerUuid: string, connected: boolean, now: Date): Promise<void> {
+    for (const [worldId, hostUuid] of this.hostWatches) {
+      if (hostUuid !== playerUuid) {
+        continue;
+      }
+      const coordinator = this.world(worldId).coordinator;
+      if (connected) {
+        await coordinator.hostSocketConnected(playerUuid, now);
+      } else {
+        await coordinator.hostSocketClosed(playerUuid, now);
+      }
+    }
+  }
 
   coordinator(worldId: string): CoordinatorHandle {
     return this.world(worldId).coordinator;
   }
 
   async notifyUsers(event: RealtimeEvent, recipients: string[]): Promise<void> {
-    this.record(event, recipients);
+    await this.record(event, recipients);
   }
 
   /**
@@ -110,9 +146,15 @@ export class LocalRealtimeService implements RealtimeService {
     return true;
   }
 
-  private record(event: RealtimeEvent, recipients: string[] | undefined): void {
+  private async record(event: RealtimeEvent, recipients: string[] | undefined): Promise<void> {
+    // The harness bridge needs concrete recipients to deliver frames;
+    // undefined means "current active members", so resolve it here.
+    const resolved = recipients
+      ?? (await this.repository.listMemberships(event.worldId))
+        .filter((member) => member.deletedAt == null)
+        .map((member) => member.playerUuid);
     this.published.push({ event, recipients });
-    this.onPublish?.(event, recipients);
+    this.onPublish?.(event, resolved);
   }
 
   private world(worldId: string): LocalWorldRealtime {
@@ -121,7 +163,12 @@ export class LocalRealtimeService implements RealtimeService {
       return existing;
     }
     const store = new InMemoryCoordinatorStore();
-    const entry: LocalWorldRealtime = { coordinator: null as unknown as WorldCoordinator, store, alarmAt: null };
+    const entry: LocalWorldRealtime = {
+      coordinator: null as unknown as WorldCoordinator,
+      store,
+      alarmAt: null,
+      alarmTimer: null
+    };
     const effects: CoordinatorEffects = {
       listMemberships: async (id: string): Promise<RuntimeMembership[]> => this.repository.listMemberships(id),
       mirrorRuntime: async (id: string, status: WorldRuntimeStatus): Promise<void> => {
@@ -131,13 +178,36 @@ export class LocalRealtimeService implements RealtimeService {
         await this.repository.upsertRuntimeMirror(id, null, JSON.stringify(players));
       },
       publish: async (event: RealtimeEvent, recipients?: string[]): Promise<void> => {
-        this.record(event, recipients);
+        await this.record(event, recipients);
       },
       scheduleAlarm: async (at: Date | null): Promise<void> => {
         entry.alarmAt = at;
+        if (!this.alarmTimersEnabled) {
+          return;
+        }
+        if (entry.alarmTimer != null) {
+          clearTimeout(entry.alarmTimer);
+          entry.alarmTimer = null;
+        }
+        if (at != null) {
+          entry.alarmTimer = setTimeout(() => {
+            entry.alarmTimer = null;
+            void this.fireAlarm(worldId, new Date());
+          }, Math.max(0, at.getTime() - Date.now()));
+        }
       },
-      setHostWatch: async (): Promise<boolean> => false,
-      probeHostReachability: async (): Promise<Date | null> => null
+      setHostWatch: async (hostUuid: string, watching: boolean): Promise<boolean> => {
+        if (watching) {
+          this.hostWatches.set(worldId, hostUuid);
+          return this.socketBridge?.isConnected(hostUuid) ?? false;
+        }
+        if (this.hostWatches.get(worldId) === hostUuid) {
+          this.hostWatches.delete(worldId);
+        }
+        return false;
+      },
+      probeHostReachability: async (hostUuid: string): Promise<Date | null> =>
+        this.socketBridge?.lastSeenAt(hostUuid) ?? null
     };
     entry.coordinator = new WorldCoordinator(worldId, store, effects);
     this.worlds.set(worldId, entry);

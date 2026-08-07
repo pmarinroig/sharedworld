@@ -132,6 +132,16 @@ export function createIntegrationTestApp(publicBaseUrl: string) {
       return state.storageProvider.snapshot();
     },
 
+    /** Current realtime service (fresh after each reset) for the WS bridge. */
+    realtime() {
+      return state.realtime;
+    },
+
+    /** Session lookup for the WS bridge's upgrade authentication. */
+    getSession(token: string) {
+      return state.service.getSession(token);
+    },
+
     async fetch(request: Request): Promise<Response> {
       const url = new URL(request.url);
       if (url.pathname === "/__test/health") {
