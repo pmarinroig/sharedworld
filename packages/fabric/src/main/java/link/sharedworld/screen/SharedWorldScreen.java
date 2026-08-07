@@ -23,6 +23,8 @@ import java.util.concurrent.CompletableFuture;
 public final class SharedWorldScreen extends link.sharedworld.versioned.VersionedScreen {
     private static final long AUTO_REFRESH_IDLE_MS = 15_000L;
     private static final long AUTO_REFRESH_ACTIVE_MS = 2_500L;
+    /** Safety-net cadence while pushed events drive the list (0.3.0). */
+    private static final long AUTO_REFRESH_PUSH_FALLBACK_MS = 60_000L;
     private static final long SUCCESS_STATUS_TTL_MS = 7_000L;
 
     private final SharedWorldStatusBanner statusBanner = new SharedWorldStatusBanner();
@@ -41,11 +43,13 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
     private boolean backendReachable = true;
     private boolean refreshInFlight;
     private long nextAutoRefreshAt;
+    private long seenRealtimeEventCount;
 
     public SharedWorldScreen(Screen parent) {
         super(Component.translatable("screen.sharedworld.title"));
         this.parent = parent;
         this.worlds.addAll(SharedWorldClient.cachedWorlds());
+        SharedWorldClient.ensureRealtimeStarted();
     }
 
     @Override
@@ -178,6 +182,7 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
                         }
                     }
                     this.nextAutoRefreshAt = link.sharedworld.util.MonotonicClock.millis() + this.autoRefreshIntervalMs();
+                    this.seenRealtimeEventCount = SharedWorldClient.realtimeEvents().eventCount();
                     this.updateButtons();
                 }));
     }
@@ -236,7 +241,8 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
         }
 
         long now = link.sharedworld.util.MonotonicClock.millis();
-        if (!this.refreshInFlight && now >= this.nextAutoRefreshAt) {
+        boolean pushedChange = SharedWorldClient.realtimeEvents().eventCount() != this.seenRealtimeEventCount;
+        if (!this.refreshInFlight && (pushedChange || now >= this.nextAutoRefreshAt)) {
             this.refreshWorlds();
         }
     }
@@ -392,6 +398,11 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
     }
 
     private long autoRefreshIntervalMs() {
+        // While the realtime channel is connected, changes arrive as pushes
+        // and the timer is only a safety net — stretch it well out.
+        if (SharedWorldClient.realtimeEvents().isConnected()) {
+            return AUTO_REFRESH_PUSH_FALLBACK_MS;
+        }
         for (WorldSummaryDto world : this.worlds) {
             if ("hosting".equals(world.status()) || "handoff".equals(world.status()) || "finalizing".equals(world.status())) {
                 return AUTO_REFRESH_ACTIVE_MS;

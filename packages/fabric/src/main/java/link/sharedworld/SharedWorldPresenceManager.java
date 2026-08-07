@@ -7,11 +7,18 @@ import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.Executor;
 
-public final class SharedWorldPresenceManager {
+public final class SharedWorldPresenceManager implements link.sharedworld.realtime.RealtimeEvents.Subscriber {
     private static final long HEARTBEAT_INTERVAL_MS = 15_000L;
     // Must stay well below the backend's 45s presence timeout or throttled
     // guests would flicker offline in the world list.
     private static final long MAX_SUGGESTED_HEARTBEAT_INTERVAL_MS = 30_000L;
+    /**
+     * While the realtime channel is connected the roster is host-reported
+     * and revocation/deletion arrive as pushes, so the self-report heartbeat
+     * is only a safety net (it still authoritatively detects revocation on
+     * worlds hosted by legacy clients).
+     */
+    private static final long PUSH_CONNECTED_HEARTBEAT_INTERVAL_MS = 60_000L;
     private static final Logger LOGGER = LoggerFactory.getLogger(SharedWorldPresenceManager.class);
 
     private final PresenceSender presenceSender;
@@ -23,6 +30,7 @@ public final class SharedWorldPresenceManager {
     private volatile long heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS;
     private long nextGuestSessionEpoch = 1L;
     private long nextPresenceSequence = 1L;
+    private volatile boolean pushConnected;
 
     public SharedWorldPresenceManager(SharedWorldApiClient apiClient) {
         this(
@@ -80,7 +88,7 @@ public final class SharedWorldPresenceManager {
         boolean worldChanged = this.activeGuestWorldId == null || !this.activeGuestWorldId.equals(worldId);
         if (worldChanged) {
             startGuestSession(worldId);
-        } else if (now - this.lastHeartbeatAt < this.heartbeatIntervalMs) {
+        } else if (now - this.lastHeartbeatAt < this.effectiveHeartbeatIntervalMs()) {
             return;
         }
 
@@ -111,6 +119,33 @@ public final class SharedWorldPresenceManager {
         this.activeGuestWorldId = null;
         this.activeGuestSessionEpoch = 0L;
         this.lastHeartbeatAt = 0L;
+    }
+
+    long effectiveHeartbeatIntervalMs() {
+        return this.pushConnected
+                ? Math.max(this.heartbeatIntervalMs, PUSH_CONNECTED_HEARTBEAT_INTERVAL_MS)
+                : this.heartbeatIntervalMs;
+    }
+
+    @Override
+    public void onRealtimeConnectionChanged(boolean connected) {
+        this.pushConnected = connected;
+    }
+
+    /**
+     * A pushed membership or deletion change is a TRIGGER, never a verdict:
+     * the next heartbeat probes over HTTP and the authoritative 403/404
+     * response drives the existing forced-exit path with all its fencing.
+     */
+    @Override
+    public void onRealtimeEvent(link.sharedworld.api.SharedWorldModels.RealtimeEventDto event) {
+        String activeWorldId = this.activeGuestWorldId;
+        if (activeWorldId == null || !activeWorldId.equals(event.worldId())) {
+            return;
+        }
+        if ("membership-changed".equals(event.kind()) || "world-deleted".equals(event.kind())) {
+            this.lastHeartbeatAt = 0L;
+        }
     }
 
     private void startGuestSession(String worldId) {

@@ -42,6 +42,9 @@ public final class SharedWorldClient implements ClientModInitializer {
     private static SharedWorldGuestCacheWarmer guestCacheWarmer;
     private static SharedWorldSessionCoordinator sessionCoordinator;
     private static final SharedWorldPlaySessionTracker PLAY_SESSION_TRACKER = new SharedWorldPlaySessionTracker();
+    private static final link.sharedworld.realtime.RealtimeEvents REALTIME_EVENTS = new link.sharedworld.realtime.RealtimeEvents();
+    private static link.sharedworld.realtime.SharedWorldPushChannel pushChannel;
+    private static volatile boolean pushChannelStarted;
 
     @Override
     public void onInitializeClient() {
@@ -62,6 +65,31 @@ public final class SharedWorldClient implements ClientModInitializer {
         guestRuntimeWatcher = new SharedWorldGuestRuntimeWatcher(apiClient);
         guestCacheWarmer = new SharedWorldGuestCacheWarmer(apiClient, hostPlayerIdentity);
         sessionCoordinator = new SharedWorldSessionCoordinator(apiClient);
+        pushChannel = new link.sharedworld.realtime.SharedWorldPushChannel(
+                SharedWorldClientConfigStore.shared().resolvedBackendBaseUrl(),
+                new link.sharedworld.realtime.JdkWebSocketConnector(),
+                () -> apiClient.ensureSession().token(),
+                java.util.concurrent.Executors.newSingleThreadScheduledExecutor((runnable) -> {
+                    Thread thread = new Thread(runnable, "sharedworld-realtime");
+                    thread.setDaemon(true);
+                    return thread;
+                }),
+                runnable -> Minecraft.getInstance().execute(runnable),
+                new link.sharedworld.realtime.SharedWorldPushChannel.Listener() {
+                    @Override
+                    public void onConnectionChanged(boolean connected) {
+                        REALTIME_EVENTS.dispatchConnectionChanged(connected);
+                    }
+
+                    @Override
+                    public void onEvent(link.sharedworld.api.SharedWorldModels.RealtimeEventDto event) {
+                        REALTIME_EVENTS.dispatchEvent(event);
+                    }
+                }
+        );
+        REALTIME_EVENTS.subscribe(guestRuntimeWatcher);
+        REALTIME_EVENTS.subscribe(guestCacheWarmer);
+        REALTIME_EVENTS.subscribe(presenceManager);
         link.sharedworld.command.SharedWorldCommands.register(
                 apiClient,
                 SharedWorldClient::hostingManager,
@@ -121,6 +149,26 @@ public final class SharedWorldClient implements ClientModInitializer {
 
     public static SharedWorldApiClient apiClient() {
         return apiClient;
+    }
+
+    /**
+     * Lazily open the realtime channel the first time SharedWorld UI or a
+     * session needs it. Once started it stays connected (an idle hibernated
+     * socket is free server-side) and reconnects on its own forever.
+     */
+    public static void ensureRealtimeStarted() {
+        if (!pushChannelStarted && pushChannel != null) {
+            pushChannelStarted = true;
+            pushChannel.start();
+        }
+    }
+
+    public static link.sharedworld.realtime.RealtimeEvents realtimeEvents() {
+        return REALTIME_EVENTS;
+    }
+
+    public static link.sharedworld.realtime.SharedWorldPushChannel pushChannel() {
+        return pushChannel;
     }
 
     public static ExecutorService ioExecutor() {

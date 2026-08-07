@@ -9,8 +9,10 @@ import net.minecraft.client.Minecraft;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public final class SharedWorldGuestCacheWarmer {
+public final class SharedWorldGuestCacheWarmer implements link.sharedworld.realtime.RealtimeEvents.Subscriber {
     private static final long POLL_INTERVAL_MS = 30_000L;
+    /** Safety-net cadence while snapshot-changed pushes drive warmups (0.3.0). */
+    private static final long PUSH_CONNECTED_POLL_INTERVAL_MS = 5 * 60_000L;
 
     private final SharedWorldApiClient apiClient;
     private final WorldSyncCoordinator syncCoordinator;
@@ -20,6 +22,21 @@ public final class SharedWorldGuestCacheWarmer {
     private volatile String latestSnapshotId;
     private volatile long lastPollAt;
     private volatile String pausedWorldId;
+    private volatile boolean pushConnected;
+    private volatile boolean pushTriggered;
+
+    @Override
+    public void onRealtimeConnectionChanged(boolean connected) {
+        this.pushConnected = connected;
+    }
+
+    /** A pushed snapshot-changed for the active world warms on the next tick. */
+    @Override
+    public void onRealtimeEvent(link.sharedworld.api.SharedWorldModels.RealtimeEventDto event) {
+        if ("snapshot-changed".equals(event.kind()) && event.worldId().equals(this.activeWorldId)) {
+            this.pushTriggered = true;
+        }
+    }
 
     public SharedWorldGuestCacheWarmer(SharedWorldApiClient apiClient) {
         this(apiClient, apiClient::authenticatedWorldPlayerUuidWithHyphens);
@@ -70,9 +87,11 @@ public final class SharedWorldGuestCacheWarmer {
             this.latestSnapshotId = null;
             this.lastPollAt = 0L;
         }
-        if (!worldChanged && now - this.lastPollAt < POLL_INTERVAL_MS) {
+        long interval = this.pushConnected ? PUSH_CONNECTED_POLL_INTERVAL_MS : POLL_INTERVAL_MS;
+        if (!worldChanged && !this.pushTriggered && now - this.lastPollAt < interval) {
             return;
         }
+        this.pushTriggered = false;
         if (!this.inFlight.compareAndSet(false, true)) {
             return;
         }

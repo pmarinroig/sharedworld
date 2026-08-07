@@ -33,10 +33,16 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * Authority source:
  * The backend runtime status for the connected world, compared against the joined runtime epoch.
  */
-public final class SharedWorldGuestRuntimeWatcher {
+public final class SharedWorldGuestRuntimeWatcher implements link.sharedworld.realtime.RealtimeEvents.Subscriber {
     private static final long POLL_INTERVAL_MS = 5_000L;
     /** Departure detection may lag by at most this much under server throttling. */
     private static final long MAX_SUGGESTED_POLL_INTERVAL_MS = 60_000L;
+    /**
+     * While the realtime channel is connected, runtime changes arrive as
+     * pushed events and polling is only the safety net — so it slows to
+     * this cadence. Disconnection snaps it back to the default instantly.
+     */
+    private static final long PUSH_CONNECTED_POLL_INTERVAL_MS = 60_000L;
     private static final Logger LOGGER = LoggerFactory.getLogger(SharedWorldGuestRuntimeWatcher.class);
 
     private final RuntimeStatusBackend backend;
@@ -48,6 +54,7 @@ public final class SharedWorldGuestRuntimeWatcher {
     private volatile long lastPollAt;
     private volatile long pollIntervalMs = POLL_INTERVAL_MS;
     private volatile boolean departed;
+    private volatile boolean pushConnected;
 
     public SharedWorldGuestRuntimeWatcher(SharedWorldApiClient apiClient) {
         this(
@@ -94,7 +101,7 @@ public final class SharedWorldGuestRuntimeWatcher {
             this.activeWorldId = session.worldId();
             this.departed = false;
             this.pollIntervalMs = POLL_INTERVAL_MS;
-        } else if (this.departed || now - this.lastPollAt < this.pollIntervalMs) {
+        } else if (this.departed || now - this.lastPollAt < this.effectivePollIntervalMs()) {
             return;
         }
         if (!this.inFlight.compareAndSet(false, true)) {
@@ -121,6 +128,42 @@ public final class SharedWorldGuestRuntimeWatcher {
 
     public void onDisconnect(SharedWorldPlaySessionTracker.ActiveWorldSession session) {
         clearActiveWorld(session == null ? null : session.worldId());
+    }
+
+    long effectivePollIntervalMs() {
+        return this.pushConnected
+                ? Math.max(this.pollIntervalMs, PUSH_CONNECTED_POLL_INTERVAL_MS)
+                : this.pollIntervalMs;
+    }
+
+    @Override
+    public void onRealtimeConnectionChanged(boolean connected) {
+        this.pushConnected = connected;
+    }
+
+    /** Pushed runtime-changed events accelerate what a poll would observe. */
+    @Override
+    public void onRealtimeEvent(link.sharedworld.api.SharedWorldModels.RealtimeEventDto event) {
+        if (!"runtime-changed".equals(event.kind()) || event.runtime() == null) {
+            return;
+        }
+        SharedWorldPlaySessionTracker.ActiveWorldSession session = SharedWorldClient.playSessionTracker().currentSession();
+        if (session == null || session.role() != SharedWorldPlaySessionTracker.SessionRole.GUEST) {
+            return;
+        }
+        handlePushedRuntime(session, event.worldId(), event.runtime());
+    }
+
+    /** Main-thread entry for a pushed status; same gating as a poll result. */
+    void handlePushedRuntime(
+            SharedWorldPlaySessionTracker.ActiveWorldSession session,
+            String worldId,
+            WorldRuntimeStatusDto status
+    ) {
+        if (!session.worldId().equals(worldId) || !worldId.equals(this.activeWorldId)) {
+            return;
+        }
+        handleObservation(session, status);
     }
 
     private void handleObservation(SharedWorldPlaySessionTracker.ActiveWorldSession session, WorldRuntimeStatusDto status) {
