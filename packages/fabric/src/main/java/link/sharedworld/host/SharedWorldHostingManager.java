@@ -62,6 +62,7 @@ public final class SharedWorldHostingManager {
     private final SyncAccess syncAccess;
     private final HostRecoveryPersistence hostRecoveryStore;
     private final HostingEvents events;
+    private final HostGameRulesSync gameRulesSync;
     private final WorldSnapshotCaptureCoordinator snapshotCaptureCoordinator;
     private final WorldOpenController worldOpenController;
     private final HostWorldBootstrap worldBootstrap;
@@ -91,16 +92,6 @@ public final class SharedWorldHostingManager {
     private volatile long lastAutosaveAt;
     private volatile long heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS;
     private volatile long autosaveIntervalMs = AUTOSAVE_INTERVAL_MS;
-    /** Last settings revision pushed to the live server; -1 = none this session. */
-    private volatile long appliedSettingsRevision = -1;
-    /**
-     * Baseline snapshot of the live server's managed gamerules (main-thread
-     * mutated); null = unknown. The first snapshot after any (re)baseline only
-     * records values, so owner-applied settings are never echoed back as a
-     * host report; later snapshots that differ are pushed to the backend.
-     */
-    private volatile WorldSettingsReader.Snapshot lastConfirmedGameRules;
-    private final AtomicLong gameRulesPushInFlight = new AtomicLong();
     private volatile long startupAttemptId;
     private volatile long hostSessionGeneration;
     private volatile SharedWorldProgressState progressState;
@@ -181,6 +172,7 @@ public final class SharedWorldHostingManager {
                 ? clientWorldGate
                 : new MinecraftClientWorldGate();
         this.worldBootstrap = new HostWorldBootstrap(this.syncAccess, this.worldStore, this.worldOpenController);
+        this.gameRulesSync = new HostGameRulesSync(this.apiClient, this.events, this.backgroundExecutor, this.mainThreadExecutor);
     }
 
     /**
@@ -303,13 +295,11 @@ public final class SharedWorldHostingManager {
         this.lastAutosaveAt = 0L;
         this.heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS;
         this.autosaveIntervalMs = AUTOSAVE_INTERVAL_MS;
-        this.appliedSettingsRevision = -1;
-        this.lastConfirmedGameRules = null;
+        this.gameRulesSync.reset();
         this.startupProgressRelayActive = false;
         this.startupStarted.set(true);
         this.saveInFlight.set(0L);
         this.heartbeatInFlight.set(0L);
-        this.gameRulesPushInFlight.set(0L);
         this.startupCancelRequested = false;
         this.cancelDisconnectIssued.set(false);
         this.startupProgressRelay.reset();
@@ -524,7 +514,7 @@ public final class SharedWorldHostingManager {
             this.lastGameRulesLocalPollAt = now;
             HostAttemptContext context = currentAttemptContext();
             if (context != null) {
-                maybeRequestGameRulesSnapshot(context);
+                this.gameRulesSync.maybeRequestSnapshot(gameRulesAuthority(context));
             }
         }
     }
@@ -638,7 +628,7 @@ public final class SharedWorldHostingManager {
         }
         // Same staleness rule as applyHeartbeatSettings: the local apply
         // rewrites gamerules, so the next snapshot must re-baseline.
-        this.lastConfirmedGameRules = null;
+        this.gameRulesSync.invalidateBaseline();
         this.events.onWorldSettingsChanged(settings);
     }
 
@@ -655,22 +645,10 @@ public final class SharedWorldHostingManager {
      */
     private void flushGameRulesBeforeRelease() {
         HostAttemptContext context = currentAttemptContext();
-        if (context == null || this.phase != Phase.RUNNING || this.lastConfirmedGameRules == null) {
+        if (context == null || this.phase != Phase.RUNNING) {
             return;
         }
-        this.events.onWorldGameRulesSnapshotRequested(snapshot -> dispatchToMainThread(() -> {
-            WorldSettingsReader.Snapshot baseline = this.lastConfirmedGameRules;
-            if (snapshot == null
-                    || snapshot.gamerules().isEmpty()
-                    || !isCurrentAttempt(context)
-                    || baseline == null
-                    || baseline.equals(snapshot)) {
-                return;
-            }
-            if (this.gameRulesPushInFlight.compareAndSet(0L, context.generation())) {
-                pushGameRules(context, snapshot);
-            }
-        }));
+        this.gameRulesSync.flushBeforeRelease(gameRulesAuthority(context));
     }
 
     public void markCoordinatedBackendFinalizationStarted() {
@@ -947,123 +925,14 @@ public final class SharedWorldHostingManager {
                 && confirmedJoinTarget.equals(this.publishedJoinTarget)) {
             this.lastAutosaveAt = this.lastHeartbeatAt;
             saveHostRecoveryMarker();
-            this.appliedSettingsRevision = -1;
-            this.lastConfirmedGameRules = null;
+            this.gameRulesSync.rebaselineForNewLiveSession();
             SharedWorldDevSessionBridge.setHostingSharedWorld(true, this.world.ownerUuid());
             this.events.onHostSessionLive(this.world.id(), this.world.name());
             setPhase(Phase.RUNNING, SharedWorldText.string("screen.sharedworld.hosting_live_at", confirmedJoinTarget));
         }
         applyHeartbeatMemberships(runtime.memberships());
-        applyHeartbeatSettings(runtime.settings(), runtime.settingsRevision());
-        maybeRequestGameRulesSnapshot(context);
-    }
-
-    /**
-     * Piggyback gamerule-change detection on the heartbeat cadence: snapshot
-     * the live server's managed rules and, when they differ from the recorded
-     * baseline, push them to the backend so in-game /gamerule changes survive
-     * the session. Ordering matters: applyHeartbeatSettings queued its apply
-     * on the server thread first, so this snapshot (queued second, FIFO)
-     * always reflects the applied owner settings and never re-reports them.
-     */
-    private void maybeRequestGameRulesSnapshot(HostAttemptContext context) {
-        if (this.phase != Phase.RUNNING || this.coordinatedRelease != CoordinatedRelease.NONE) {
-            return;
-        }
-        this.events.onWorldGameRulesSnapshotRequested(snapshot ->
-                dispatchToMainThread(() -> handleGameRulesSnapshot(context, snapshot)));
-    }
-
-    private void handleGameRulesSnapshot(HostAttemptContext context, WorldSettingsReader.Snapshot snapshot) {
-        if (snapshot == null
-                || snapshot.gamerules().isEmpty()
-                || !isCurrentAttempt(context)
-                || this.phase != Phase.RUNNING
-                || this.coordinatedRelease != CoordinatedRelease.NONE
-                || !SharedWorldDevSessionBridge.isHostingSharedWorld()) {
-            return;
-        }
-        WorldSettingsReader.Snapshot baseline = this.lastConfirmedGameRules;
-        if (baseline == null) {
-            this.lastConfirmedGameRules = snapshot;
-            return;
-        }
-        if (baseline.equals(snapshot)) {
-            return;
-        }
-        if (!this.gameRulesPushInFlight.compareAndSet(0L, context.generation())) {
-            // A push is already in flight; the next poll re-diffs and retries.
-            return;
-        }
-        pushGameRules(context, snapshot);
-    }
-
-    private void pushGameRules(HostAttemptContext context, WorldSettingsReader.Snapshot snapshot) {
-        CompletableFuture.runAsync(() -> {
-            try {
-                SharedWorldModels.HostGameRulesReportResponseDto response = this.apiClient.reportHostGameRules(
-                        context.worldId(),
-                        context.runtimeEpoch(),
-                        context.hostToken(),
-                        snapshot.gamerules(),
-                        snapshot.difficulty(),
-                        snapshot.defaultGameMode()
-                );
-                dispatchToMainThread(() -> onGameRulesPushSucceeded(context, snapshot, response));
-            } catch (Exception exception) {
-                LOGGER.debug("SharedWorld gamerule report failed; retrying on the next poll", exception);
-            }
-        }, this.backgroundExecutor).whenComplete((unused, error) ->
-                dispatchToMainThread(() -> clearGameRulesPushInFlight(context)));
-    }
-
-    private void onGameRulesPushSucceeded(
-            HostAttemptContext context,
-            WorldSettingsReader.Snapshot snapshot,
-            SharedWorldModels.HostGameRulesReportResponseDto response
-    ) {
-        if (!isCurrentAttempt(context) || response == null || response.settingsRevision() == null) {
-            return;
-        }
-        this.lastConfirmedGameRules = snapshot;
-        // Echo kill: record the merged revision as applied WITHOUT re-applying
-        // gamerules (the server already holds them; a heartbeat racing a second
-        // in-game change must not clobber it). Difficulty/game mode from the
-        // merged settings still apply so an owner save at a skipped revision
-        // is not lost.
-        this.appliedSettingsRevision = response.settingsRevision();
-        SharedWorldModels.WorldSettingsDto merged = response.settings();
-        if (merged != null && (merged.difficulty() != null || merged.defaultGameMode() != null)) {
-            this.events.onWorldSettingsChanged(
-                    new SharedWorldModels.WorldSettingsDto(merged.difficulty(), merged.defaultGameMode(), null));
-        }
-    }
-
-    private void clearGameRulesPushInFlight(HostAttemptContext context) {
-        if (context != null) {
-            this.gameRulesPushInFlight.compareAndSet(context.generation(), 0L);
-        }
-    }
-
-    /**
-     * Apply owner-chosen world settings carried by the heartbeat. The revision
-     * starts unapplied on every host session, so the first live heartbeat
-     * configures the freshly booted server and later bumps reach it within one
-     * heartbeat interval.
-     */
-    private void applyHeartbeatSettings(SharedWorldModels.WorldSettingsDto settings, Long settingsRevision) {
-        if (settings == null || settingsRevision == null || !SharedWorldDevSessionBridge.isHostingSharedWorld()) {
-            return;
-        }
-        if (settingsRevision == this.appliedSettingsRevision) {
-            return;
-        }
-        this.appliedSettingsRevision = settingsRevision;
-        // Applying settings rewrites gamerules on the server, so the recorded
-        // baseline is stale: the next snapshot re-baselines instead of
-        // reporting the owner's own values back as an in-game change.
-        this.lastConfirmedGameRules = null;
-        this.events.onWorldSettingsChanged(settings);
+        this.gameRulesSync.applyHeartbeatSettings(runtime.settings(), runtime.settingsRevision());
+        this.gameRulesSync.maybeRequestSnapshot(gameRulesAuthority(context));
     }
 
     /**
@@ -1374,11 +1243,24 @@ public final class SharedWorldHostingManager {
                 && Objects.equals(this.hostToken, context.hostToken());
     }
 
+    private HostGameRulesSync.Authority gameRulesAuthority(HostAttemptContext context) {
+        return new HostGameRulesSync.Authority(
+                context.worldId(),
+                context.runtimeEpoch(),
+                context.hostToken(),
+                context.generation(),
+                () -> isCurrentAttempt(context),
+                () -> isCurrentAttempt(context)
+                        && this.phase == Phase.RUNNING
+                        && this.coordinatedRelease == CoordinatedRelease.NONE
+        );
+    }
+
     private void invalidateAsyncOperations() {
         this.hostSessionGeneration += 1L;
         this.heartbeatInFlight.set(0L);
         this.saveInFlight.set(0L);
-        this.gameRulesPushInFlight.set(0L);
+        this.gameRulesSync.abandonInFlightPush();
     }
 
     private void clearHeartbeatInFlight(HostAttemptContext context) {
@@ -1419,9 +1301,7 @@ public final class SharedWorldHostingManager {
         this.startupStarted.set(false);
         this.saveInFlight.set(0L);
         this.heartbeatInFlight.set(0L);
-        this.gameRulesPushInFlight.set(0L);
-        this.lastConfirmedGameRules = null;
-        this.appliedSettingsRevision = -1;
+        this.gameRulesSync.reset();
         this.cancelDisconnectIssued.set(false);
         this.progressState = null;
         this.startupProgressRelayActive = false;

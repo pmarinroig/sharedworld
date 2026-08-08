@@ -458,7 +458,7 @@ final class SharedWorldHostingManagerTest {
         try {
             Map<String, Boolean> first = Map.of("keepInventory", false, "pvp", true);
             invokeHandleGameRulesSnapshot(manager, first);
-            assertEquals(new WorldSettingsReader.Snapshot(first, null, null), getField(manager, "lastConfirmedGameRules"));
+            assertEquals(new WorldSettingsReader.Snapshot(first, null, null), getGameRulesField(manager, "lastConfirmedGameRules"));
             assertEquals(0, background.size());
 
             // An unchanged snapshot never pushes.
@@ -475,8 +475,8 @@ final class SharedWorldHostingManagerTest {
             // The push fails (dead port): the in-flight slot clears and the
             // baseline stays put, so the next poll re-diffs and retries.
             background.runNext();
-            assertEquals(0L, ((java.util.concurrent.atomic.AtomicLong) getField(manager, "gameRulesPushInFlight")).get());
-            assertEquals(new WorldSettingsReader.Snapshot(first, null, null), getField(manager, "lastConfirmedGameRules"));
+            assertEquals(0L, ((java.util.concurrent.atomic.AtomicLong) getGameRulesField(manager, "pushInFlight")).get());
+            assertEquals(new WorldSettingsReader.Snapshot(first, null, null), getGameRulesField(manager, "lastConfirmedGameRules"));
         } finally {
             SharedWorldDevSessionBridge.clear();
         }
@@ -501,8 +501,8 @@ final class SharedWorldHostingManagerTest {
             invokeOnGameRulesPushSucceeded(manager, hostAttemptContext(1L, 7L, "world-1", 7L, "token-7"), snapshot,
                     new SharedWorldModels.HostGameRulesReportResponseDto(merged, 5L));
 
-            assertEquals(new WorldSettingsReader.Snapshot(snapshot, null, null), getField(manager, "lastConfirmedGameRules"));
-            assertEquals(5L, getField(manager, "appliedSettingsRevision"));
+            assertEquals(new WorldSettingsReader.Snapshot(snapshot, null, null), getGameRulesField(manager, "lastConfirmedGameRules"));
+            assertEquals(5L, getGameRulesField(manager, "appliedSettingsRevision"));
             // Only difficulty/game mode re-apply; the gamerules the server
             // already holds are stripped so a racing in-game change survives.
             assertEquals(1, applied.size());
@@ -518,8 +518,8 @@ final class SharedWorldHostingManagerTest {
             // A stale completion (superseded attempt) is ignored entirely.
             invokeOnGameRulesPushSucceeded(manager, hostAttemptContext(99L, 7L, "world-1", 7L, "token-7"),
                     Map.of("pvp", false), new SharedWorldModels.HostGameRulesReportResponseDto(merged, 9L));
-            assertEquals(5L, getField(manager, "appliedSettingsRevision"));
-            assertEquals(new WorldSettingsReader.Snapshot(snapshot, null, null), getField(manager, "lastConfirmedGameRules"));
+            assertEquals(5L, getGameRulesField(manager, "appliedSettingsRevision"));
+            assertEquals(new WorldSettingsReader.Snapshot(snapshot, null, null), getGameRulesField(manager, "lastConfirmedGameRules"));
         } finally {
             SharedWorldDevSessionBridge.clear();
         }
@@ -536,14 +536,14 @@ final class SharedWorldHostingManagerTest {
 
             // A heartbeat that applies a new revision rewrites server gamerules,
             // so the recorded baseline must not survive it.
-            setField(manager, "lastConfirmedGameRules", new WorldSettingsReader.Snapshot(Map.of("pvp", true), null, null));
+            setGameRulesField(manager, "lastConfirmedGameRules", new WorldSettingsReader.Snapshot(Map.of("pvp", true), null, null));
             invokeLiveHeartbeat(manager, heartbeatResponseWithSettings("world-1", "host-live", 7L, "join.example", settings, 3L));
-            assertNull(getField(manager, "lastConfirmedGameRules"));
+            assertNull(getGameRulesField(manager, "lastConfirmedGameRules"));
 
             // Same for the owner-hosting local shortcut.
-            setField(manager, "lastConfirmedGameRules", new WorldSettingsReader.Snapshot(Map.of("pvp", true), null, null));
+            setGameRulesField(manager, "lastConfirmedGameRules", new WorldSettingsReader.Snapshot(Map.of("pvp", true), null, null));
             manager.applyLocalWorldSettingsChange("world-1", settings);
-            assertNull(getField(manager, "lastConfirmedGameRules"));
+            assertNull(getGameRulesField(manager, "lastConfirmedGameRules"));
         } finally {
             SharedWorldDevSessionBridge.clear();
         }
@@ -557,7 +557,7 @@ final class SharedWorldHostingManagerTest {
         primeRunningGameRuleManager(manager);
         try {
             invokeHandleGameRulesSnapshot(manager, Map.of("pvp", true));
-            assertNull(getField(manager, "lastConfirmedGameRules"));
+            assertNull(getGameRulesField(manager, "lastConfirmedGameRules"));
         } finally {
             SharedWorldDevSessionBridge.clear();
         }
@@ -577,7 +577,7 @@ final class SharedWorldHostingManagerTest {
         primeRunningGameRuleManager(manager);
         SharedWorldDevSessionBridge.setHostingSharedWorld(true, HOST_UUID);
         try {
-            setField(manager, "lastConfirmedGameRules", new WorldSettingsReader.Snapshot(Map.of("pvp", true), null, null));
+            setGameRulesField(manager, "lastConfirmedGameRules", new WorldSettingsReader.Snapshot(Map.of("pvp", true), null, null));
             manager.beginCoordinatedRelease();
             assertNotNull(captured.get());
 
@@ -612,7 +612,7 @@ final class SharedWorldHostingManagerTest {
 
             // With a baseline but no change, the flush snapshot pushes nothing.
             setField(manager, "coordinatedRelease", releaseNone);
-            setField(manager, "lastConfirmedGameRules", new WorldSettingsReader.Snapshot(Map.of("pvp", true), null, null));
+            setGameRulesField(manager, "lastConfirmedGameRules", new WorldSettingsReader.Snapshot(Map.of("pvp", true), null, null));
             manager.beginCoordinatedRelease();
             assertNotNull(captured.get());
             captured.get().accept(new WorldSettingsReader.Snapshot(Map.of("pvp", true), null, null));
@@ -721,18 +721,13 @@ final class SharedWorldHostingManagerTest {
         primeRunningGameRuleManager(manager);
         SharedWorldDevSessionBridge.setHostingSharedWorld(true, HOST_UUID);
         try {
-            Method handle = SharedWorldHostingManager.class.getDeclaredMethod(
-                    "handleGameRulesSnapshot",
-                    Class.forName("link.sharedworld.host.SharedWorldHostingManager$HostAttemptContext"),
-                    WorldSettingsReader.Snapshot.class
-            );
-            handle.setAccessible(true);
-            Object context = hostAttemptContext(1L, 7L, "world-1", 7L, "token-7");
+            HostGameRulesSync.Authority authority =
+                    gameRulesAuthority(manager, hostAttemptContext(1L, 7L, "world-1", 7L, "token-7"));
 
             // Baseline with normal difficulty; same rules, difficulty flips to hard.
-            handle.invoke(manager, context, new WorldSettingsReader.Snapshot(Map.of("pvp", true), "normal", "survival"));
+            gameRulesSync(manager).handleSnapshot(authority, new WorldSettingsReader.Snapshot(Map.of("pvp", true), "normal", "survival"));
             assertEquals(0, background.size());
-            handle.invoke(manager, context, new WorldSettingsReader.Snapshot(Map.of("pvp", true), "hard", "survival"));
+            gameRulesSync(manager).handleSnapshot(authority, new WorldSettingsReader.Snapshot(Map.of("pvp", true), "hard", "survival"));
             assertEquals(1, background.size());
         } finally {
             SharedWorldDevSessionBridge.clear();
@@ -783,13 +778,9 @@ final class SharedWorldHostingManagerTest {
     }
 
     private static void invokeHandleGameRulesSnapshot(SharedWorldHostingManager manager, Map<String, Boolean> snapshot) throws Exception {
-        Method handle = SharedWorldHostingManager.class.getDeclaredMethod(
-                "handleGameRulesSnapshot",
-                Class.forName("link.sharedworld.host.SharedWorldHostingManager$HostAttemptContext"),
-                WorldSettingsReader.Snapshot.class
-        );
-        handle.setAccessible(true);
-        handle.invoke(manager, hostAttemptContext(1L, 7L, "world-1", 7L, "token-7"), new WorldSettingsReader.Snapshot(snapshot, null, null));
+        gameRulesSync(manager).handleSnapshot(
+                gameRulesAuthority(manager, hostAttemptContext(1L, 7L, "world-1", 7L, "token-7")),
+                new WorldSettingsReader.Snapshot(snapshot, null, null));
     }
 
     private static void invokeOnGameRulesPushSucceeded(
@@ -798,14 +789,10 @@ final class SharedWorldHostingManagerTest {
             Map<String, Boolean> snapshot,
             SharedWorldModels.HostGameRulesReportResponseDto response
     ) throws Exception {
-        Method succeeded = SharedWorldHostingManager.class.getDeclaredMethod(
-                "onGameRulesPushSucceeded",
-                Class.forName("link.sharedworld.host.SharedWorldHostingManager$HostAttemptContext"),
-                WorldSettingsReader.Snapshot.class,
-                SharedWorldModels.HostGameRulesReportResponseDto.class
-        );
-        succeeded.setAccessible(true);
-        succeeded.invoke(manager, context, new WorldSettingsReader.Snapshot(snapshot, null, null), response);
+        gameRulesSync(manager).onPushSucceeded(
+                gameRulesAuthority(manager, context),
+                new WorldSettingsReader.Snapshot(snapshot, null, null),
+                response);
     }
 
     @Test
@@ -1429,6 +1416,30 @@ final class SharedWorldHostingManagerTest {
         Field field = SharedWorldHostingManager.class.getDeclaredField(name);
         field.setAccessible(true);
         field.set(target, value);
+    }
+
+    private static HostGameRulesSync gameRulesSync(SharedWorldHostingManager manager) throws Exception {
+        return (HostGameRulesSync) getField(manager, "gameRulesSync");
+    }
+
+    private static Object getGameRulesField(SharedWorldHostingManager manager, String name) throws Exception {
+        Field field = HostGameRulesSync.class.getDeclaredField(name);
+        field.setAccessible(true);
+        return field.get(gameRulesSync(manager));
+    }
+
+    private static void setGameRulesField(SharedWorldHostingManager manager, String name, Object value) throws Exception {
+        Field field = HostGameRulesSync.class.getDeclaredField(name);
+        field.setAccessible(true);
+        field.set(gameRulesSync(manager), value);
+    }
+
+    private static HostGameRulesSync.Authority gameRulesAuthority(SharedWorldHostingManager manager, Object context) throws Exception {
+        Method method = SharedWorldHostingManager.class.getDeclaredMethod(
+                "gameRulesAuthority",
+                Class.forName("link.sharedworld.host.SharedWorldHostingManager$HostAttemptContext"));
+        method.setAccessible(true);
+        return (HostGameRulesSync.Authority) method.invoke(manager, context);
     }
 
     private static final class InMemoryHostRecoveryStore implements SharedWorldHostingManager.HostRecoveryPersistence {
