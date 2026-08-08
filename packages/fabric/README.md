@@ -27,7 +27,7 @@ the generated run configurations.
 
 ```bash
 JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 \
-GRADLE_USER_HOME=/tmp/sharedworld-gradle \
+GRADLE_USER_HOME=$HOME/.cache/sharedworld-gradle \
 bash ./gradlew --no-daemon -p packages/fabric remapJar
 ```
 
