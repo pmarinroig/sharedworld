@@ -96,29 +96,59 @@ export async function prepareUploads(
       regionBundleUploads.push(plan);
     }
   }
+  const nonRegionPackUpload = await prepareGroupedArtifactUpload(
+    svc,
+    ctx,
+    worldId,
+    request.nonRegionPack ?? null,
+    latest?.snapshotId ?? null,
+    latestPack,
+    authorizedRuntime.runtime,
+    binding,
+    MAX_PACK_DELTA_CHAIN_DEPTH,
+    storageKeyForPackFull,
+    storageKeyForPackDelta,
+    PACK_FULL_TRANSFER_MODE,
+    PACK_DELTA_TRANSFER_MODE
+  );
+  failOnOversizedFullUpload(svc, [nonRegionPackUpload, ...regionBundleUploads]);
   return {
     worldId,
     snapshotBaseId: latest?.snapshotId ?? null,
     uploads: [],
-    nonRegionPackUpload: await prepareGroupedArtifactUpload(
-      svc,
-      ctx,
-      worldId,
-      request.nonRegionPack ?? null,
-      latest?.snapshotId ?? null,
-      latestPack,
-      authorizedRuntime.runtime,
-      binding,
-      MAX_PACK_DELTA_CHAIN_DEPTH,
-      storageKeyForPackFull,
-      storageKeyForPackDelta,
-      PACK_FULL_TRANSFER_MODE,
-      PACK_DELTA_TRANSFER_MODE
-    ),
+    nonRegionPackUpload,
     regionBundleUploads,
     syncPolicy: syncPolicyForProvider(svc),
     latestPackIds: latest?.packs.map((pack) => pack.packId) ?? []
   };
+}
+
+/**
+ * Bodies over the relay's limit die as unexplained 413s at the Cloudflare edge
+ * before any worker code runs, so a plan that would force such a full upload
+ * must fail here with the explanation attached. Fires only when no delta slot
+ * exists — 0.3.1+ clients preflight their actual bodies themselves, and this
+ * is what a pre-sharding client with an oversized superpack gets instead of
+ * silence.
+ */
+function failOnOversizedFullUpload(
+  svc: ServiceContext,
+  plans: (Awaited<ReturnType<typeof prepareGroupedArtifactUpload>> | null)[]
+): void {
+  const limitBytes = maxUploadBodyBytes(svc);
+  for (const plan of plans) {
+    if (plan == null || plan.alreadyPresent || plan.deltaStorageKey != null || plan.pack.size <= limitBytes) {
+      continue;
+    }
+    const sizeMb = Math.max(1, Math.round(plan.pack.size / 1_000_000));
+    const limitMb = Math.max(1, Math.round(limitBytes / 1_000_000));
+    throw new HttpError(
+      413,
+      "blob_too_large",
+      `This world's "${plan.pack.packId}" data is ${sizeMb} MB, but SharedWorld uploads are limited to ${limitMb} MB per blob. ` +
+        `Update the SharedWorld mod to the latest version (it splits large worlds automatically), or shrink the world.`
+    );
+  }
 }
 
 /**
@@ -265,7 +295,8 @@ export function syncPolicyForProvider(svc: ServiceContext): SyncPolicy {
       maxConcurrentUploads: parsePositiveInt(svc.env.DRIVE_MAX_CONCURRENT_UPLOADS, 3),
       maxUploadStartsPerSecond: parsePositiveInt(svc.env.DRIVE_MAX_UPLOAD_STARTS_PER_SECOND, 3),
       retryBaseDelayMs: parsePositiveInt(svc.env.DRIVE_RETRY_BASE_DELAY_MS, 750),
-      retryMaxDelayMs: parsePositiveInt(svc.env.DRIVE_RETRY_MAX_DELAY_MS, 8_000)
+      retryMaxDelayMs: parsePositiveInt(svc.env.DRIVE_RETRY_MAX_DELAY_MS, 8_000),
+      maxUploadBodyBytes: maxUploadBodyBytes(svc)
     };
   }
 
@@ -275,8 +306,13 @@ export function syncPolicyForProvider(svc: ServiceContext): SyncPolicy {
     maxConcurrentUploads: 4,
     maxUploadStartsPerSecond: 8,
     retryBaseDelayMs: 250,
-    retryMaxDelayMs: 4_000
+    retryMaxDelayMs: 4_000,
+    maxUploadBodyBytes: maxUploadBodyBytes(svc)
   };
+}
+
+export function maxUploadBodyBytes(svc: ServiceContext): number {
+  return parsePositiveInt(svc.env.UPLOAD_MAX_BODY_BYTES, 95_000_000);
 }
 
 async function prepareGroupedArtifactUpload(

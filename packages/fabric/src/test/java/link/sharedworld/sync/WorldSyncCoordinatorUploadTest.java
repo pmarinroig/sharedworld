@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -244,6 +245,116 @@ final class WorldSyncCoordinatorUploadTest {
 
             assertNotNull(manifest);
             assertNotNull(server.lastFinalizeSnapshotBody());
+        }
+    }
+
+    @Test
+    void worldOverTheShardCapUploadsNonRegionFilesAsShardPacks() throws Exception {
+        System.setProperty("sharedworld.dev.superpackShardMaxBytes", "1024");
+        try {
+            Path worldDirectory = writeWorldDirectory(Map.of(
+                    "data/foo.dat", repeated('A', 8192),
+                    "entities/r.0.0.mca", repeated('E', 8192)
+            ));
+            ManagedWorldStore worldStore = new ManagedWorldStore(this.tempDir.resolve("managed-sharded"));
+
+            List<SyncPathRules.RegionBundleGroup> shards = SyncPathRules.groupSuperpackFiles(
+                    WorldCanonicalizer.scanCanonical(worldDirectory, HOST_UUID).stream()
+                            .filter(file -> SyncPathRules.belongsInSuperpack(file.relativePath()))
+                            .toList()
+            );
+            assertEquals(
+                    List.of("region-bundle:superpack:data", "region-bundle:superpack:entities"),
+                    shards.stream().map(SyncPathRules.RegionBundleGroup::bundleId).toList()
+            );
+
+            try (SyncTestHttpServer server = new SyncTestHttpServer()) {
+                UploadPackPlanDto[] shardUploads = new UploadPackPlanDto[shards.size()];
+                for (int i = 0; i < shards.size(); i++) {
+                    Path shardPack = Files.createTempFile(this.tempDir, "shard-", ".bundle");
+                    LocalPackDescriptorDto descriptor = SharedWorldPack.buildPack(shards.get(i).bundleId(), shards.get(i).files(), shardPack);
+                    shardUploads[i] = new UploadPackPlanDto(
+                            descriptor,
+                            false,
+                            null,
+                            null,
+                            null,
+                            "region-bundles/full/shard-" + i + ".bundle",
+                            server.uploadUrl("shard-" + i),
+                            null,
+                            null,
+                            null,
+                            null,
+                            null
+                    );
+                }
+                server.setUploadPlan(new UploadPlanDto(
+                        WORLD_ID,
+                        null,
+                        new link.sharedworld.api.SharedWorldModels.UploadPlanEntryDto[0],
+                        null,
+                        shardUploads,
+                        SyncTestHttpServer.syncPolicy()
+                ));
+                server.setFinalizeManifest(manifest("snapshot-sharded"));
+
+                WorldSyncCoordinator coordinator = new WorldSyncCoordinator(server.apiClient(), worldStore);
+                coordinator.uploadSnapshot(WORLD_ID, worldDirectory, HOST_UUID, 7L, "token-7");
+
+                // The wire request must carry no singular superpack: the shard
+                // packs travel in the regionBundles array a 0.3.0 backend and
+                // client already understand.
+                assertTrue(!server.lastPrepareUploadsBody().contains("\"nonRegionPack\""));
+                assertTrue(server.lastPrepareUploadsBody().contains("region-bundle:superpack:data"));
+                assertNotNull(server.uploadedBlobBody("shard-0"));
+                assertNotNull(server.uploadedBlobBody("shard-1"));
+                assertTrue(server.lastFinalizeSnapshotBody().contains("region-bundle:superpack:entities"));
+                // Shard baselines land in the per-id bundle store, not the
+                // singular pack baseline.
+                assertNull(worldStore.packBaselineSnapshotId(WORLD_ID));
+                assertTrue(Files.exists(worldStore.regionBundleBaselineFile(WORLD_ID, "region-bundle:superpack:data")));
+            }
+        } finally {
+            System.clearProperty("sharedworld.dev.superpackShardMaxBytes");
+        }
+    }
+
+    @Test
+    void singleFileOverTheAdvertisedBodyLimitFailsNamingTheFile() throws Exception {
+        Path worldDirectory = writeWorldDirectory(Map.of("data/huge.bin", repeated('H', 8192)));
+        ManagedWorldStore worldStore = new ManagedWorldStore(this.tempDir.resolve("managed-oversized"));
+        BuiltPack currentPack = buildPackFromWorld(worldDirectory);
+
+        try (SyncTestHttpServer server = new SyncTestHttpServer()) {
+            server.setUploadPlan(new UploadPlanDto(
+                    WORLD_ID,
+                    null,
+                    new link.sharedworld.api.SharedWorldModels.UploadPlanEntryDto[0],
+                    new UploadPackPlanDto(
+                            currentPack.descriptor(),
+                            false,
+                            null,
+                            null,
+                            null,
+                            "packs/full.pack",
+                            server.uploadUrl("pack-full-oversized"),
+                            null,
+                            null,
+                            null,
+                            null,
+                            null
+                    ),
+                    new UploadPackPlanDto[0],
+                    new link.sharedworld.api.SharedWorldModels.SyncPolicyDto(4, 2, 2, 10, 25, 250, 1024L)
+            ));
+
+            WorldSyncCoordinator coordinator = new WorldSyncCoordinator(server.apiClient(), worldStore);
+            IOException error = assertThrows(IOException.class, () -> coordinator.uploadSnapshot(WORLD_ID, worldDirectory, HOST_UUID, 7L, "token-7"));
+
+            assertTrue(error.getMessage().contains("data/huge.bin"), error.getMessage());
+            assertTrue(error.getMessage().contains("cannot be synced"), error.getMessage());
+            // The doomed upload never started.
+            assertNull(server.uploadedBlobBody("pack-full-oversized"));
         }
     }
 

@@ -111,7 +111,7 @@ final class SyncTestHttpServer implements AutoCloseable {
     }
 
     static SyncPolicyDto syncPolicy() {
-        return new SyncPolicyDto(4, 2, 2, 10, 25, 250);
+        return new SyncPolicyDto(4, 2, 2, 10, 25, 250, 95_000_000L);
     }
 
     private void handle(HttpExchange exchange) throws IOException {

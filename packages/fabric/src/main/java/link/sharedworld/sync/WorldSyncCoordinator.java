@@ -114,6 +114,12 @@ public final class WorldSyncCoordinator {
         List<PreparedWorldFile> canonicalFiles = WorldCanonicalizer.scanCanonical(worldDirectory, hostPlayerUuid);
         List<PreparedWorldFile> regionFiles = canonicalFiles.stream().filter(file -> SyncPathRules.isTerrainRegionFile(file.relativePath())).toList();
         List<PreparedWorldFile> nonRegionFiles = canonicalFiles.stream().filter(file -> SyncPathRules.belongsInSuperpack(file.relativePath())).toList();
+        // Above the shard cap the non-region files travel as capped shard packs
+        // inside the region-bundle wire namespace (one blob must stay under the
+        // worker's request-body limit); below it they keep the single
+        // "non-region" superpack, wire-identical to pre-0.3.1 clients.
+        List<SyncPathRules.RegionBundleGroup> superpackShards = SyncPathRules.groupSuperpackFiles(nonRegionFiles);
+        boolean sharded = !superpackShards.isEmpty();
         Path packFile = Files.createTempFile("sharedworld-non-region-", ".pack");
         List<WorldSyncSupport.LocalArtifact> regionBundles = List.of();
         List<PreparedUpload> preparedUploads = List.of();
@@ -122,8 +128,13 @@ public final class WorldSyncCoordinator {
         // cannot leak pack/bundle/delta bodies. Autosave retries every five
         // minutes, so leaks here compound quickly.
         try {
-            LocalPackDescriptorDto localPack = SharedWorldPack.buildPack(nonRegionFiles, packFile);
+            LocalPackDescriptorDto localPack = sharded ? null : SharedWorldPack.buildPack(nonRegionFiles, packFile);
             regionBundles = WorldSyncSupport.buildRegionBundleArtifacts(regionFiles);
+            if (sharded) {
+                List<WorldSyncSupport.LocalArtifact> combined = new ArrayList<>(regionBundles);
+                combined.addAll(WorldSyncSupport.buildGroupedArtifacts(superpackShards));
+                regionBundles = combined;
+            }
             WorldSyncSupport.logTiming(LOGGER, "scan canonical files", worldId, scanStartedAt);
 
             WorldSyncSupport.report(progressListener, STAGE_REQUESTING_UPLOAD_PLAN, 0.14D, null, null, "Requesting upload plan");
@@ -140,6 +151,7 @@ public final class WorldSyncCoordinator {
 
             SyncPolicy resolvedPolicy = SyncPolicy.from(plan.syncPolicy());
             this.activeSyncPolicy = resolvedPolicy;
+            failOnOversizedWorldFile(canonicalFiles, resolvedPolicy.maxUploadBodyBytes());
             Map<String, WorldSyncSupport.LocalArtifact> regionBundlesById = regionBundles.stream().collect(Collectors.toMap(artifact -> artifact.descriptor().packId(), artifact -> artifact));
             if (canSkipUnchangedSnapshot(plan, regionBundlesById.keySet())) {
                 // Nothing changed since the latest snapshot: skip the finalize
@@ -152,7 +164,11 @@ public final class WorldSyncCoordinator {
                     unchangedBundleBaselines.put(bundle.descriptor().packId(), bundle.artifactPath());
                 }
                 this.worldStore.replaceRegionBaselines(worldId, unchangedBundleBaselines, plan.snapshotBaseId());
-                this.worldStore.refreshPackBaseline(worldId, packFile, plan.snapshotBaseId());
+                if (sharded) {
+                    this.worldStore.clearPackBaseline(worldId);
+                } else {
+                    this.worldStore.refreshPackBaseline(worldId, packFile, plan.snapshotBaseId());
+                }
                 WorldSyncSupport.report(progressListener, STAGE_FINALIZING_SNAPSHOT, 1.0D, null, null, "No changes; snapshot up to date");
                 LOGGER.info("SharedWorld snapshot skipped for {}: no changes since {}", worldId, plan.snapshotBaseId());
                 return null;
@@ -198,7 +214,11 @@ public final class WorldSyncCoordinator {
                 bundleBaselineFiles.put(bundle.descriptor().packId(), bundle.artifactPath());
             }
             this.worldStore.replaceRegionBaselines(worldId, bundleBaselineFiles, manifest.snapshotId());
-            this.worldStore.refreshPackBaseline(worldId, packFile, manifest.snapshotId());
+            if (sharded) {
+                this.worldStore.clearPackBaseline(worldId);
+            } else {
+                this.worldStore.refreshPackBaseline(worldId, packFile, manifest.snapshotId());
+            }
             WorldSyncSupport.report(progressListener, STAGE_FINALIZING_SNAPSHOT, 1.0D, null, null, "Snapshot finalized");
             WorldSyncSupport.logTiming(LOGGER, "finalize snapshot", worldId, finalizeStartedAt);
             return manifest;
@@ -259,14 +279,24 @@ public final class WorldSyncCoordinator {
                 .toList();
         List<PreparedWorldFile> localNonRegionFiles = localCanonicalFiles.stream().filter(file -> SyncPathRules.belongsInSuperpack(file.relativePath())).toList();
         List<PreparedWorldFile> localRegionFiles = localCanonicalFiles.stream().filter(file -> SyncPathRules.isTerrainRegionFile(file.relativePath())).toList();
+        // Mirrors the upload-side split: a cache over the shard cap reports its
+        // non-region files as shard packs so the backend can plan shard deltas
+        // against exactly what we hold.
+        List<SyncPathRules.RegionBundleGroup> localSuperpackShards = SyncPathRules.groupSuperpackFiles(localNonRegionFiles);
+        boolean shardedLocal = !localSuperpackShards.isEmpty();
         Path localPackFile = Files.createTempFile("sharedworld-local-pack-", ".pack");
         List<WorldSyncSupport.LocalArtifact> localRegionBundles = List.of();
         // The guest cache warmer retries this flow every 30 seconds while the
         // backend is unreachable, so the plan request failure path must clean
         // its temps just like the apply path does.
         try {
-            LocalPackDescriptorDto localPack = SharedWorldPack.buildPack(localNonRegionFiles, localPackFile);
+            LocalPackDescriptorDto localPack = shardedLocal ? null : SharedWorldPack.buildPack(localNonRegionFiles, localPackFile);
             localRegionBundles = WorldSyncSupport.buildRegionBundleArtifacts(localRegionFiles);
+            if (shardedLocal) {
+                List<WorldSyncSupport.LocalArtifact> combined = new ArrayList<>(localRegionBundles);
+                combined.addAll(WorldSyncSupport.buildGroupedArtifacts(localSuperpackShards));
+                localRegionBundles = combined;
+            }
             WorldSyncSupport.logTiming(LOGGER, "scan local cache", worldId, scanStartedAt);
 
             WorldSyncSupport.report(progressListener, STAGE_REQUESTING_DOWNLOAD_PLAN, 0.18D, null, null, "Requesting download plan");
@@ -311,7 +341,9 @@ public final class WorldSyncCoordinator {
             SyncPolicy policy,
             WorldSyncProgressListener progressListener
     ) throws IOException, InterruptedException {
-        boolean preparePack = plan.nonRegionPackUpload() != null && !plan.nonRegionPackUpload().alreadyPresent();
+        // localPack is null when the non-region files went up as shard packs; a
+        // backend echoing a pack plan anyway must not NPE the sync path.
+        boolean preparePack = localPack != null && plan.nonRegionPackUpload() != null && !plan.nonRegionPackUpload().alreadyPresent();
         List<UploadPackPlanDto> bundlesToPrepare = plan.regionBundleUploads() == null
                 ? List.of()
                 : Arrays.stream(plan.regionBundleUploads()).filter(upload -> !upload.alreadyPresent()).toList();
@@ -396,6 +428,35 @@ public final class WorldSyncCoordinator {
         }
     }
 
+    /**
+     * The storage relay hard-rejects request bodies over the advertised limit
+     * before any SharedWorld code runs, so an oversized body must fail here
+     * with a message that names the culprit instead of a bare 413.
+     */
+    private static void failOnOversizedWorldFile(List<PreparedWorldFile> canonicalFiles, long maxUploadBodyBytes) throws IOException {
+        for (PreparedWorldFile file : canonicalFiles) {
+            if (file.size() > maxUploadBodyBytes) {
+                throw new IOException("SharedWorld cannot upload this world: " + file.relativePath() + " is "
+                        + megabytes(file.size()) + " MB, and single files above " + megabytes(maxUploadBodyBytes)
+                        + " MB cannot be synced. Remove or shrink that file inside the world folder.");
+            }
+        }
+    }
+
+    private static void failOnOversizedUploadBody(List<PreparedUpload> preparedUploads, long maxUploadBodyBytes) throws IOException {
+        for (PreparedUpload preparedUpload : preparedUploads) {
+            if (preparedUpload.bodyPath() != null && preparedUpload.bodySize() > maxUploadBodyBytes) {
+                throw new IOException("SharedWorld cannot upload \"" + preparedUpload.relativePath() + "\": its "
+                        + megabytes(preparedUpload.bodySize()) + " MB body exceeds the " + megabytes(maxUploadBodyBytes)
+                        + " MB upload limit.");
+            }
+        }
+    }
+
+    private static long megabytes(long bytes) {
+        return Math.max(1L, Math.round(bytes / 1_000_000.0D));
+    }
+
     private void uploadPreparedFiles(
             String worldId,
             List<PreparedUpload> preparedUploads,
@@ -407,6 +468,7 @@ public final class WorldSyncCoordinator {
             WorldSyncSupport.report(progressListener, STAGE_UPLOADING_CHANGED_FILES, 1.0D, 0L, 0L, "No changed files to upload");
             return;
         }
+        failOnOversizedUploadBody(preparedUploads, policy.maxUploadBodyBytes());
 
         applyConfiguredDevUploadDelay(worldId);
 
@@ -1171,11 +1233,19 @@ public final class WorldSyncCoordinator {
             int maxConcurrentUploads,
             int maxUploadStartsPerSecond,
             long retryBaseDelayMs,
-            long retryMaxDelayMs
+            long retryMaxDelayMs,
+            long maxUploadBodyBytes
     ) {
+        /**
+         * The default matches the backend's UPLOAD_MAX_BODY_BYTES fallback:
+         * just under the storage relay's hard request-body limit. A backend
+         * predating the field serializes nothing and lands on the same value.
+         */
+        private static final long DEFAULT_MAX_UPLOAD_BODY_BYTES = 95_000_000L;
+
         private static SyncPolicy from(SyncPolicyDto dto) {
             if (dto == null) {
-                return new SyncPolicy(4, 1, 1, 1, 750L, 8_000L);
+                return new SyncPolicy(4, 1, 1, 1, 750L, 8_000L, DEFAULT_MAX_UPLOAD_BODY_BYTES);
             }
             return new SyncPolicy(
                     Math.max(1, dto.maxParallelDownloads()),
@@ -1183,7 +1253,8 @@ public final class WorldSyncCoordinator {
                     Math.max(1, dto.maxConcurrentUploads()),
                     Math.max(1, dto.maxUploadStartsPerSecond()),
                     Math.max(1L, dto.retryBaseDelayMs()),
-                    Math.max(1L, dto.retryMaxDelayMs())
+                    Math.max(1L, dto.retryMaxDelayMs()),
+                    dto.maxUploadBodyBytes() > 0L ? dto.maxUploadBodyBytes() : DEFAULT_MAX_UPLOAD_BODY_BYTES
             );
         }
     }

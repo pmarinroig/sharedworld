@@ -56,6 +56,9 @@ export function snapshotRoutes(
       handler: async (request, params, ctx) => json(await service.finalizeSnapshot(ctx, requireParam(params.worldId, "worldId"), await readJson<FinalizeSnapshotRequest>(request)))
     },
     {
+      // Legacy 0.3.0 shape: the local state rides in x-sharedworld-* headers.
+      // Big worlds overflow edge header limits, so 0.3.1+ clients POST instead;
+      // this stays until the legacy-client watch retires the 0.3.0 adapters.
       method: "GET",
       pattern: new UrlPattern({ pathname: "/worlds/:worldId/downloads/plan" }),
       auth: true,
@@ -63,6 +66,13 @@ export function snapshotRoutes(
         const payload = await parseDownloadPlanRequest(request);
         return json(await service.downloadPlan(ctx, requireParam(params.worldId, "worldId"), payload));
       }
+    },
+    {
+      method: "POST",
+      pattern: new UrlPattern({ pathname: "/worlds/:worldId/downloads/plan" }),
+      auth: true,
+      handler: async (request, params, ctx) =>
+        json(await service.downloadPlan(ctx, requireParam(params.worldId, "worldId"), await readJson<UploadPlanRequest>(request)))
     },
     {
       method: "PUT",

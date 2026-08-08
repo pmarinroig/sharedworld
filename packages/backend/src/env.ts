@@ -31,6 +31,12 @@ export interface Env {
   DRIVE_RETRY_BASE_DELAY_MS?: string;
   DRIVE_RETRY_MAX_DELAY_MS?: string;
   /**
+   * Largest single blob body the worker relay accepts, advertised to clients
+   * via SyncPolicy.maxUploadBodyBytes. Keep under the Cloudflare plan's
+   * request-body limit (100 MB on workers.dev) or the edge 413s first.
+   */
+  UPLOAD_MAX_BODY_BYTES?: string;
+  /**
    * Remote throttle levers: when set, responses carry suggested client
    * cadences (clients clamp and never go below their built-in defaults).
    * Unset = fields absent = clients use their defaults.

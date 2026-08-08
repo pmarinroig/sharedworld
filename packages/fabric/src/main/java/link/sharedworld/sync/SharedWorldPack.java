@@ -48,7 +48,7 @@ public final class SharedWorldPack {
         List<PackEntryHeader> headers = new ArrayList<>(entries.size());
         for (PackEntryData entry : entries) {
             headers.add(new PackEntryHeader(entry, nextOffset));
-            nextOffset = align(nextOffset + entry.bytes().length, ALIGNMENT);
+            nextOffset = align(nextOffset + entry.size(), ALIGNMENT);
         }
 
         try (DataOutputStream output = new DataOutputStream(new BufferedOutputStream(Files.newOutputStream(target)))) {
@@ -58,7 +58,7 @@ public final class SharedWorldPack {
             for (PackEntryHeader header : headers) {
                 output.writeInt(header.entry().pathBytes().length);
                 output.write(header.entry().pathBytes());
-                output.writeLong(header.entry().bytes().length);
+                output.writeLong(header.entry().size());
                 output.writeInt(header.entry().contentTypeBytes().length);
                 output.write(header.entry().contentTypeBytes());
                 output.writeInt(header.entry().hashBytes().length);
@@ -69,8 +69,8 @@ public final class SharedWorldPack {
             long currentOffset = headers.isEmpty() ? metadataSize : headers.get(0).offset();
             for (PackEntryHeader header : headers) {
                 padToOffset(output, currentOffset, header.offset());
-                output.write(header.entry().bytes());
-                currentOffset = header.offset() + header.entry().bytes().length;
+                writeEntryBody(output, header.entry());
+                currentOffset = header.offset() + header.entry().size();
             }
         }
 
@@ -82,10 +82,40 @@ public final class SharedWorldPack {
                 headers.stream().map(header -> new PackedManifestFileDto(
                         header.entry().relativePath(),
                         header.entry().hash(),
-                        header.entry().bytes().length,
+                        header.entry().size(),
                         header.entry().contentType()
                 )).toArray(PackedManifestFileDto[]::new)
         );
+    }
+
+    /**
+     * Header offsets were computed from the scanned size before any bytes were
+     * copied, so a file that changes size mid-pack would silently corrupt every
+     * later entry's offset — that mismatch must abort the pack.
+     */
+    private static void writeEntryBody(DataOutputStream output, PackEntryData entry) throws IOException {
+        if (entry.overrideBytes() != null) {
+            output.write(entry.overrideBytes());
+            return;
+        }
+        long copied = 0L;
+        try (BufferedInputStream input = new BufferedInputStream(Files.newInputStream(entry.sourcePath()))) {
+            byte[] buffer = new byte[16 * 1024];
+            int read;
+            while ((read = input.read(buffer)) >= 0) {
+                if (read == 0) {
+                    continue;
+                }
+                if (copied + read > entry.size()) {
+                    throw new IOException("SharedWorld pack entry " + entry.relativePath() + " grew while packing (expected " + entry.size() + " bytes).");
+                }
+                output.write(buffer, 0, read);
+                copied += read;
+            }
+        }
+        if (copied != entry.size()) {
+            throw new IOException("SharedWorld pack entry " + entry.relativePath() + " changed size while packing (expected " + entry.size() + " bytes, read " + copied + ").");
+        }
     }
 
     public static void extract(Path packFile, Path outputDirectory) throws IOException {
@@ -146,20 +176,17 @@ public final class SharedWorldPack {
     }
 
     private static PackEntryData toEntryData(PreparedWorldFile file) {
-        try {
-            byte[] bytes = file.overrideBytes() != null ? file.overrideBytes() : Files.readAllBytes(file.sourcePath());
-            return new PackEntryData(
-                    file.relativePath(),
-                    file.hash(),
-                    file.contentType(),
-                    file.relativePath().getBytes(StandardCharsets.UTF_8),
-                    file.contentType().getBytes(StandardCharsets.UTF_8),
-                    file.hash().getBytes(StandardCharsets.UTF_8),
-                    bytes
-            );
-        } catch (IOException exception) {
-            throw new RuntimeException("Failed to read SharedWorld pack entry " + file.relativePath() + ".", exception);
-        }
+        return new PackEntryData(
+                file.relativePath(),
+                file.hash(),
+                file.contentType(),
+                file.relativePath().getBytes(StandardCharsets.UTF_8),
+                file.contentType().getBytes(StandardCharsets.UTF_8),
+                file.hash().getBytes(StandardCharsets.UTF_8),
+                file.sourcePath(),
+                file.overrideBytes(),
+                file.overrideBytes() != null ? file.overrideBytes().length : file.size()
+        );
     }
 
     private static long align(long value, long alignment) {
@@ -187,7 +214,9 @@ public final class SharedWorldPack {
             byte[] pathBytes,
             byte[] contentTypeBytes,
             byte[] hashBytes,
-            byte[] bytes
+            Path sourcePath,
+            byte[] overrideBytes,
+            long size
     ) {
     }
 

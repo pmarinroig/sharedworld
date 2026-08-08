@@ -107,6 +107,32 @@ final class ArtifactDeltaEngineTest {
     }
 
     @Test
+    void copyBaseAfterLiteralFailsClosedWhenSkipRunsPastBaseEof() throws Exception {
+        // Block 0 is a literal, so the base stream is first touched by the block-1
+        // copy's lazy skip; a base too short for that skip must fail like any
+        // other missing base block.
+        Path baseFile = this.tempDir.resolve("base-tiny.bin");
+        Path deltaFile = this.tempDir.resolve("delta-skip.bin");
+        Path outputFile = this.tempDir.resolve("output.bin");
+
+        Files.write(baseFile, new byte[] {1, 2, 3});
+        try (DataOutputStream output = new DataOutputStream(Files.newOutputStream(deltaFile))) {
+            output.writeInt(0x53574441);
+            output.writeInt(1);
+            output.writeInt(4);
+            output.writeInt(8);
+            output.writeInt(2);
+            output.writeByte(2);
+            output.writeInt(4);
+            output.write(new byte[] {9, 9, 9, 9});
+            output.writeByte(1);
+        }
+
+        IOException error = assertThrows(IOException.class, () -> ArtifactDeltaEngine.applyDelta(baseFile, deltaFile, outputFile));
+        assertEquals("SharedWorld delta expected base block 1 to exist.", error.getMessage());
+    }
+
+    @Test
     void truncatedLiteralPayloadFailsClosed() throws Exception {
         Path baseFile = this.tempDir.resolve("base.bin");
         Path deltaFile = this.tempDir.resolve("delta-truncated.bin");

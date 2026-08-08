@@ -75,6 +75,47 @@ final class SharedWorldPackTest {
         assertArrayEquals(Files.readAllBytes(firstPack), Files.readAllBytes(secondPack));
     }
 
+    @Test
+    void overrideBytesEntriesPackWithoutTouchingTheSourceFile() throws Exception {
+        // level.dat and the extracted host player file are packed from canonicalized
+        // in-memory bytes; the on-disk file (if any) must not leak into the pack.
+        PreparedWorldFile override = new PreparedWorldFile(
+                null,
+                "level.dat",
+                "override-hash",
+                "canonical".getBytes().length,
+                "canonical".getBytes().length,
+                "application/octet-stream",
+                false,
+                "canonical".getBytes()
+        );
+        Path packFile = this.tempDir.resolve("override.pack");
+        Path extractRoot = this.tempDir.resolve("override-extract");
+
+        SharedWorldPack.buildPack(List.of(override), packFile);
+        SharedWorldPack.extract(packFile, extractRoot);
+
+        assertArrayEquals("canonical".getBytes(), Files.readAllBytes(extractRoot.resolve("level.dat")));
+    }
+
+    @Test
+    void entryThatShrankBetweenScanAndPackFailsNamingTheFile() throws Exception {
+        PreparedWorldFile file = preparedFile("data/foo.txt", "original-payload".getBytes());
+        Files.write(file.sourcePath(), "short".getBytes());
+
+        IOException error = assertThrows(IOException.class, () -> SharedWorldPack.buildPack(List.of(file), this.tempDir.resolve("drift.pack")));
+        assertEquals("SharedWorld pack entry data/foo.txt changed size while packing (expected 16 bytes, read 5).", error.getMessage());
+    }
+
+    @Test
+    void entryThatGrewBetweenScanAndPackFailsNamingTheFile() throws Exception {
+        PreparedWorldFile file = preparedFile("data/foo.txt", "orig".getBytes());
+        Files.write(file.sourcePath(), "much-longer-content".getBytes());
+
+        IOException error = assertThrows(IOException.class, () -> SharedWorldPack.buildPack(List.of(file), this.tempDir.resolve("drift.pack")));
+        assertEquals("SharedWorld pack entry data/foo.txt grew while packing (expected 4 bytes).", error.getMessage());
+    }
+
     private PreparedWorldFile preparedFile(String relativePath, byte[] bytes) throws Exception {
         Path file = this.tempDir.resolve("source").resolve(relativePath.replace('/', java.io.File.separatorChar));
         if (file.getParent() != null) {

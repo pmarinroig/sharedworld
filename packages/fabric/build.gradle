@@ -66,6 +66,9 @@ def fakeRunDevAuthSecret = fakeRunDevAuthSecretProvider.orNull
 // their fixed defaults.
 def e2eBackendUrl = providers.gradleProperty("sharedworldE2eBackendUrl").getOrElse(fakeRunLocalBackendUrl)
 def e2eMarkerFile = providers.gradleProperty("sharedworldE2eMarkerFile").orNull
+// E2E-only shard-cap override: a tiny cap makes the host exercise the sharded
+// superpack path with ordinary-sized test worlds.
+def e2eSuperpackShardMaxBytes = providers.gradleProperty("sharedworldE2eSuperpackShardMaxBytes").orNull
 def e2eCommandFile = providers.gradleProperty("sharedworldE2eCommandFile").orNull
 def e2eWorldName = providers.gradleProperty("sharedworldE2eWorldName").orNull
 def skipDevHelperRuntime = providers.gradleProperty("sharedworldSkipDevHelperRuntime")
@@ -287,6 +290,9 @@ loom {
             }
             vmArgs "-Dsharedworld.e2e.role=host"
             vmArgs "-Dsharedworld.e2e.insecureLoopback=true"
+            if (e2eSuperpackShardMaxBytes != null) {
+                vmArgs "-Dsharedworld.dev.superpackShardMaxBytes=${e2eSuperpackShardMaxBytes}"
+            }
             if (e2eMarkerFile != null) {
                 vmArgs "-Dsharedworld.e2e.markerFile=${e2eMarkerFile}"
             }

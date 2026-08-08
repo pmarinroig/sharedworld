@@ -804,7 +804,48 @@ describe("SharedWorldService storage and sync planning", () => {
     expect(uploadPlan.syncPolicy.maxConcurrentUploads).toBe(3);
     expect(uploadPlan.syncPolicy.maxConcurrentUploadPreparations).toBe(2);
     expect(uploadPlan.syncPolicy.maxUploadStartsPerSecond).toBe(3);
+    expect(uploadPlan.syncPolicy.maxUploadBodyBytes).toBe(95_000_000);
     expect(downloadPlan.syncPolicy.maxParallelDownloads).toBe(8);
+    expect(downloadPlan.syncPolicy.maxUploadBodyBytes).toBe(95_000_000);
+  });
+
+  test("a plan that would force a full upload over the body limit fails with blob_too_large", async () => {
+    // What a pre-sharding client with an oversized superpack now receives at
+    // plan time, instead of a bare 413 from the Cloudflare edge mid-upload.
+    const repository = createSqliteRepository();
+    const { signer } = createBlobSigner();
+    await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
+    const world = await repository.createWorld(
+      { playerUuid: "player-owner", playerName: "Owner" },
+      "Huge World",
+      "huge-world",
+      { provider: "google-drive", storageAccountId: "storage-account-1" }
+    );
+    const instance = createTestService(repository, authVerifier, signer, googleDriveStorageProvider(), {});
+    await claimHostForTest(instance, { playerUuid: "player-owner", playerName: "Owner" }, world.id);
+
+    await expect(
+      instance.prepareUploads({ playerUuid: "player-owner", playerName: "Owner" }, world.id, {
+        files: [],
+        nonRegionPack: { packId: "non-region", hash: "huge-pack", size: 120_000_000, fileCount: 1, files: [] }
+      })
+    ).rejects.toThrow("limited to 95 MB per blob");
+
+    await expect(
+      instance.prepareUploads({ playerUuid: "player-owner", playerName: "Owner" }, world.id, {
+        files: [],
+        regionBundles: [
+          { packId: "region-bundle:superpack:entities", hash: "huge-shard", size: 120_000_000, fileCount: 1, files: [] }
+        ]
+      })
+    ).rejects.toThrow("limited to 95 MB per blob");
+
+    // Under the limit the plan goes through untouched.
+    const plan = await instance.prepareUploads({ playerUuid: "player-owner", playerName: "Owner" }, world.id, {
+      files: [],
+      nonRegionPack: { packId: "non-region", hash: "ok-pack", size: 10_000_000, fileCount: 1, files: [] }
+    });
+    expect(plan.nonRegionPackUpload?.fullStorageKey).toContain("packs/full/");
   });
 
   test("non-region packs plan delta uploads and warm download tails", async () => {

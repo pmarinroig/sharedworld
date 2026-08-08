@@ -32,9 +32,13 @@ final class WorldSyncSupport {
     }
 
     static List<LocalArtifact> buildRegionBundleArtifacts(List<PreparedWorldFile> regionFiles) throws IOException {
+        return buildGroupedArtifacts(SyncPathRules.groupTerrainFiles(regionFiles));
+    }
+
+    static List<LocalArtifact> buildGroupedArtifacts(List<SyncPathRules.RegionBundleGroup> groups) throws IOException {
         List<LocalArtifact> bundles = new ArrayList<>();
         try {
-            for (SyncPathRules.RegionBundleGroup group : SyncPathRules.groupTerrainFiles(regionFiles)) {
+            for (SyncPathRules.RegionBundleGroup group : groups) {
                 Path artifactPath = Files.createTempFile("sharedworld-region-bundle-", ".bundle");
                 bundles.add(new LocalArtifact(null, artifactPath));
                 LocalPackDescriptorDto descriptor = SharedWorldPack.buildPack(group.bundleId(), group.files(), artifactPath);

@@ -426,30 +426,19 @@ public final class SharedWorldApiClient {
         return finalizeSnapshot(worldId, -1L, null, baseSnapshotId, files, packs);
     }
 
+    /**
+     * POST with the local state in the body: the pre-0.3.1 GET carried it in
+     * x-sharedworld-* headers, which overflow edge header limits on worlds
+     * with many files. Requires a backend new enough to route the POST —
+     * the backend always deploys before the mod releases.
+     */
     public DownloadPlanDto downloadPlan(String worldId, LocalFileDescriptorDto[] files, LocalPackDescriptorDto nonRegionPack, LocalPackDescriptorDto[] regionBundles) throws IOException, InterruptedException {
         ensureSession();
-        HttpRequest.Builder builder = HttpRequest.newBuilder()
-                .uri(URI.create(this.baseUrl + "/worlds/" + worldId + "/downloads/plan"))
-                .timeout(Duration.ofSeconds(20))
-                .header("accept", "application/json")
-                .header("authorization", "Bearer " + ensureSession().token())
-                .header("x-sharedworld-version", modVersion())
-                .header("x-sharedworld-files", this.gson.toJson(files))
-                .header("x-sharedworld-pack", this.gson.toJson(nonRegionPack))
-                .header("x-sharedworld-region-bundles", this.gson.toJson(regionBundles))
-                .GET();
-
-        HttpResponse<String> response = this.httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() >= 400) {
-            ErrorDto error = tryParseError(response.body(), response.statusCode());
-            throw new SharedWorldApiException(error.error(), error.message(), error.status());
-        }
-
-        try {
-            return this.gson.fromJson(response.body(), DownloadPlanDto.class);
-        } catch (JsonSyntaxException exception) {
-            throw new IOException("Failed to parse SharedWorld response.", exception);
-        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("files", files);
+        body.put("nonRegionPack", nonRegionPack);
+        body.put("regionBundles", regionBundles);
+        return request("POST", "/worlds/" + worldId + "/downloads/plan", body, DownloadPlanDto.class, true);
     }
 
     public void uploadBlob(SignedBlobUrlDto signedUrl, Path bodyFile, String contentType) throws IOException, InterruptedException {
@@ -551,9 +540,17 @@ public final class SharedWorldApiClient {
 
     private SharedWorldApiException blobTransferError(String operation, String errorBody, int statusCode) {
         ErrorDto error = tryParseError(errorBody, statusCode);
-        String message = "http_error".equals(error.error())
-                ? "SharedWorld blob " + operation + " failed (" + statusCode + ")."
-                : error.message();
+        String message;
+        if (!"http_error".equals(error.error())) {
+            message = error.message();
+        } else if (statusCode == 413) {
+            // The storage relay rejects oversized bodies at its edge, before any
+            // SharedWorld code can attach an explanation.
+            message = "SharedWorld blob " + operation + " was rejected: the file is larger than the storage relay accepts. "
+                    + "Update SharedWorld to the latest version, which splits large worlds automatically.";
+        } else {
+            message = "SharedWorld blob " + operation + " failed (" + statusCode + ").";
+        }
         return new SharedWorldApiException(error.error(), message, error.status());
     }
 

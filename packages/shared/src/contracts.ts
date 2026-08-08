@@ -84,6 +84,12 @@ export interface SyncPolicy {
   maxUploadStartsPerSecond: number;
   retryBaseDelayMs: number;
   retryMaxDelayMs: number;
+  /**
+   * Largest single blob body the worker relay accepts. Kept under Cloudflare's
+   * request-body limit; clients preflight against it instead of discovering an
+   * unexplained 413 at the edge. Additive — pre-0.3.1 clients ignore it.
+   */
+  maxUploadBodyBytes: number;
 }
 
 export interface StorageUsageSummary {

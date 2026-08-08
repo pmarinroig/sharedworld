@@ -476,7 +476,8 @@ public final class SharedWorldModels {
             int maxConcurrentUploads,
             int maxUploadStartsPerSecond,
             int retryBaseDelayMs,
-            int retryMaxDelayMs
+            int retryMaxDelayMs,
+            long maxUploadBodyBytes
     ) {
     }
 

@@ -135,6 +135,8 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
     private boolean joinTargetInjected;
     private long drillSentAt;
     private boolean cancelDrillDone;
+    private boolean opDrillRequested;
+    private boolean opDrillAwaitingGrants;
     private boolean sawErrorScreen;
     private int ticksInStep;
 
@@ -353,10 +355,20 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
                 if (minecraft.player == null) {
                     return;
                 }
-                if ("op-drill".equals(this.commands.poll())) {
+                if (!this.opDrillRequested && "op-drill".equals(this.commands.poll())) {
+                    this.opDrillRequested = true;
+                }
+                if (this.opDrillRequested) {
+                    // Member grants reach the host via heartbeat responses, so a
+                    // just-joined guest may not be in the map yet; keep retrying
+                    // under the orchestrator's timeout instead of failing on the
+                    // first empty poll.
                     String guestName = firstNonOwnerMemberName();
                     if (guestName == null) {
-                        this.markers.emit("op-drill-failed", "no non-owner member in hosted grants");
+                        if (!this.opDrillAwaitingGrants) {
+                            this.opDrillAwaitingGrants = true;
+                            this.markers.emit("op-drill-waiting", "no non-owner member in hosted grants yet");
+                        }
                         return;
                     }
                     minecraft.player.connection.sendCommand("op " + guestName);

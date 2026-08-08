@@ -316,6 +316,84 @@ final class WorldSyncCoordinatorDownloadTest {
         }
     }
 
+    @Test
+    void shardedSnapshotWithNonRegionFilesInBundlePacksAppliesLikeAnyBundle() throws Exception {
+        // A sharded snapshot carries its non-region files in
+        // region-bundle:superpack:* packs and no singular pack download at all.
+        // This is the exact shape a pre-sharding client also receives, so this
+        // test doubles as the wire-compat proof for 0.3.0 guests.
+        ManagedWorldStore worldStore = new ManagedWorldStore(this.tempDir.resolve("managed-sharded-dl"));
+        Path workingCopy = worldStore.workingCopy(WORLD_ID);
+        writeFile(workingCopy, "data/stale.txt", "old".getBytes());
+
+        BuiltPack dataShard = buildPackArtifact(
+                "region-bundle:superpack:data",
+                Map.of("data/new.txt", "shard-data".getBytes())
+        );
+        BuiltPack rootShard = buildPackArtifact(
+                "region-bundle:superpack:.",
+                Map.of("icon.png", "shard-icon".getBytes())
+        );
+
+        try (SyncTestHttpServer server = new SyncTestHttpServer()) {
+            server.seedBlob("shard-data-full", Files.readAllBytes(dataShard.packFile()));
+            server.seedBlob("shard-root-full", Files.readAllBytes(rootShard.packFile()));
+            server.setDownloadPlan(new DownloadPlanDto(
+                    WORLD_ID,
+                    "snapshot-sharded",
+                    new DownloadPlanEntryDto[0],
+                    null,
+                    new DownloadPackPlanDto[] {
+                            new DownloadPackPlanDto(
+                                    dataShard.descriptor().packId(),
+                                    dataShard.descriptor().hash(),
+                                    dataShard.descriptor().size(),
+                                    dataShard.descriptor().files(),
+                                    new DownloadPlanStepDto[] {
+                                            new DownloadPlanStepDto(
+                                                    "region-full",
+                                                    "region-bundles/shard-data.bundle",
+                                                    Files.size(dataShard.packFile()),
+                                                    null,
+                                                    null,
+                                                    server.downloadUrl("shard-data-full")
+                                            )
+                                    }
+                            ),
+                            new DownloadPackPlanDto(
+                                    rootShard.descriptor().packId(),
+                                    rootShard.descriptor().hash(),
+                                    rootShard.descriptor().size(),
+                                    rootShard.descriptor().files(),
+                                    new DownloadPlanStepDto[] {
+                                            new DownloadPlanStepDto(
+                                                    "region-full",
+                                                    "region-bundles/shard-root.bundle",
+                                                    Files.size(rootShard.packFile()),
+                                                    null,
+                                                    null,
+                                                    server.downloadUrl("shard-root-full")
+                                            )
+                                    }
+                            )
+                    },
+                    new String[0],
+                    SyncTestHttpServer.syncPolicy()
+            ));
+
+            WorldSyncCoordinator coordinator = new WorldSyncCoordinator(server.apiClient(), worldStore);
+            coordinator.ensureSynchronizedWorkingCopy(WORLD_ID, HOST_UUID);
+
+            assertArrayEquals("shard-data".getBytes(), Files.readAllBytes(workingCopy.resolve("data").resolve("new.txt")));
+            assertArrayEquals("shard-icon".getBytes(), Files.readAllBytes(workingCopy.resolve("icon.png")));
+            assertFalse(Files.exists(workingCopy.resolve("data").resolve("stale.txt")));
+            assertEquals(
+                    dataShard.descriptor().hash(),
+                    LocalWorldHasher.hashFile(worldStore.regionBundleBaselineFile(WORLD_ID, "region-bundle:superpack:data"))
+            );
+        }
+    }
+
     private BuiltPack buildPackArtifact(String packId, Map<String, byte[]> filesByPath) throws Exception {
         Path sourceRoot = Files.createTempDirectory(this.tempDir, "pack-source-");
         List<PreparedWorldFile> files = new ArrayList<>();
