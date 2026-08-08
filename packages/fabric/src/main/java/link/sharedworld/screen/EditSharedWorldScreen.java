@@ -28,12 +28,17 @@ import link.sharedworld.versioned.VersionedScreen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.FormattedCharSequence;
 
+import static link.sharedworld.screen.EditScreenFormats.blankOr;
+import static link.sharedworld.screen.EditScreenFormats.formatBytes;
+import static link.sharedworld.screen.EditScreenFormats.formatQuota;
+import static link.sharedworld.screen.EditScreenFormats.formatRole;
+import static link.sharedworld.screen.EditScreenFormats.formatStorageAccount;
+import static link.sharedworld.screen.EditScreenFormats.formatStorageProvider;
+import static link.sharedworld.screen.EditScreenFormats.formatTimestamp;
+import static link.sharedworld.screen.EditScreenFormats.formatUsedByWorld;
+
 import java.nio.file.Path;
-import java.time.Instant;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.List;
-import java.util.Locale;
 import java.util.Objects;
 import java.util.function.Consumer;
 
@@ -44,7 +49,6 @@ public final class EditSharedWorldScreen extends VersionedScreen {
     private static final String EDIT_ICON_HIGHLIGHTED_SPRITE = "sharedworld:edit_icon_highlighted";
     private static final String DELETE_ICON_HIGHLIGHTED_SPRITE = "sharedworld:delete_icon_highlighted";
     private static final String PING_5_SPRITE = "minecraft:server_list/ping_5";
-    private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     private static final long SUCCESS_STATUS_TTL_MS = 7_000;
 
     private final SharedWorldScreen parent;
@@ -79,16 +83,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
     private Button secondaryButton;
     private Button replaceWorldButton;
     private Button primaryButton;
-    private Button difficultyButton;
-    private Button gameModeButton;
-    private final java.util.EnumMap<link.sharedworld.host.SharedWorldGameRule, Button> gameRuleButtons =
-            new java.util.EnumMap<>(link.sharedworld.host.SharedWorldGameRule.class);
-    private String settingsDifficulty = "normal";
-    private String settingsGameMode = "survival";
-    private final java.util.EnumMap<link.sharedworld.host.SharedWorldGameRule, Boolean> settingsRules =
-            new java.util.EnumMap<>(link.sharedworld.host.SharedWorldGameRule.class);
-    private link.sharedworld.api.SharedWorldModels.WorldSettingsDto loadedSettings;
-    private boolean settingsPrefillFailed;
+    private final EditWorldSettingsForm settingsForm;
     private boolean savingSettings;
 
     private SelectedIcon selectedIcon;
@@ -113,6 +108,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
                 SharedWorldClient.ioExecutor(),
                 runnable -> ScreenGuards.runIfCurrent(this, runnable)
         );
+        this.settingsForm = new EditWorldSettingsForm(this.worldStore, world.id(), this::isOwner, this::updateButtons);
     }
 
     @Override
@@ -149,16 +145,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
                 new SnapshotBrowserList(this.minecraft, 120, 100, 0, 36, this), this::addRenderableWidget);
         this.memberList = link.sharedworld.versioned.LayoutCompat.registerTabList(
                 new MemberBrowserList(this.minecraft, 120, 100, 0, 36, this), this::addRenderableWidget);
-        this.difficultyButton = Button.builder(Component.empty(), ignored -> this.cycleDifficulty()).width(170).build();
-        this.gameModeButton = Button.builder(Component.empty(), ignored -> this.cycleGameMode()).width(170).build();
-        for (link.sharedworld.host.SharedWorldGameRule rule : link.sharedworld.host.SharedWorldGameRule.values()) {
-            this.gameRuleButtons.put(rule, Button.builder(Component.empty(), ignored -> this.toggleGameRule(rule)).width(170).build());
-        }
-        this.settingsRules.putIfAbsent(link.sharedworld.host.SharedWorldGameRule.KEEP_INVENTORY, false);
-        this.settingsRules.putIfAbsent(link.sharedworld.host.SharedWorldGameRule.MOB_GRIEFING, true);
-        this.settingsRules.putIfAbsent(link.sharedworld.host.SharedWorldGameRule.DAYLIGHT_CYCLE, true);
-        this.settingsRules.putIfAbsent(link.sharedworld.host.SharedWorldGameRule.WEATHER_CYCLE, true);
-        this.settingsRules.putIfAbsent(link.sharedworld.host.SharedWorldGameRule.PVP, true);
+        this.settingsForm.createWidgets();
 
         this.tabNavigationBar = link.sharedworld.versioned.TabBarCompat.create(this.tabManager, this.width, this.detailsTab, this.settingsTab, this.backupsTab, this.membersTab, this.storageTab);
         this.addRenderableWidget(this.tabNavigationBar);
@@ -469,8 +456,8 @@ public final class EditSharedWorldScreen extends VersionedScreen {
             this.primaryButton.setMessage(Component.translatable(this.savingSettings
                     ? "screen.sharedworld.saving"
                     : "screen.sharedworld.save_settings"));
-            this.primaryButton.active = !this.loading && !this.actionInFlight && this.isOwner() && this.settingsDirty() && !this.savingSettings;
-            this.updateSettingsButtons();
+            this.primaryButton.active = !this.loading && !this.actionInFlight && this.isOwner() && this.settingsForm.dirty() && !this.savingSettings;
+            this.settingsForm.updateWidgets(this.isOwner() && !this.loading && !this.actionInFlight && !this.savingSettings);
         } else {
             this.primaryButton.visible = false;
             this.primaryButton.active = false;
@@ -614,166 +601,18 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         this.populateSettingsFields();
     }
 
-    /**
-     * Prefill order: saved backend settings, then the local working copy's
-     * level.dat (difficulty/game mode only — their NBT shape is stable across
-     * versions, unlike gamerule keys), then vanilla defaults.
-     */
     private void populateSettingsFields() {
-        link.sharedworld.api.SharedWorldModels.WorldSettingsDto saved = this.details == null ? null : this.details.settings();
-        if (saved == null || saved.difficulty() == null || saved.defaultGameMode() == null) {
-            this.prefillSettingsFromLevelDat();
-        }
-        if (saved != null) {
-            if (saved.difficulty() != null) {
-                this.settingsDifficulty = saved.difficulty();
-            }
-            if (saved.defaultGameMode() != null) {
-                this.settingsGameMode = saved.defaultGameMode();
-            }
-            if (saved.gamerules() != null) {
-                for (var entry : saved.gamerules().entrySet()) {
-                    link.sharedworld.host.SharedWorldGameRule rule = link.sharedworld.host.SharedWorldGameRule.byId(entry.getKey());
-                    if (rule != null && entry.getValue() != null) {
-                        this.settingsRules.put(rule, entry.getValue());
-                    }
-                }
-            }
-        }
-        this.loadedSettings = this.currentSettingsDto();
-        if (this.settingsPrefillFailed) {
+        this.settingsForm.populate(this.details == null ? null : this.details.settings());
+        if (this.settingsForm.prefillFailed()) {
             this.setStatusError(SharedWorldText.string("screen.sharedworld.edit_settings_unreadable"));
         }
     }
 
-    private void prefillSettingsFromLevelDat() {
-        boolean levelDatExists = false;
-        try {
-            Path levelDat = this.worldStore.workingCopy(this.world.id()).resolve("level.dat");
-            if (!java.nio.file.Files.isRegularFile(levelDat)) {
-                return;
-            }
-            levelDatExists = true;
-            var data = link.sharedworld.versioned.NbtCompat.getCompoundOrEmpty(
-                    link.sharedworld.versioned.NbtCompat.readCompressed(levelDat), "Data");
-            byte difficulty = link.sharedworld.versioned.NbtCompat.getByteOr(data, "Difficulty", (byte) 2);
-            this.settingsDifficulty = switch (difficulty) {
-                case 0 -> "peaceful";
-                case 1 -> "easy";
-                case 3 -> "hard";
-                default -> "normal";
-            };
-            int gameType = link.sharedworld.versioned.NbtCompat.getIntOr(data, "GameType", 0);
-            this.settingsGameMode = switch (gameType) {
-                case 1 -> "creative";
-                case 2 -> "adventure";
-                default -> "survival";
-            };
-        } catch (Exception exception) {
-            if (levelDatExists) {
-                // An existing level.dat that cannot be read is NOT "defaults":
-                // flag it so the settings tab warns and refuses to save what
-                // would silently replace the world's real values.
-                this.settingsPrefillFailed = true;
-                SharedWorldClient.LOGGER.warn("SharedWorld could not read level.dat for {}", this.world.id(), exception);
-            }
-            // Otherwise: no local copy yet (never synced here), defaults stand.
-        }
-    }
-
-    private link.sharedworld.api.SharedWorldModels.WorldSettingsDto currentSettingsDto() {
-        java.util.Map<String, Boolean> gamerules = new java.util.LinkedHashMap<>();
-        for (var entry : this.settingsRules.entrySet()) {
-            gamerules.put(entry.getKey().id(), entry.getValue());
-        }
-        return new link.sharedworld.api.SharedWorldModels.WorldSettingsDto(this.settingsDifficulty, this.settingsGameMode, gamerules);
-    }
-
-    private boolean settingsDirty() {
-        return this.loadedSettings != null && !this.currentSettingsDto().equals(this.loadedSettings);
-    }
-
-    private void cycleDifficulty() {
-        if (!this.isOwner()) {
-            return;
-        }
-        List<String> order = List.of("peaceful", "easy", "normal", "hard");
-        int index = order.indexOf(this.settingsDifficulty);
-        this.settingsDifficulty = order.get((index + 1) % order.size());
-        this.updateButtons();
-    }
-
-    private void cycleGameMode() {
-        if (!this.isOwner()) {
-            return;
-        }
-        List<String> order = List.of("survival", "creative", "adventure");
-        int index = order.indexOf(this.settingsGameMode);
-        this.settingsGameMode = order.get((index + 1) % order.size());
-        this.updateButtons();
-    }
-
-    private void toggleGameRule(link.sharedworld.host.SharedWorldGameRule rule) {
-        if (!this.isOwner()) {
-            return;
-        }
-        this.settingsRules.put(rule, !Boolean.TRUE.equals(this.settingsRules.get(rule)));
-        this.updateButtons();
-    }
-
-    private void updateSettingsButtons() {
-        boolean editable = this.isOwner() && !this.loading && !this.actionInFlight && !this.savingSettings;
-        this.difficultyButton.setMessage(Component.translatable(
-                "screen.sharedworld.settings_difficulty",
-                Component.translatable(difficultyValueKey(this.settingsDifficulty))));
-        this.difficultyButton.active = editable;
-        this.gameModeButton.setMessage(Component.translatable(
-                "screen.sharedworld.settings_game_mode",
-                Component.translatable(gameModeValueKey(this.settingsGameMode))));
-        this.gameModeButton.active = editable;
-        for (var entry : this.gameRuleButtons.entrySet()) {
-            boolean value = Boolean.TRUE.equals(this.settingsRules.get(entry.getKey()));
-            entry.getValue().setMessage(Component.translatable(
-                    gameRuleLabelKey(entry.getKey()),
-                    Component.translatable(value ? "screen.sharedworld.settings_value_on" : "screen.sharedworld.settings_value_off")));
-            entry.getValue().active = editable;
-        }
-    }
-
-    // Full-literal keys (never built from fragments): the localization parity
-    // test resolves every referenced key against the lang files.
-    private static String difficultyValueKey(String difficulty) {
-        return switch (difficulty) {
-            case "peaceful" -> "screen.sharedworld.settings_value_peaceful";
-            case "easy" -> "screen.sharedworld.settings_value_easy";
-            case "hard" -> "screen.sharedworld.settings_value_hard";
-            default -> "screen.sharedworld.settings_value_normal";
-        };
-    }
-
-    private static String gameModeValueKey(String gameMode) {
-        return switch (gameMode) {
-            case "creative" -> "screen.sharedworld.settings_value_creative";
-            case "adventure" -> "screen.sharedworld.settings_value_adventure";
-            default -> "screen.sharedworld.settings_value_survival";
-        };
-    }
-
-    private static String gameRuleLabelKey(link.sharedworld.host.SharedWorldGameRule rule) {
-        return switch (rule) {
-            case KEEP_INVENTORY -> "screen.sharedworld.settings_rule_keepInventory";
-            case MOB_GRIEFING -> "screen.sharedworld.settings_rule_mobGriefing";
-            case DAYLIGHT_CYCLE -> "screen.sharedworld.settings_rule_daylightCycle";
-            case WEATHER_CYCLE -> "screen.sharedworld.settings_rule_weatherCycle";
-            case PVP -> "screen.sharedworld.settings_rule_pvp";
-        };
-    }
-
     private void saveSettings() {
-        if (!this.isOwner() || this.savingSettings || !this.settingsDirty()) {
+        if (!this.isOwner() || this.savingSettings || !this.settingsForm.dirty()) {
             return;
         }
-        if (this.settingsPrefillFailed) {
+        if (this.settingsForm.prefillFailed()) {
             this.setStatusError(SharedWorldText.string("screen.sharedworld.edit_settings_unreadable"));
             return;
         }
@@ -781,12 +620,12 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         this.actionInFlight = true;
         this.setStatusInfoKey("screen.sharedworld.edit_status_saving_settings");
         this.updateButtons();
-        link.sharedworld.api.SharedWorldModels.WorldSettingsDto dto = this.currentSettingsDto();
+        link.sharedworld.api.SharedWorldModels.WorldSettingsDto dto = this.settingsForm.currentDto();
         this.dataController.saveSettings(this.world.id(), dto, updated -> {
             this.savingSettings = false;
             this.actionInFlight = false;
             this.details = updated;
-            this.loadedSettings = dto;
+            this.settingsForm.markSaved(dto);
             this.setStatusSuccessKey("screen.sharedworld.edit_status_settings_saved");
             // Owner-hosting shortcut: reach the live server immediately instead
             // of waiting for the next heartbeat.
@@ -1259,73 +1098,6 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         return !currentName.isEmpty() && currentName.length() < 3;
     }
 
-    private static String formatRole(String role) {
-        return SharedWorldText.string("owner".equalsIgnoreCase(role)
-                ? "screen.sharedworld.role_owner"
-                : "screen.sharedworld.role_member");
-    }
-
-    private static String blankOr(String value, String fallback) {
-        return value == null || value.isBlank() ? fallback : value;
-    }
-
-    private static String formatTimestamp(String value) {
-        if (value == null || value.isBlank()) {
-            return "";
-        }
-        try {
-            return DATE_FORMAT.format(Instant.parse(value).atZone(ZoneId.systemDefault()));
-        } catch (Exception ignored) {
-            return value;
-        }
-    }
-
-    private static String formatBytes(long value) {
-        if (value >= 1024L * 1024L * 1024L) {
-            return SharedWorldText.string("screen.sharedworld.size_gb", String.format(Locale.ROOT, "%.1f", value / (1024.0 * 1024.0 * 1024.0)));
-        }
-        if (value >= 1024L * 1024L) {
-            return SharedWorldText.string("screen.sharedworld.size_mb", String.format(Locale.ROOT, "%.1f", value / (1024.0 * 1024.0)));
-        }
-        if (value >= 1024L) {
-            return SharedWorldText.string("screen.sharedworld.size_kb", String.format(Locale.ROOT, "%.1f", value / 1024.0));
-        }
-        return SharedWorldText.string("screen.sharedworld.size_b", value);
-    }
-
-    private static String formatQuota(StorageUsageSummaryDto usage) {
-        if (usage == null || usage.quotaTotalBytes() == null || usage.quotaTotalBytes() <= 0) {
-            return SharedWorldText.string("screen.sharedworld.unknown");
-        }
-        return formatBytes(usage.quotaUsedBytes() == null ? 0L : usage.quotaUsedBytes()) + " / " + formatBytes(usage.quotaTotalBytes());
-    }
-
-    private static String formatUsedByWorld(StorageUsageSummaryDto usage) {
-        if (usage == null) {
-            return SharedWorldText.string("screen.sharedworld.unknown");
-        }
-        return formatBytes(usage.usedBytes());
-    }
-
-    private static String formatStorageProvider(WorldDetailsDto details) {
-        if (details == null || details.storageProvider() == null || details.storageProvider().isBlank()) {
-            return SharedWorldText.string("screen.sharedworld.unknown");
-        }
-        return "google-drive".equalsIgnoreCase(details.storageProvider())
-                ? SharedWorldText.string("screen.sharedworld.storage_provider_google_drive")
-                : details.storageProvider();
-    }
-
-    private static String formatStorageAccount(WorldDetailsDto details, StorageUsageSummaryDto usage) {
-        String account = details != null && details.storageLinked()
-                ? blankOr(details.storageAccountEmail(), SharedWorldText.string("screen.sharedworld.storage_linked"))
-                : null;
-        if ((account == null || account.isBlank()) && usage != null && usage.accountEmail() != null && !usage.accountEmail().isBlank()) {
-            account = usage.accountEmail();
-        }
-        return blankOr(account, SharedWorldText.string("screen.sharedworld.storage_not_linked"));
-    }
-
     private final class DetailsTab extends link.sharedworld.versioned.VersionedTab {
         @Override
         public Component getTabTitle() {
@@ -1371,31 +1143,12 @@ public final class EditSharedWorldScreen extends VersionedScreen {
 
         @Override
         public void visitChildren(Consumer<AbstractWidget> consumer) {
-            consumer.accept(EditSharedWorldScreen.this.difficultyButton);
-            consumer.accept(EditSharedWorldScreen.this.gameModeButton);
-            for (Button button : EditSharedWorldScreen.this.gameRuleButtons.values()) {
-                consumer.accept(button);
-            }
+            EditSharedWorldScreen.this.settingsForm.visitWidgets(consumer);
         }
 
         @Override
         public void doLayout(ScreenRectangle area) {
-            int columnWidth = Math.min(170, area.width() / 2 - 24);
-            int leftColumn = area.left() + (area.width() / 2 - columnWidth) / 2;
-            int rightColumn = area.left() + area.width() / 2 + (area.width() / 2 - columnWidth) / 2;
-            int top = area.top() + 34;
-
-            EditSharedWorldScreen.this.difficultyButton.setWidth(columnWidth);
-            EditSharedWorldScreen.this.difficultyButton.setPosition(leftColumn, top);
-            EditSharedWorldScreen.this.gameModeButton.setWidth(columnWidth);
-            EditSharedWorldScreen.this.gameModeButton.setPosition(leftColumn, top + 24);
-
-            int y = top;
-            for (Button button : EditSharedWorldScreen.this.gameRuleButtons.values()) {
-                button.setWidth(columnWidth);
-                button.setPosition(rightColumn, y);
-                y += 24;
-            }
+            EditSharedWorldScreen.this.settingsForm.layout(area);
         }
     }
 
