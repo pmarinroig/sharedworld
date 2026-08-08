@@ -111,7 +111,8 @@ public final class WorldSyncCoordinator {
     public SnapshotManifestDto uploadSnapshot(String worldId, Path worldDirectory, String hostPlayerUuid, long runtimeEpoch, String hostToken, WorldSyncProgressListener progressListener) throws IOException, InterruptedException {
         WorldSyncSupport.report(progressListener, STAGE_PREPARING_SNAPSHOT, 0.02D, null, null, "Scanning world files");
         long scanStartedAt = System.nanoTime();
-        List<PreparedWorldFile> canonicalFiles = WorldCanonicalizer.scanCanonical(worldDirectory, hostPlayerUuid);
+        WorldScanCache scanCache = WorldScanCache.load(this.worldStore.scanCacheFile(worldId));
+        List<PreparedWorldFile> canonicalFiles = WorldCanonicalizer.scanCanonical(worldDirectory, hostPlayerUuid, scanCache);
         List<PreparedWorldFile> regionFiles = canonicalFiles.stream().filter(file -> SyncPathRules.isTerrainRegionFile(file.relativePath())).toList();
         List<PreparedWorldFile> nonRegionFiles = canonicalFiles.stream().filter(file -> SyncPathRules.belongsInSuperpack(file.relativePath())).toList();
         // Above the shard cap the non-region files travel as capped shard packs
@@ -120,21 +121,27 @@ public final class WorldSyncCoordinator {
         // "non-region" superpack, wire-identical to pre-0.3.1 clients.
         List<SyncPathRules.RegionBundleGroup> superpackShards = SyncPathRules.groupSuperpackFiles(nonRegionFiles);
         boolean sharded = !superpackShards.isEmpty();
-        Path packFile = Files.createTempFile("sharedworld-non-region-", ".pack");
-        List<WorldSyncSupport.LocalArtifact> regionBundles = List.of();
+        // Artifacts are lazy: the plan request needs only descriptors (answered
+        // from the scan cache when nothing changed), and bodies are built after
+        // the plan for exactly the packs it wants uploaded. Built bodies are
+        // deleted in the single finally, so a failure at any stage cannot leak
+        // pack/bundle/delta temps. Autosave retries every five minutes, so
+        // leaks here compound quickly.
+        List<WorldSyncSupport.LazyArtifact> regionBundles = new ArrayList<>(WorldSyncSupport.lazyRegionBundleArtifacts(regionFiles, scanCache));
+        if (sharded) {
+            regionBundles.addAll(WorldSyncSupport.lazyGroupedArtifacts(superpackShards, scanCache));
+        }
+        WorldSyncSupport.LazyArtifact nonRegionArtifact = sharded
+                ? null
+                : new WorldSyncSupport.LazyArtifact(SharedWorldPack.PACK_ID, nonRegionFiles, scanCache);
         List<PreparedUpload> preparedUploads = List.of();
-        // Every temp artifact created below is deleted in the single finally, so
-        // a failure at any stage (plan request, preparation, upload, finalize)
-        // cannot leak pack/bundle/delta bodies. Autosave retries every five
-        // minutes, so leaks here compound quickly.
         try {
-            LocalPackDescriptorDto localPack = sharded ? null : SharedWorldPack.buildPack(nonRegionFiles, packFile);
-            regionBundles = WorldSyncSupport.buildRegionBundleArtifacts(regionFiles);
-            if (sharded) {
-                List<WorldSyncSupport.LocalArtifact> combined = new ArrayList<>(regionBundles);
-                combined.addAll(WorldSyncSupport.buildGroupedArtifacts(superpackShards));
-                regionBundles = combined;
+            LocalPackDescriptorDto localPack = nonRegionArtifact == null ? null : nonRegionArtifact.descriptor();
+            LocalPackDescriptorDto[] bundleDescriptors = new LocalPackDescriptorDto[regionBundles.size()];
+            for (int i = 0; i < regionBundles.size(); i++) {
+                bundleDescriptors[i] = regionBundles.get(i).descriptor();
             }
+            pruneScanCache(scanCache, canonicalFiles, regionBundles, nonRegionArtifact);
             WorldSyncSupport.logTiming(LOGGER, "scan canonical files", worldId, scanStartedAt);
 
             WorldSyncSupport.report(progressListener, STAGE_REQUESTING_UPLOAD_PLAN, 0.14D, null, null, "Requesting upload plan");
@@ -145,35 +152,36 @@ public final class WorldSyncCoordinator {
                     hostToken,
                     canonicalFiles.stream().map(PreparedWorldFile::toDescriptor).toArray(LocalFileDescriptorDto[]::new),
                     localPack,
-                    regionBundles.stream().map(WorldSyncSupport.LocalArtifact::descriptor).toArray(LocalPackDescriptorDto[]::new)
+                    bundleDescriptors
             );
             WorldSyncSupport.logTiming(LOGGER, "request upload plan", worldId, planStartedAt);
 
             SyncPolicy resolvedPolicy = SyncPolicy.from(plan.syncPolicy());
             this.activeSyncPolicy = resolvedPolicy;
             failOnOversizedWorldFile(canonicalFiles, resolvedPolicy.maxUploadBodyBytes());
-            Map<String, WorldSyncSupport.LocalArtifact> regionBundlesById = regionBundles.stream().collect(Collectors.toMap(artifact -> artifact.descriptor().packId(), artifact -> artifact));
+            Map<String, WorldSyncSupport.LazyArtifact> regionBundlesById = new HashMap<>();
+            Map<String, String> bundleHashesById = new HashMap<>();
+            for (WorldSyncSupport.LazyArtifact bundle : regionBundles) {
+                regionBundlesById.put(bundle.packId(), bundle);
+                bundleHashesById.put(bundle.packId(), bundle.descriptor().hash());
+            }
             if (canSkipUnchangedSnapshot(plan, regionBundlesById.keySet())) {
                 // Nothing changed since the latest snapshot: skip the finalize
                 // entirely instead of publishing an identical backup (each one
                 // costs backend rows and clutters the backup list). Baselines
                 // still converge on the latest snapshot so the next delta plan
                 // starts from the right ancestor even if a marker was stale.
-                Map<String, Path> unchangedBundleBaselines = new HashMap<>();
-                for (WorldSyncSupport.LocalArtifact bundle : regionBundles) {
-                    unchangedBundleBaselines.put(bundle.descriptor().packId(), bundle.artifactPath());
-                }
-                this.worldStore.replaceRegionBaselines(worldId, unchangedBundleBaselines, plan.snapshotBaseId());
+                this.worldStore.ensureRegionBaselines(worldId, bundleHashesById, packId -> regionBundlesById.get(packId).body(), plan.snapshotBaseId());
                 if (sharded) {
                     this.worldStore.clearPackBaseline(worldId);
                 } else {
-                    this.worldStore.refreshPackBaseline(worldId, packFile, plan.snapshotBaseId());
+                    this.worldStore.ensurePackBaseline(worldId, localPack.hash(), packId -> nonRegionArtifact.body(), plan.snapshotBaseId());
                 }
                 WorldSyncSupport.report(progressListener, STAGE_FINALIZING_SNAPSHOT, 1.0D, null, null, "No changes; snapshot up to date");
                 LOGGER.info("SharedWorld snapshot skipped for {}: no changes since {}", worldId, plan.snapshotBaseId());
                 return null;
             }
-            preparedUploads = prepareUploads(worldId, plan, packFile, localPack, regionBundlesById, resolvedPolicy, progressListener);
+            preparedUploads = prepareUploads(worldId, plan, nonRegionArtifact, regionBundlesById, resolvedPolicy, progressListener);
             Map<String, PreparedUpload> preparedByPath = preparedUploads.stream()
                     .collect(Collectors.toMap(PreparedUpload::relativePath, prepared -> prepared));
 
@@ -209,30 +217,56 @@ public final class WorldSyncCoordinator {
                     manifestFiles.toArray(ManifestFileDto[]::new),
                     packs.toArray(SnapshotPackDto[]::new)
             );
-            Map<String, Path> bundleBaselineFiles = new HashMap<>();
-            for (WorldSyncSupport.LocalArtifact bundle : regionBundles) {
-                bundleBaselineFiles.put(bundle.descriptor().packId(), bundle.artifactPath());
-            }
-            this.worldStore.replaceRegionBaselines(worldId, bundleBaselineFiles, manifest.snapshotId());
+            this.worldStore.ensureRegionBaselines(worldId, bundleHashesById, packId -> regionBundlesById.get(packId).body(), manifest.snapshotId());
             if (sharded) {
                 this.worldStore.clearPackBaseline(worldId);
             } else {
-                this.worldStore.refreshPackBaseline(worldId, packFile, manifest.snapshotId());
+                this.worldStore.ensurePackBaseline(worldId, localPack.hash(), packId -> nonRegionArtifact.body(), manifest.snapshotId());
             }
             WorldSyncSupport.report(progressListener, STAGE_FINALIZING_SNAPSHOT, 1.0D, null, null, "Snapshot finalized");
             WorldSyncSupport.logTiming(LOGGER, "finalize snapshot", worldId, finalizeStartedAt);
             return manifest;
         } finally {
+            // Saved even when the sync failed: the file and pack hashes gathered
+            // by the scan stay valid regardless of what the backend said.
+            scanCache.save();
             for (PreparedUpload preparedUpload : preparedUploads) {
                 if (preparedUpload.bodyPath() != null) {
                     Files.deleteIfExists(preparedUpload.bodyPath());
                 }
             }
-            Files.deleteIfExists(packFile);
-            for (WorldSyncSupport.LocalArtifact bundle : regionBundles) {
-                Files.deleteIfExists(bundle.artifactPath());
+            if (nonRegionArtifact != null) {
+                nonRegionArtifact.deleteBodyIfBuilt();
+            }
+            for (WorldSyncSupport.LazyArtifact bundle : regionBundles) {
+                bundle.deleteBodyIfBuilt();
             }
         }
+    }
+
+    /**
+     * Entries for files and packs that vanished from the world would otherwise
+     * accumulate in the cache forever (worlds rename region tiles as they
+     * grow).
+     */
+    private static void pruneScanCache(
+            WorldScanCache scanCache,
+            List<PreparedWorldFile> canonicalFiles,
+            List<WorldSyncSupport.LazyArtifact> regionBundles,
+            WorldSyncSupport.LazyArtifact nonRegionArtifact
+    ) {
+        Set<String> paths = new HashSet<>(canonicalFiles.size());
+        for (PreparedWorldFile file : canonicalFiles) {
+            paths.add(file.relativePath());
+        }
+        Set<String> packIds = new HashSet<>(regionBundles.size() + 1);
+        for (WorldSyncSupport.LazyArtifact bundle : regionBundles) {
+            packIds.add(bundle.packId());
+        }
+        if (nonRegionArtifact != null) {
+            packIds.add(nonRegionArtifact.packId());
+        }
+        scanCache.retainOnly(paths, packIds);
     }
 
     /**
@@ -271,8 +305,9 @@ public final class WorldSyncCoordinator {
 
         WorldSyncSupport.report(progressListener, STAGE_CHECKING_LOCAL_CACHE, 0.08D, null, null, "Scanning local cache");
         long scanStartedAt = System.nanoTime();
+        WorldScanCache scanCache = WorldScanCache.load(this.worldStore.scanCacheFile(worldId));
         List<PreparedWorldFile> localCanonicalFiles = Files.exists(worldDirectory)
-                ? WorldCanonicalizer.scanCanonical(worldDirectory, hostPlayerUuid)
+                ? WorldCanonicalizer.scanCanonical(worldDirectory, hostPlayerUuid, scanCache)
                 : List.of();
         List<LocalFileDescriptorDto> localFiles = localCanonicalFiles.stream()
                 .map(PreparedWorldFile::toDescriptor)
@@ -284,19 +319,26 @@ public final class WorldSyncCoordinator {
         // against exactly what we hold.
         List<SyncPathRules.RegionBundleGroup> localSuperpackShards = SyncPathRules.groupSuperpackFiles(localNonRegionFiles);
         boolean shardedLocal = !localSuperpackShards.isEmpty();
-        Path localPackFile = Files.createTempFile("sharedworld-local-pack-", ".pack");
-        List<WorldSyncSupport.LocalArtifact> localRegionBundles = List.of();
+        // Artifacts are lazy: descriptors answer the plan request, and a body
+        // is only built if the plan actually bases a delta on the state this
+        // client just reported (rare — a stale or missing cached baseline).
+        List<WorldSyncSupport.LazyArtifact> localRegionBundles = new ArrayList<>(WorldSyncSupport.lazyRegionBundleArtifacts(localRegionFiles, scanCache));
+        if (shardedLocal) {
+            localRegionBundles.addAll(WorldSyncSupport.lazyGroupedArtifacts(localSuperpackShards, scanCache));
+        }
+        WorldSyncSupport.LazyArtifact localPackArtifact = shardedLocal
+                ? null
+                : new WorldSyncSupport.LazyArtifact(SharedWorldPack.PACK_ID, localNonRegionFiles, scanCache);
         // The guest cache warmer retries this flow every 30 seconds while the
         // backend is unreachable, so the plan request failure path must clean
         // its temps just like the apply path does.
         try {
-            LocalPackDescriptorDto localPack = shardedLocal ? null : SharedWorldPack.buildPack(localNonRegionFiles, localPackFile);
-            localRegionBundles = WorldSyncSupport.buildRegionBundleArtifacts(localRegionFiles);
-            if (shardedLocal) {
-                List<WorldSyncSupport.LocalArtifact> combined = new ArrayList<>(localRegionBundles);
-                combined.addAll(WorldSyncSupport.buildGroupedArtifacts(localSuperpackShards));
-                localRegionBundles = combined;
+            LocalPackDescriptorDto localPack = localPackArtifact == null ? null : localPackArtifact.descriptor();
+            LocalPackDescriptorDto[] bundleDescriptors = new LocalPackDescriptorDto[localRegionBundles.size()];
+            for (int i = 0; i < localRegionBundles.size(); i++) {
+                bundleDescriptors[i] = localRegionBundles.get(i).descriptor();
             }
+            pruneScanCache(scanCache, localCanonicalFiles, localRegionBundles, localPackArtifact);
             WorldSyncSupport.logTiming(LOGGER, "scan local cache", worldId, scanStartedAt);
 
             WorldSyncSupport.report(progressListener, STAGE_REQUESTING_DOWNLOAD_PLAN, 0.18D, null, null, "Requesting download plan");
@@ -305,22 +347,25 @@ public final class WorldSyncCoordinator {
                     worldId,
                     localFiles.toArray(LocalFileDescriptorDto[]::new),
                     localPack,
-                    localRegionBundles.stream().map(WorldSyncSupport.LocalArtifact::descriptor).toArray(LocalPackDescriptorDto[]::new)
+                    bundleDescriptors
             );
             WorldSyncSupport.logTiming(LOGGER, "request download plan", worldId, planStartedAt);
 
             // The plan's delta steps may be based on exactly what we just reported; keep
             // the scanned artifacts alive so those deltas stay satisfiable even when the
             // cached baselines are stale or missing (e.g. after a cancelled sync).
-            java.util.Map<String, Path> reportedLocalBundles = new HashMap<>();
-            for (WorldSyncSupport.LocalArtifact bundle : localRegionBundles) {
-                reportedLocalBundles.put(bundle.descriptor().packId(), bundle.artifactPath());
+            Map<String, WorldSyncSupport.LazyArtifact> reportedLocalBundles = new HashMap<>();
+            for (WorldSyncSupport.LazyArtifact bundle : localRegionBundles) {
+                reportedLocalBundles.put(bundle.packId(), bundle);
             }
-            applyDownloadPlan(worldId, worldDirectory, plan, localPackFile, reportedLocalBundles, progressListener);
+            applyDownloadPlan(worldId, worldDirectory, plan, localPackArtifact, reportedLocalBundles, scanCache, progressListener);
         } finally {
-            Files.deleteIfExists(localPackFile);
-            for (WorldSyncSupport.LocalArtifact bundle : localRegionBundles) {
-                Files.deleteIfExists(bundle.artifactPath());
+            scanCache.save();
+            if (localPackArtifact != null) {
+                localPackArtifact.deleteBodyIfBuilt();
+            }
+            for (WorldSyncSupport.LazyArtifact bundle : localRegionBundles) {
+                bundle.deleteBodyIfBuilt();
             }
         }
 
@@ -335,15 +380,14 @@ public final class WorldSyncCoordinator {
     private List<PreparedUpload> prepareUploads(
             String worldId,
             UploadPlanDto plan,
-            Path packFile,
-            LocalPackDescriptorDto localPack,
-            Map<String, WorldSyncSupport.LocalArtifact> regionBundlesById,
+            WorldSyncSupport.LazyArtifact nonRegionArtifact,
+            Map<String, WorldSyncSupport.LazyArtifact> regionBundlesById,
             SyncPolicy policy,
             WorldSyncProgressListener progressListener
     ) throws IOException, InterruptedException {
-        // localPack is null when the non-region files went up as shard packs; a
-        // backend echoing a pack plan anyway must not NPE the sync path.
-        boolean preparePack = localPack != null && plan.nonRegionPackUpload() != null && !plan.nonRegionPackUpload().alreadyPresent();
+        // nonRegionArtifact is null when the non-region files went up as shard
+        // packs; a backend echoing a pack plan anyway must not NPE the sync path.
+        boolean preparePack = nonRegionArtifact != null && plan.nonRegionPackUpload() != null && !plan.nonRegionPackUpload().alreadyPresent();
         List<UploadPackPlanDto> bundlesToPrepare = plan.regionBundleUploads() == null
                 ? List.of()
                 : Arrays.stream(plan.regionBundleUploads()).filter(upload -> !upload.alreadyPresent()).toList();
@@ -354,7 +398,7 @@ public final class WorldSyncCoordinator {
 
         long startedAt = System.nanoTime();
         long totalExpectedBytes = bundlesToPrepare.stream().mapToLong(upload -> upload.pack().size()).sum()
-                + (preparePack ? localPack.size() : 0L);
+                + (preparePack ? nonRegionArtifact.descriptor().size() : 0L);
         AtomicLong preparedBytes = new AtomicLong(0L);
         ExecutorService executor = Executors.newFixedThreadPool(policy.maxConcurrentUploadPreparations());
         List<Future<PreparedUpload>> futures = new ArrayList<>(bundlesToPrepare.size() + (preparePack ? 1 : 0));
@@ -362,13 +406,13 @@ public final class WorldSyncCoordinator {
         try {
             for (UploadPackPlanDto upload : bundlesToPrepare) {
                 futures.add(executor.submit(() -> {
-                    WorldSyncSupport.LocalArtifact bundle = regionBundlesById.get(upload.pack().packId());
+                    WorldSyncSupport.LazyArtifact bundle = regionBundlesById.get(upload.pack().packId());
                     if (bundle == null) {
                         throw new IOException("SharedWorld upload plan referenced unknown region bundle " + upload.pack().packId() + ".");
                     }
                     PreparedUpload preparedUpload = prepareGroupedArtifactUpload(
                             worldId,
-                            bundle.artifactPath(),
+                            bundle.body(),
                             upload,
                             bundle.descriptor(),
                             this.worldStore.regionBundleBaselineFile(worldId, upload.pack().packId()),
@@ -394,9 +438,9 @@ public final class WorldSyncCoordinator {
                 futures.add(executor.submit(() -> {
                     PreparedUpload preparedUpload = prepareGroupedArtifactUpload(
                             worldId,
-                            packFile,
+                            nonRegionArtifact.body(),
                             plan.nonRegionPackUpload(),
-                            localPack,
+                            nonRegionArtifact.descriptor(),
                             this.worldStore.packBaselineFile(worldId),
                             this.worldStore.packBaselineSnapshotId(worldId),
                             "pack-full",
@@ -583,8 +627,9 @@ public final class WorldSyncCoordinator {
             String worldId,
             Path worldDirectory,
             DownloadPlanDto plan,
-            Path reportedLocalPack,
-            java.util.Map<String, Path> reportedLocalBundles,
+            WorldSyncSupport.LazyArtifact reportedLocalPack,
+            Map<String, WorldSyncSupport.LazyArtifact> reportedLocalBundles,
+            WorldScanCache scanCache,
             WorldSyncProgressListener progressListener
     ) throws IOException, InterruptedException {
         SyncPolicy policy = SyncPolicy.from(plan.syncPolicy());
@@ -649,13 +694,13 @@ public final class WorldSyncCoordinator {
                 throw new IOException("SharedWorld reconstructed pack hash mismatch.");
             }
             extractedPackRoot = Files.createTempDirectory(this.worldStore.worldContainer(worldId), "pack-extract-");
-            SharedWorldPack.extract(downloadedPack, extractedPackRoot);
+            Map<String, String> extractedPackHashes = SharedWorldPack.extract(downloadedPack, extractedPackRoot);
             for (var file : plan.nonRegionPackDownload().files()) {
                 Path tempFile = extractedPackRoot.resolve(file.path().replace('/', java.io.File.separatorChar));
                 if (!Files.exists(tempFile)) {
                     throw new IOException("SharedWorld pack was missing extracted file " + file.path() + ".");
                 }
-                if (!LocalWorldHasher.hashFile(tempFile).equals(file.hash())) {
+                if (!file.hash().equals(extractedPackHashes.get(file.path()))) {
                     throw new IOException("SharedWorld extracted pack file hash mismatch for " + file.path() + ".");
                 }
                 downloadedFiles.add(new DownloadedFile(file.path(), worldDirectory.resolve(file.path().replace('/', java.io.File.separatorChar)), tempFile));
@@ -685,14 +730,14 @@ public final class WorldSyncCoordinator {
                 }
                 Path extractRoot = Files.createTempDirectory(this.worldStore.worldContainer(worldId), "region-bundle-extract-");
                 extractedRegionBundleRoots.add(extractRoot);
-                SharedWorldPack.extract(downloadedBundle, extractRoot);
+                Map<String, String> extractedBundleHashes = SharedWorldPack.extract(downloadedBundle, extractRoot);
                 downloadedRegionBundleArtifacts.put(bundle.packId(), downloadedBundle);
                 for (var file : bundle.files()) {
                     Path tempFile = extractRoot.resolve(file.path().replace('/', java.io.File.separatorChar));
                     if (!Files.exists(tempFile)) {
                         throw new IOException("SharedWorld region bundle was missing extracted file " + file.path() + ".");
                     }
-                    if (!LocalWorldHasher.hashFile(tempFile).equals(file.hash())) {
+                    if (!file.hash().equals(extractedBundleHashes.get(file.path()))) {
                         throw new IOException("SharedWorld extracted region bundle file hash mismatch for " + file.path() + ".");
                     }
                     downloadedFiles.add(new DownloadedFile(file.path(), worldDirectory.resolve(file.path().replace('/', java.io.File.separatorChar)), tempFile));
@@ -779,10 +824,17 @@ public final class WorldSyncCoordinator {
         }
 
         pruneEmptyDirectories(worldDirectory);
+        seedScanCacheAfterApply(scanCache, plan, downloadedFiles);
         if (plan.snapshotId() != null) {
-            this.worldStore.updateRegionBaselines(worldId, downloadedRegionBundleArtifacts, plan.snapshotId());
+            Map<String, String> downloadedBundleHashes = new HashMap<>();
+            if (plan.regionBundleDownloads() != null) {
+                for (DownloadPackPlanDto bundle : plan.regionBundleDownloads()) {
+                    downloadedBundleHashes.put(bundle.packId(), bundle.hash());
+                }
+            }
+            this.worldStore.updateRegionBaselines(worldId, downloadedRegionBundleArtifacts, downloadedBundleHashes, plan.snapshotId());
             if (downloadedPack != null) {
-                this.worldStore.refreshPackBaseline(worldId, downloadedPack, plan.snapshotId());
+                this.worldStore.refreshPackBaseline(worldId, downloadedPack, plan.nonRegionPackDownload().hash(), plan.snapshotId());
             }
         }
         WorldSyncSupport.report(progressListener, STAGE_APPLYING_WORLD_UPDATE, 1.0D, null, null, "World update applied");
@@ -813,6 +865,63 @@ public final class WorldSyncCoordinator {
             }
             for (Path extractRoot : extractedRegionBundleRoots) {
                 deleteRecursivelyQuietly(extractRoot);
+            }
+        }
+    }
+
+    /**
+     * Everything just moved into place was hash-verified against the plan, so
+     * the scan cache can adopt those hashes (and the downloaded packs' hashes,
+     * via their manifests) immediately: the next sync on this machine is all
+     * cache hits instead of re-hashing a world it just downloaded.
+     */
+    private static void seedScanCacheAfterApply(WorldScanCache scanCache, DownloadPlanDto plan, List<DownloadedFile> downloadedFiles) {
+        if (scanCache == null) {
+            return;
+        }
+        Map<String, String> planHashesByPath = new HashMap<>();
+        if (plan.nonRegionPackDownload() != null) {
+            for (var file : plan.nonRegionPackDownload().files()) {
+                planHashesByPath.put(file.path(), file.hash());
+            }
+        }
+        if (plan.regionBundleDownloads() != null) {
+            for (DownloadPackPlanDto bundle : plan.regionBundleDownloads()) {
+                for (var file : bundle.files()) {
+                    planHashesByPath.put(file.path(), file.hash());
+                }
+            }
+        }
+        for (DownloadPlanEntryDto download : plan.downloads()) {
+            planHashesByPath.put(download.path(), download.hash());
+        }
+        for (DownloadedFile downloadedFile : downloadedFiles) {
+            String hash = planHashesByPath.get(downloadedFile.relativePath());
+            if (hash == null) {
+                continue;
+            }
+            try {
+                var attributes = Files.readAttributes(downloadedFile.targetPath(), java.nio.file.attribute.BasicFileAttributes.class);
+                scanCache.recordVerifiedFileHash(downloadedFile.relativePath(), attributes.size(), attributes.lastModifiedTime().toMillis(), hash);
+            } catch (IOException exception) {
+                // Seeding is an optimization; a file we cannot stat just stays
+                // uncached and gets hashed on the next scan.
+            }
+        }
+        if (plan.nonRegionPackDownload() != null) {
+            scanCache.recordPackHash(
+                    SharedWorldPack.PACK_ID,
+                    WorldScanCache.packFingerprintFromManifest(SharedWorldPack.PACK_ID, plan.nonRegionPackDownload().files()),
+                    plan.nonRegionPackDownload().hash()
+            );
+        }
+        if (plan.regionBundleDownloads() != null) {
+            for (DownloadPackPlanDto bundle : plan.regionBundleDownloads()) {
+                scanCache.recordPackHash(
+                        bundle.packId(),
+                        WorldScanCache.packFingerprintFromManifest(bundle.packId(), bundle.files()),
+                        bundle.hash()
+                );
             }
         }
     }
@@ -978,7 +1087,7 @@ public final class WorldSyncCoordinator {
             String worldId,
             DownloadPackPlanDto download,
             Path baselineFile,
-            Path reportedLocalArtifact,
+            WorldSyncSupport.LazyArtifact reportedLocalArtifact,
             String fullTransferMode,
             String deltaTransferMode,
             AtomicLong downloadedBytes,
@@ -1047,7 +1156,7 @@ public final class WorldSyncCoordinator {
         }
     }
 
-    private Path resolveGroupedDeltaBase(Path currentBase, Path baselineFile, Path reportedLocalArtifact, DownloadPlanStepDto step) throws IOException {
+    private Path resolveGroupedDeltaBase(Path currentBase, Path baselineFile, WorldSyncSupport.LazyArtifact reportedLocalArtifact, DownloadPlanStepDto step) throws IOException {
         if (currentBase != null) {
             return currentBase;
         }
@@ -1057,13 +1166,16 @@ public final class WorldSyncCoordinator {
         if (baselineFile != null && Files.exists(baselineFile) && step.baseHash().equals(LocalWorldHasher.hashFile(baselineFile))) {
             return baselineFile;
         }
-        // The backend may base deltas on the state this client just reported; the
-        // scanned artifact is byte-exact for that claim even when the cached
-        // baseline has diverged (cancelled sync, partial apply).
-        if (reportedLocalArtifact != null
-                && Files.exists(reportedLocalArtifact)
-                && step.baseHash().equals(LocalWorldHasher.hashFile(reportedLocalArtifact))) {
-            return reportedLocalArtifact;
+        // The backend may base deltas on the state this client just reported;
+        // building that artifact now is byte-exact for the claim even when the
+        // cached baseline has diverged (cancelled sync, partial apply). Only
+        // this rare path pays for a body build, and the built bytes are still
+        // hash-checked before being trusted as a delta base.
+        if (reportedLocalArtifact != null && step.baseHash().equals(reportedLocalArtifact.descriptor().hash())) {
+            Path body = reportedLocalArtifact.body();
+            if (Files.exists(body) && step.baseHash().equals(LocalWorldHasher.hashFile(body))) {
+                return body;
+            }
         }
         return null;
     }

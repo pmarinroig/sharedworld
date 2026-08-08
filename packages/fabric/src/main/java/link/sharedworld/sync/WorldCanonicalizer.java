@@ -6,10 +6,9 @@ import net.minecraft.nbt.NbtIo;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -18,11 +17,15 @@ import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.stream.Stream;
-import java.util.zip.GZIPOutputStream;
 
 public final class WorldCanonicalizer {
     private static final String CONTENT_TYPE = "application/octet-stream";
+    private static final int MAX_HASHING_THREADS = 8;
 
     /**
      * Minecraft 26.x owner marker in level.dat (Data.singleplayer_uuid). Modern versions store
@@ -35,12 +38,17 @@ public final class WorldCanonicalizer {
     private WorldCanonicalizer() {
     }
 
-    public static List<PreparedWorldFile> scanCanonical(Path worldDirectory, String hostPlayerUuid) throws IOException {
+    public static List<PreparedWorldFile> scanCanonical(Path worldDirectory, String hostPlayerUuid) throws IOException, InterruptedException {
+        return scanCanonical(worldDirectory, hostPlayerUuid, null);
+    }
+
+    public static List<PreparedWorldFile> scanCanonical(Path worldDirectory, String hostPlayerUuid, WorldScanCache cache) throws IOException, InterruptedException {
         List<PreparedWorldFile> files = new ArrayList<>();
         String hostPlayerRelativePath = "playerdata/" + hostPlayerUuid + ".dat";
         byte[] extractedHostPlayer = null;
         boolean hostPlayerSeen = false;
         Set<String> seenPaths = new HashSet<>();
+        List<PendingHash> pendingHashes = new ArrayList<>();
 
         try (Stream<Path> stream = Files.walk(worldDirectory)) {
             for (Path path : stream.filter(Files::isRegularFile)
@@ -63,15 +71,79 @@ public final class WorldCanonicalizer {
                     continue;
                 }
 
-                files.add(preparePassthrough(path, relativePath));
+                BasicFileAttributes attributes = Files.readAttributes(path, BasicFileAttributes.class);
+                long size = attributes.size();
+                long mtimeMillis = attributes.lastModifiedTime().toMillis();
+                String cachedHash = cache == null ? null : cache.cachedFileHash(relativePath, size, mtimeMillis);
+                if (cachedHash != null) {
+                    files.add(preparePassthrough(path, relativePath, cachedHash, size));
+                    continue;
+                }
+                pendingHashes.add(new PendingHash(files.size(), path, relativePath, size, mtimeMillis));
+                files.add(null);
             }
         }
+
+        hashPendingFiles(files, pendingHashes, cache);
 
         if (extractedHostPlayer != null && !hostPlayerSeen && !seenPaths.contains(hostPlayerRelativePath)) {
             files.add(prepareOverride(null, hostPlayerRelativePath, extractedHostPlayer));
         }
 
         return files;
+    }
+
+    /**
+     * Hashes every cache miss, on a bounded pool when there are several: a cold
+     * scan (first create, fresh download) is CPU-bound on SHA-256 and
+     * parallelizes cleanly. Results are set into the pre-reserved slots from
+     * this thread so the list itself is never touched concurrently.
+     */
+    private static void hashPendingFiles(List<PreparedWorldFile> files, List<PendingHash> pendingHashes, WorldScanCache cache) throws IOException, InterruptedException {
+        if (pendingHashes.isEmpty()) {
+            return;
+        }
+        if (pendingHashes.size() == 1) {
+            PendingHash pending = pendingHashes.get(0);
+            files.set(pending.slot(), hashPendingFile(pending, cache));
+            return;
+        }
+
+        int threads = Math.min(pendingHashes.size(), Math.min(Runtime.getRuntime().availableProcessors(), MAX_HASHING_THREADS));
+        ExecutorService executor = Executors.newFixedThreadPool(threads);
+        try {
+            List<Future<PreparedWorldFile>> futures = new ArrayList<>(pendingHashes.size());
+            for (PendingHash pending : pendingHashes) {
+                futures.add(executor.submit(() -> hashPendingFile(pending, cache)));
+            }
+            for (int i = 0; i < futures.size(); i++) {
+                try {
+                    files.set(pendingHashes.get(i).slot(), futures.get(i).get());
+                } catch (ExecutionException exception) {
+                    Throwable cause = exception.getCause();
+                    if (cause instanceof IOException ioException) {
+                        throw ioException;
+                    }
+                    if (cause instanceof RuntimeException runtimeException) {
+                        throw runtimeException;
+                    }
+                    if (cause instanceof Error error) {
+                        throw error;
+                    }
+                    throw new IOException("SharedWorld failed to hash a world file.", cause);
+                }
+            }
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    private static PreparedWorldFile hashPendingFile(PendingHash pending, WorldScanCache cache) throws IOException {
+        String hash = LocalWorldHasher.hashFile(pending.path());
+        if (cache != null) {
+            cache.recordFileHash(pending.relativePath(), pending.size(), pending.mtimeMillis(), hash);
+        }
+        return preparePassthrough(pending.path(), pending.relativePath(), hash, pending.size());
     }
 
     public static void materializeHostPlayer(Path worldDirectory, String hostPlayerUuid) throws IOException {
@@ -119,29 +191,29 @@ public final class WorldCanonicalizer {
         return new CanonicalLevelResult(writeCompressed(canonicalLevel), hostPlayerBytes);
     }
 
-    private static PreparedWorldFile preparePassthrough(Path sourcePath, String relativePath) throws IOException {
-        StreamedFileInfo info = describeFile(sourcePath);
-        boolean deltaCapable = SyncPathRules.isTerrainRegionFile(relativePath);
+    // compressedSize is reported as the raw size everywhere: the field is
+    // retained for wire shape only, unread since per-file whole-gzip transfers
+    // were retired (the backend always answers uploads: [] / downloads: []).
+    private static PreparedWorldFile preparePassthrough(Path sourcePath, String relativePath, String hash, long size) {
         return new PreparedWorldFile(
                 sourcePath,
                 relativePath,
-                info.hash(),
-                info.size(),
-                deltaCapable ? info.size() : info.compressedSize(),
+                hash,
+                size,
+                size,
                 CONTENT_TYPE,
-                deltaCapable,
+                SyncPathRules.isTerrainRegionFile(relativePath),
                 null
         );
     }
 
     private static PreparedWorldFile prepareOverride(Path sourcePath, String relativePath, byte[] bytes) {
-        byte[] gzippedBytes = gzipBytes(bytes);
         return new PreparedWorldFile(
                 sourcePath,
                 relativePath,
                 hashBytes(bytes),
                 bytes.length,
-                gzippedBytes.length,
+                bytes.length,
                 CONTENT_TYPE,
                 false,
                 bytes
@@ -175,63 +247,9 @@ public final class WorldCanonicalizer {
         return "session.lock".equals(fileName) || fileName.endsWith(".dat_old");
     }
 
-    private static byte[] gzipBytes(byte[] rawBytes) {
-        try (ByteArrayOutputStream output = new ByteArrayOutputStream();
-             GZIPOutputStream gzip = new GZIPOutputStream(output)) {
-            gzip.write(rawBytes);
-            gzip.finish();
-            return output.toByteArray();
-        } catch (IOException exception) {
-            throw new RuntimeException("Failed to gzip SharedWorld blob.", exception);
-        }
-    }
-
-    private static StreamedFileInfo describeFile(Path sourcePath) throws IOException {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            CountingOutputStream countingOutput = new CountingOutputStream();
-            long size = 0L;
-            try (InputStream input = Files.newInputStream(sourcePath);
-                 GZIPOutputStream gzip = new GZIPOutputStream(countingOutput)) {
-                byte[] buffer = new byte[16 * 1024];
-                int read;
-                while ((read = input.read(buffer)) >= 0) {
-                    if (read <= 0) {
-                        continue;
-                    }
-                    digest.update(buffer, 0, read);
-                    gzip.write(buffer, 0, read);
-                    size += read;
-                }
-                gzip.finish();
-            }
-            return new StreamedFileInfo(HexFormat.of().formatHex(digest.digest()), size, countingOutput.count());
-        } catch (NoSuchAlgorithmException exception) {
-            throw new RuntimeException("Missing SHA-256 implementation.", exception);
-        }
-    }
-
     private record CanonicalLevelResult(byte[] levelBytes, byte[] hostPlayerBytes) {
     }
 
-    private record StreamedFileInfo(String hash, long size, long compressedSize) {
-    }
-
-    private static final class CountingOutputStream extends OutputStream {
-        private long count;
-
-        @Override
-        public void write(int value) {
-            this.count++;
-        }
-
-        @Override
-        public void write(byte[] buffer, int offset, int length) {
-            this.count += length;
-        }
-
-        public long count() {
-            return this.count;
-        }
+    private record PendingHash(int slot, Path path, String relativePath, long size, long mtimeMillis) {
     }
 }

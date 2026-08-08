@@ -43,7 +43,7 @@ final class WorldSyncCoordinatorDownloadTest {
                 SyncPathRules.regionBundleId(regionPath),
                 Map.of(regionPath, "baseline-region".getBytes())
         );
-        worldStore.updateRegionBaselines(WORLD_ID, Map.of(baselineBundle.descriptor().packId(), baselineBundle.packFile()), "old-snapshot");
+        worldStore.updateRegionBaselines(WORLD_ID, Map.of(baselineBundle.descriptor().packId(), baselineBundle.packFile()), Map.of(baselineBundle.descriptor().packId(), baselineBundle.descriptor().hash()), "old-snapshot");
 
         BuiltPack targetBundle = buildPackArtifact(
                 baselineBundle.descriptor().packId(),
@@ -390,6 +390,54 @@ final class WorldSyncCoordinatorDownloadTest {
             assertEquals(
                     dataShard.descriptor().hash(),
                     LocalWorldHasher.hashFile(worldStore.regionBundleBaselineFile(WORLD_ID, "region-bundle:superpack:data"))
+            );
+        }
+    }
+
+    @Test
+    void appliedDownloadSeedsTheScanCacheSoTheNextPlanRequestTrustsIt() throws Exception {
+        ManagedWorldStore worldStore = new ManagedWorldStore(this.tempDir.resolve("managed-seeded"));
+        Path workingCopy = worldStore.workingCopy(WORLD_ID);
+        BuiltPack pack = buildPackArtifact(SharedWorldPack.PACK_ID, Map.of("data/icon.png", "downloaded-bytes".getBytes()));
+        String downloadedFileHash = pack.descriptor().files()[0].hash();
+
+        try (SyncTestHttpServer server = new SyncTestHttpServer()) {
+            server.seedBlob("pack-blob", Files.readAllBytes(pack.packFile()));
+            server.setDownloadPlan(new DownloadPlanDto(
+                    WORLD_ID,
+                    "snap-1",
+                    new DownloadPlanEntryDto[0],
+                    new DownloadPackPlanDto(
+                            pack.descriptor().packId(),
+                            pack.descriptor().hash(),
+                            pack.descriptor().size(),
+                            pack.descriptor().files(),
+                            new DownloadPlanStepDto[]{
+                                    new DownloadPlanStepDto("pack-full", "packs/full.pack", pack.descriptor().size(), null, null, server.downloadUrl("pack-blob"))
+                            }
+                    ),
+                    new DownloadPackPlanDto[0],
+                    new String[0],
+                    SyncTestHttpServer.syncPolicy()
+            ));
+
+            WorldSyncCoordinator coordinator = new WorldSyncCoordinator(server.apiClient(), worldStore);
+            coordinator.ensureSynchronizedWorkingCopy(WORLD_ID, HOST_UUID);
+            Path downloadedFile = workingCopy.resolve("data").resolve("icon.png");
+            assertArrayEquals("downloaded-bytes".getBytes(), Files.readAllBytes(downloadedFile));
+
+            // Hash-verified downloads seed the scan cache, so the next plan
+            // request must report the verified hash from the cache without
+            // reading contents: same size, same mtime, different bytes stays
+            // invisible to it.
+            var originalMtime = Files.getLastModifiedTime(downloadedFile);
+            Files.write(downloadedFile, "TAMPERED-BYTES!!".getBytes());
+            Files.setLastModifiedTime(downloadedFile, originalMtime);
+
+            coordinator.ensureSynchronizedWorkingCopy(WORLD_ID, HOST_UUID);
+            assertTrue(
+                    server.lastDownloadPlanBody().contains(downloadedFileHash),
+                    "expected the seeded hash in the plan request: " + server.lastDownloadPlanBody()
             );
         }
     }

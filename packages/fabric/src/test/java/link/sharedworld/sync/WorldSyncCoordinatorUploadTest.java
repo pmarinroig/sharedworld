@@ -36,7 +36,7 @@ final class WorldSyncCoordinatorUploadTest {
 
         ManagedWorldStore worldStore = new ManagedWorldStore(this.tempDir.resolve("managed-full"));
         BuiltPack baselinePack = buildPackFromWorld(writeWorldDirectory(Map.of("data/foo.dat", repeated('B', 8192))));
-        worldStore.refreshPackBaseline(WORLD_ID, baselinePack.packFile(), "old-snapshot");
+        worldStore.refreshPackBaseline(WORLD_ID, baselinePack.packFile(), baselinePack.descriptor().hash(), "old-snapshot");
         BuiltPack currentPack = buildPackFromWorld(worldDirectory);
 
         try (SyncTestHttpServer server = new SyncTestHttpServer()) {
@@ -81,7 +81,7 @@ final class WorldSyncCoordinatorUploadTest {
         ManagedWorldStore worldStore = new ManagedWorldStore(this.tempDir.resolve("managed-delta"));
         BuiltPack baselinePack = buildPackFromWorld(baselineWorld);
         BuiltPack currentPack = buildPackFromWorld(currentWorld);
-        worldStore.refreshPackBaseline(WORLD_ID, baselinePack.packFile(), "base-snapshot");
+        worldStore.refreshPackBaseline(WORLD_ID, baselinePack.packFile(), baselinePack.descriptor().hash(), "base-snapshot");
 
         try (SyncTestHttpServer server = new SyncTestHttpServer()) {
             server.setUploadPlan(new UploadPlanDto(
@@ -126,7 +126,7 @@ final class WorldSyncCoordinatorUploadTest {
         ManagedWorldStore worldStore = new ManagedWorldStore(this.tempDir.resolve("managed-finalize-failure"));
         BuiltPack baselinePack = buildPackFromWorld(baselineWorld);
         BuiltPack currentPack = buildPackFromWorld(currentWorld);
-        worldStore.refreshPackBaseline(WORLD_ID, baselinePack.packFile(), "old-snapshot");
+        worldStore.refreshPackBaseline(WORLD_ID, baselinePack.packFile(), baselinePack.descriptor().hash(), "old-snapshot");
         String oldBaselineHash = LocalWorldHasher.hashFile(worldStore.packBaselineFile(WORLD_ID));
 
         try (SyncTestHttpServer server = new SyncTestHttpServer()) {
@@ -355,6 +355,91 @@ final class WorldSyncCoordinatorUploadTest {
             assertTrue(error.getMessage().contains("cannot be synced"), error.getMessage());
             // The doomed upload never started.
             assertNull(server.uploadedBlobBody("pack-full-oversized"));
+        }
+    }
+
+    @Test
+    void warmCacheAnswersThePlanWithoutRereadingFileContentsOrRepackingTheWorld() throws Exception {
+        Path worldDirectory = writeWorldDirectory(Map.of("data/foo.dat", repeated('A', 4096)));
+        Path fooFile = worldDirectory.resolve("data").resolve("foo.dat");
+        // Old mtimes so the racy-mtime rule lets the cache trust the entries.
+        Files.setLastModifiedTime(fooFile, java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis() - 60_000L));
+        ManagedWorldStore worldStore = new ManagedWorldStore(this.tempDir.resolve("managed-cache"));
+        BuiltPack originalPack = buildPackFromWorld(worldDirectory);
+        UploadPlanDto unchangedPlan = new UploadPlanDto(
+                WORLD_ID,
+                "base-snapshot",
+                new link.sharedworld.api.SharedWorldModels.UploadPlanEntryDto[0],
+                new UploadPackPlanDto(
+                        originalPack.descriptor(),
+                        true,
+                        "packs/existing.pack",
+                        "pack-full",
+                        null, null, null, null, null, null, null, null
+                ),
+                new UploadPackPlanDto[0],
+                SyncTestHttpServer.syncPolicy(),
+                new String[]{SharedWorldPack.PACK_ID}
+        );
+
+        try (SyncTestHttpServer server = new SyncTestHttpServer()) {
+            server.setUploadPlan(unchangedPlan);
+            WorldSyncCoordinator coordinator = new WorldSyncCoordinator(server.apiClient(), worldStore);
+            assertNull(coordinator.uploadSnapshot(WORLD_ID, worldDirectory, HOST_UUID, 7L, "token-7"));
+
+            // Same size, same mtime, different bytes: a scan that trusts the
+            // cache reports the original hashes without reading contents, and a
+            // sync that never rebuilds the pack cannot notice either. (A
+            // rebuild would produce a different pack hash and fail loudly, so
+            // plain success here is the laziness proof.)
+            java.nio.file.attribute.FileTime originalMtime = Files.getLastModifiedTime(fooFile);
+            Files.write(fooFile, repeated('Z', 4096));
+            Files.setLastModifiedTime(fooFile, originalMtime);
+
+            assertNull(coordinator.uploadSnapshot(WORLD_ID, worldDirectory, HOST_UUID, 8L, "token-8"));
+            assertTrue(
+                    server.lastPrepareUploadsBody().contains(originalPack.descriptor().hash()),
+                    "expected the cached pack hash in the plan request: " + server.lastPrepareUploadsBody()
+            );
+        }
+    }
+
+    @Test
+    void unchangedSyncLeavesMatchingBaselinesUntouched() throws Exception {
+        Path worldDirectory = writeWorldDirectory(Map.of("data/foo.dat", repeated('A', 4096)));
+        ManagedWorldStore worldStore = new ManagedWorldStore(this.tempDir.resolve("managed-baseline-skip"));
+        BuiltPack currentPack = buildPackFromWorld(worldDirectory);
+        UploadPlanDto unchangedPlan = new UploadPlanDto(
+                WORLD_ID,
+                "base-snapshot",
+                new link.sharedworld.api.SharedWorldModels.UploadPlanEntryDto[0],
+                new UploadPackPlanDto(
+                        currentPack.descriptor(),
+                        true,
+                        "packs/existing.pack",
+                        "pack-full",
+                        null, null, null, null, null, null, null, null
+                ),
+                new UploadPackPlanDto[0],
+                SyncTestHttpServer.syncPolicy(),
+                new String[]{SharedWorldPack.PACK_ID}
+        );
+
+        try (SyncTestHttpServer server = new SyncTestHttpServer()) {
+            server.setUploadPlan(unchangedPlan);
+            WorldSyncCoordinator coordinator = new WorldSyncCoordinator(server.apiClient(), worldStore);
+            assertNull(coordinator.uploadSnapshot(WORLD_ID, worldDirectory, HOST_UUID, 7L, "token-7"));
+            assertTrue(Files.exists(worldStore.packBaselineFile(WORLD_ID)));
+
+            // A sentinel in the baseline file: if the next unchanged sync
+            // rewrote baselines (the old delete-and-recopy behavior), the
+            // sentinel would be replaced by real pack bytes. Consumers re-hash
+            // baselines before trusting them, so this is safe to skip.
+            Files.write(worldStore.packBaselineFile(WORLD_ID), "sentinel".getBytes());
+            assertNull(coordinator.uploadSnapshot(WORLD_ID, worldDirectory, HOST_UUID, 8L, "token-8"));
+
+            assertEquals("sentinel", Files.readString(worldStore.packBaselineFile(WORLD_ID)));
+            assertEquals("base-snapshot", worldStore.packBaselineSnapshotId(WORLD_ID));
         }
     }
 

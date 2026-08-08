@@ -1,18 +1,30 @@
 package link.sharedworld.sync;
 
+import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.level.storage.LevelStorageSource;
 
 import java.io.IOException;
+import java.io.Reader;
+import java.io.Writer;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Stream;
 
 public final class ManagedWorldStore {
     public static final String LEVEL_ID = "current";
+    private static final Gson BASELINE_GSON = new Gson();
+    private static final TypeToken<Map<String, String>> BASELINE_HASHES_TYPE = new TypeToken<>() {
+    };
     private final Path sharedWorldRoot;
 
     public ManagedWorldStore() {
@@ -53,6 +65,10 @@ public final class ManagedWorldStore {
 
     public Path regionBaselineSnapshotFile(String worldId) {
         return this.worldContainer(worldId).resolve("region-baseline-snapshot.txt");
+    }
+
+    public Path scanCacheFile(String worldId) {
+        return this.worldContainer(worldId).resolve("sync-cache-v1.json");
     }
 
     public Path packBaselineSnapshotFile(String worldId) {
@@ -130,21 +146,92 @@ public final class ManagedWorldStore {
         }
         clearRegionBaseline(worldId);
         clearPackBaseline(worldId);
+        Files.deleteIfExists(this.scanCacheFile(worldId));
+        deleteRecursivelyIfExists(this.captureMirrorRoot(worldId));
         Files.createDirectories(this.worldContainer(worldId));
     }
 
-    public Path createSnapshotStagingCopy(String worldId) throws IOException {
-        Path workingCopy = this.workingCopy(worldId);
-        Path stagingDirectory = this.stagingRoot(worldId).resolve("snapshot-" + System.currentTimeMillis());
-        return createSnapshotStagingCopy(
-                workingCopy,
-                stagingDirectory,
-                (sourceRoot, targetRoot) -> copyTree(sourceRoot, targetRoot, true),
-                ManagedWorldStore::deleteRecursivelyIfExists
-        );
+    static final String CAPTURE_MIRROR_DIR = "capture-mirror";
+
+    public Path captureMirrorRoot(String worldId) {
+        return this.worldContainer(worldId).resolve(CAPTURE_MIRROR_DIR);
     }
 
+    /**
+     * Captures the working copy into a persistent per-world mirror refreshed
+     * rsync-style: only files whose (size, mtime) differ from the mirror are
+     * copied, files that vanished are deleted. A no-change capture is a stat
+     * walk instead of a full world copy. Runs inside the autosave window (the
+     * working copy is quiescent), and a crash mid-refresh just means the next
+     * capture re-syncs by the same comparison before anything is uploaded.
+     */
+    public Path createSnapshotStagingCopy(String worldId) throws IOException {
+        Path workingCopy = this.workingCopy(worldId);
+        Path mirror = this.captureMirrorRoot(worldId);
+        Files.createDirectories(mirror);
+
+        Set<Path> desiredRelatives = new HashSet<>();
+        try (Stream<Path> stream = Files.walk(workingCopy)) {
+            for (Path source : stream.sorted(Comparator.naturalOrder()).toList()) {
+                Path relative = workingCopy.relativize(source);
+                if (relative.toString().isBlank() || "session.lock".equals(source.getFileName().toString())) {
+                    continue;
+                }
+                Path target = mirror.resolve(relative.toString());
+                if (Files.isDirectory(source)) {
+                    Files.createDirectories(target);
+                    continue;
+                }
+                desiredRelatives.add(relative);
+                if (mirrorEntryMatches(source, target)) {
+                    continue;
+                }
+                if (target.getParent() != null) {
+                    Files.createDirectories(target.getParent());
+                }
+                Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
+            }
+        }
+
+        try (Stream<Path> stream = Files.walk(mirror)) {
+            for (Path path : stream.sorted(Comparator.reverseOrder()).toList()) {
+                Path relative = mirror.relativize(path);
+                if (relative.toString().isBlank()) {
+                    continue;
+                }
+                if (Files.isDirectory(path)) {
+                    try (Stream<Path> children = Files.list(path)) {
+                        if (children.findAny().isEmpty()) {
+                            Files.deleteIfExists(path);
+                        }
+                    }
+                    continue;
+                }
+                if (!desiredRelatives.contains(relative)) {
+                    Files.deleteIfExists(path);
+                }
+            }
+        }
+        return mirror;
+    }
+
+    private static boolean mirrorEntryMatches(Path source, Path target) throws IOException {
+        if (!Files.isRegularFile(target)) {
+            return false;
+        }
+        return Files.size(source) == Files.size(target)
+                && Files.getLastModifiedTime(source).toMillis() == Files.getLastModifiedTime(target).toMillis();
+    }
+
+    /**
+     * The capture mirror is persistent by design — it is what makes the next
+     * capture incremental — so the post-upload cleanup hook leaves it alone
+     * while still disposing of any legacy one-shot staging directory.
+     */
     public void deleteSnapshotStagingCopy(Path stagingDirectory) throws IOException {
+        if (CAPTURE_MIRROR_DIR.equals(stagingDirectory.getFileName().toString())) {
+            return;
+        }
         if (!Files.exists(stagingDirectory)) {
             return;
         }
@@ -160,24 +247,63 @@ public final class ManagedWorldStore {
         return value.isBlank() ? null : value;
     }
 
-    public void replaceRegionBaselines(String worldId, java.util.Map<String, Path> bundleFiles, String snapshotId) throws IOException {
-        Path baselineRoot = this.regionBaselineRoot(worldId);
-        if (Files.exists(baselineRoot)) {
-            deleteRecursively(baselineRoot);
-        }
-        updateRegionBaselines(worldId, bundleFiles, snapshotId);
-    }
-
-    public void updateRegionBaselines(String worldId, java.util.Map<String, Path> bundleFiles, String snapshotId) throws IOException {
+    /**
+     * Converges the baseline set on exactly {@code desiredHashesById}: files
+     * whose sidecar hash already matches are kept untouched, changed or
+     * missing ones are copied from {@code bodies} (invoked only for those),
+     * and baselines for packs that no longer exist are deleted. A no-change
+     * sync therefore performs zero baseline I/O beyond the marker write.
+     *
+     * <p>The sidecar is advisory: baseline consumers hash the real file before
+     * trusting it as a delta base, so a stale sidecar entry can only cost a
+     * needless copy or a fallback to a full transfer.
+     */
+    public void ensureRegionBaselines(String worldId, Map<String, String> desiredHashesById, BaselineBodySupplier bodies, String snapshotId) throws IOException {
         Path baselineRoot = this.regionBaselineRoot(worldId);
         Files.createDirectories(baselineRoot);
+        Map<String, String> sidecar = loadBaselineHashes(worldId);
+        Set<String> expectedFileNames = new HashSet<>();
+        for (var entry : desiredHashesById.entrySet()) {
+            Path target = regionBundleBaselineFile(worldId, entry.getKey());
+            expectedFileNames.add(target.getFileName().toString());
+            if (entry.getValue().equals(sidecar.get(entry.getKey())) && Files.exists(target)) {
+                continue;
+            }
+            copyAtomically(bodies.body(entry.getKey()), target);
+            sidecar.put(entry.getKey(), entry.getValue());
+        }
+        try (Stream<Path> entries = Files.list(baselineRoot)) {
+            for (Path staleFile : entries.filter(Files::isRegularFile).toList()) {
+                if (!expectedFileNames.contains(staleFile.getFileName().toString())) {
+                    Files.deleteIfExists(staleFile);
+                }
+            }
+        }
+        sidecar.keySet().removeIf(packId -> packId.startsWith("region-bundle:") && !desiredHashesById.containsKey(packId));
+        saveBaselineHashes(worldId, sidecar);
+        Files.writeString(this.regionBaselineSnapshotFile(worldId), snapshotId == null ? "" : snapshotId, StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Partial refresh after a download apply: only the bundles that were
+     * actually downloaded move forward; untouched baselines stay valid for the
+     * packs the plan retained.
+     */
+    public void updateRegionBaselines(String worldId, Map<String, Path> bundleFiles, Map<String, String> hashesById, String snapshotId) throws IOException {
+        Path baselineRoot = this.regionBaselineRoot(worldId);
+        Files.createDirectories(baselineRoot);
+        Map<String, String> sidecar = loadBaselineHashes(worldId);
         for (var entry : bundleFiles.entrySet()) {
             Path target = regionBundleBaselineFile(worldId, entry.getKey());
-            if (target.getParent() != null) {
-                Files.createDirectories(target.getParent());
+            copyAtomically(entry.getValue(), target);
+            String hash = hashesById.get(entry.getKey());
+            if (hash != null) {
+                sidecar.put(entry.getKey(), hash);
+            } else {
+                sidecar.remove(entry.getKey());
             }
-            Files.copy(entry.getValue(), target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
         }
+        saveBaselineHashes(worldId, sidecar);
         Files.writeString(this.regionBaselineSnapshotFile(worldId), snapshotId == null ? "" : snapshotId, StandardCharsets.UTF_8);
     }
 
@@ -190,12 +316,34 @@ public final class ManagedWorldStore {
         return value.isBlank() ? null : value;
     }
 
-    public void refreshPackBaseline(String worldId, Path packFile, String snapshotId) throws IOException {
+    /** Skip-if-unchanged counterpart of {@link #ensureRegionBaselines} for the single non-region pack. */
+    public void ensurePackBaseline(String worldId, String desiredHash, BaselineBodySupplier body, String snapshotId) throws IOException {
+        Path baselineFile = this.packBaselineFile(worldId);
+        Map<String, String> sidecar = loadBaselineHashes(worldId);
+        if (!desiredHash.equals(sidecar.get(SharedWorldPack.PACK_ID)) || !Files.exists(baselineFile)) {
+            if (baselineFile.getParent() != null) {
+                Files.createDirectories(baselineFile.getParent());
+            }
+            copyAtomically(body.body(SharedWorldPack.PACK_ID), baselineFile);
+            sidecar.put(SharedWorldPack.PACK_ID, desiredHash);
+            saveBaselineHashes(worldId, sidecar);
+        }
+        Files.writeString(this.packBaselineSnapshotFile(worldId), snapshotId == null ? "" : snapshotId, StandardCharsets.UTF_8);
+    }
+
+    public void refreshPackBaseline(String worldId, Path packFile, String packHash, String snapshotId) throws IOException {
         Path baselineFile = this.packBaselineFile(worldId);
         if (baselineFile.getParent() != null) {
             Files.createDirectories(baselineFile.getParent());
         }
-        Files.copy(packFile, baselineFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
+        copyAtomically(packFile, baselineFile);
+        Map<String, String> sidecar = loadBaselineHashes(worldId);
+        if (packHash != null) {
+            sidecar.put(SharedWorldPack.PACK_ID, packHash);
+        } else {
+            sidecar.remove(SharedWorldPack.PACK_ID);
+        }
+        saveBaselineHashes(worldId, sidecar);
         Files.writeString(this.packBaselineSnapshotFile(worldId), snapshotId == null ? "" : snapshotId, StandardCharsets.UTF_8);
     }
 
@@ -205,6 +353,10 @@ public final class ManagedWorldStore {
             deleteRecursively(baselineRoot);
         }
         Files.deleteIfExists(this.regionBaselineSnapshotFile(worldId));
+        Map<String, String> sidecar = loadBaselineHashes(worldId);
+        if (sidecar.keySet().removeIf(packId -> packId.startsWith("region-bundle:"))) {
+            saveBaselineHashes(worldId, sidecar);
+        }
     }
 
     private static String sanitizeBundleId(String bundleId) {
@@ -214,60 +366,65 @@ public final class ManagedWorldStore {
     public void clearPackBaseline(String worldId) throws IOException {
         Files.deleteIfExists(this.packBaselineFile(worldId));
         Files.deleteIfExists(this.packBaselineSnapshotFile(worldId));
+        Map<String, String> sidecar = loadBaselineHashes(worldId);
+        if (sidecar.remove(SharedWorldPack.PACK_ID) != null) {
+            saveBaselineHashes(worldId, sidecar);
+        }
     }
 
-    static Path createSnapshotStagingCopy(
-            Path workingCopy,
-            Path stagingDirectory,
-            SnapshotTreeCopyOperation copyOperation,
-            SnapshotCleanupOperation cleanupOperation
-    ) throws IOException {
-        Files.createDirectories(stagingDirectory);
+    public Path baselineHashesFile(String worldId) {
+        return this.worldContainer(worldId).resolve("baseline-hashes.json");
+    }
+
+    /** Corrupt or missing sidecar degrades to "copy everything again", never to a failed sync. */
+    private Map<String, String> loadBaselineHashes(String worldId) {
+        Path sidecarFile = this.baselineHashesFile(worldId);
+        if (!Files.exists(sidecarFile)) {
+            return new HashMap<>();
+        }
+        try (Reader reader = Files.newBufferedReader(sidecarFile, StandardCharsets.UTF_8)) {
+            Map<String, String> parsed = BASELINE_GSON.fromJson(reader, BASELINE_HASHES_TYPE);
+            return parsed == null ? new HashMap<>() : new HashMap<>(parsed);
+        } catch (IOException | RuntimeException exception) {
+            return new HashMap<>();
+        }
+    }
+
+    private void saveBaselineHashes(String worldId, Map<String, String> hashes) throws IOException {
+        Path sidecarFile = this.baselineHashesFile(worldId);
+        if (sidecarFile.getParent() != null) {
+            Files.createDirectories(sidecarFile.getParent());
+        }
+        Path tempFile = sidecarFile.resolveSibling(sidecarFile.getFileName() + ".tmp");
+        try (Writer writer = Files.newBufferedWriter(tempFile, StandardCharsets.UTF_8)) {
+            BASELINE_GSON.toJson(hashes, BASELINE_HASHES_TYPE.getType(), writer);
+        }
+        moveAtomicallyOrReplace(tempFile, sidecarFile);
+    }
+
+    /**
+     * Baseline files feed delta uploads, so a torn copy must be impossible: a
+     * crash leaves either the old baseline or the new one, never a mix.
+     */
+    private static void copyAtomically(Path source, Path target) throws IOException {
+        Path tempFile = target.resolveSibling(target.getFileName() + ".tmp");
+        Files.copy(source, tempFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
+        moveAtomicallyOrReplace(tempFile, target);
+    }
+
+    private static void moveAtomicallyOrReplace(Path source, Path target) throws IOException {
         try {
-            copyOperation.copy(workingCopy, stagingDirectory);
-            return stagingDirectory;
-        } catch (IOException copyException) {
-            cleanupFailedSnapshotCopy(stagingDirectory, cleanupOperation, copyException);
-            throw copyException;
-        } catch (RuntimeException | Error copyFailure) {
-            cleanupFailedSnapshotCopy(stagingDirectory, cleanupOperation, copyFailure);
-            throw copyFailure;
+            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (AtomicMoveNotSupportedException exception) {
+            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
+        } finally {
+            Files.deleteIfExists(source);
         }
     }
 
-    private static void cleanupFailedSnapshotCopy(
-            Path stagingDirectory,
-            SnapshotCleanupOperation cleanupOperation,
-            Throwable copyFailure
-    ) {
-        try {
-            cleanupOperation.cleanup(stagingDirectory);
-        } catch (IOException cleanupException) {
-            copyFailure.addSuppressed(cleanupException);
-        }
-    }
-
-    private static void copyTree(Path sourceRoot, Path targetRoot, boolean skipSessionLock) throws IOException {
-        try (Stream<Path> stream = Files.walk(sourceRoot)) {
-            for (Path source : stream.sorted(Comparator.naturalOrder()).toList()) {
-                Path relative = sourceRoot.relativize(source);
-                if (relative.toString().isBlank()) {
-                    continue;
-                }
-                if (skipSessionLock && "session.lock".equals(source.getFileName().toString())) {
-                    continue;
-                }
-                Path target = targetRoot.resolve(relative.toString());
-                if (Files.isDirectory(source)) {
-                    Files.createDirectories(target);
-                    continue;
-                }
-                if (target.getParent() != null) {
-                    Files.createDirectories(target.getParent());
-                }
-                Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
-            }
-        }
+    @FunctionalInterface
+    public interface BaselineBodySupplier {
+        Path body(String packId) throws IOException;
     }
 
     private static void deleteRecursivelyIfExists(Path root) throws IOException {
@@ -285,13 +442,4 @@ public final class ManagedWorldStore {
         }
     }
 
-    @FunctionalInterface
-    interface SnapshotTreeCopyOperation {
-        void copy(Path sourceRoot, Path targetRoot) throws IOException;
-    }
-
-    @FunctionalInterface
-    interface SnapshotCleanupOperation {
-        void cleanup(Path stagingDirectory) throws IOException;
-    }
 }

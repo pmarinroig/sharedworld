@@ -31,30 +31,16 @@ final class WorldSyncSupport {
         );
     }
 
-    static List<LocalArtifact> buildRegionBundleArtifacts(List<PreparedWorldFile> regionFiles) throws IOException {
-        return buildGroupedArtifacts(SyncPathRules.groupTerrainFiles(regionFiles));
+    static List<LazyArtifact> lazyRegionBundleArtifacts(List<PreparedWorldFile> regionFiles, WorldScanCache cache) {
+        return lazyGroupedArtifacts(SyncPathRules.groupTerrainFiles(regionFiles), cache);
     }
 
-    static List<LocalArtifact> buildGroupedArtifacts(List<SyncPathRules.RegionBundleGroup> groups) throws IOException {
-        List<LocalArtifact> bundles = new ArrayList<>();
-        try {
-            for (SyncPathRules.RegionBundleGroup group : groups) {
-                Path artifactPath = Files.createTempFile("sharedworld-region-bundle-", ".bundle");
-                bundles.add(new LocalArtifact(null, artifactPath));
-                LocalPackDescriptorDto descriptor = SharedWorldPack.buildPack(group.bundleId(), group.files(), artifactPath);
-                bundles.set(bundles.size() - 1, new LocalArtifact(descriptor, artifactPath));
-            }
-            return bundles;
-        } catch (IOException | RuntimeException buildFailure) {
-            for (LocalArtifact bundle : bundles) {
-                try {
-                    Files.deleteIfExists(bundle.artifactPath());
-                } catch (IOException cleanupFailure) {
-                    buildFailure.addSuppressed(cleanupFailure);
-                }
-            }
-            throw buildFailure;
+    static List<LazyArtifact> lazyGroupedArtifacts(List<SyncPathRules.RegionBundleGroup> groups, WorldScanCache cache) {
+        List<LazyArtifact> artifacts = new ArrayList<>(groups.size());
+        for (SyncPathRules.RegionBundleGroup group : groups) {
+            artifacts.add(new LazyArtifact(group.bundleId(), group.files(), cache));
         }
+        return artifacts;
     }
 
     static void report(WorldSyncProgressListener listener, String stage, double fraction, Long bytesDone, Long bytesTotal, String detailLine) {
@@ -89,6 +75,90 @@ final class WorldSyncSupport {
         logger.info("SharedWorld sync step '{}' for {} took {} ms", step, worldId, Duration.ofNanos(System.nanoTime() - startedAt).toMillis());
     }
 
-    record LocalArtifact(LocalPackDescriptorDto descriptor, Path artifactPath) {
+    /**
+     * A pack whose descriptor can be answered from the scan cache without
+     * writing the pack body. The body is built at most once, on first demand —
+     * a no-change sync never asks for it, which is what turns the pre-plan
+     * "pack the whole world into temp files" pass into pure metadata work.
+     *
+     * <p>Thread-safe: upload preparation calls {@link #body()} from a worker
+     * pool.
+     */
+    static final class LazyArtifact {
+        private final String packId;
+        private final List<PreparedWorldFile> files;
+        private final WorldScanCache cache;
+        private LocalPackDescriptorDto descriptor;
+        private Path bodyPath;
+
+        LazyArtifact(String packId, List<PreparedWorldFile> files, WorldScanCache cache) {
+            this.packId = packId;
+            this.files = files;
+            this.cache = cache;
+        }
+
+        String packId() {
+            return this.packId;
+        }
+
+        synchronized LocalPackDescriptorDto descriptor() throws IOException {
+            if (this.descriptor != null) {
+                return this.descriptor;
+            }
+            String fingerprint = WorldScanCache.packFingerprint(this.packId, this.files);
+            String cachedHash = this.cache == null ? null : this.cache.cachedPackHash(this.packId, fingerprint);
+            if (cachedHash != null) {
+                this.descriptor = SharedWorldPack.describePack(this.packId, this.files, cachedHash);
+                return this.descriptor;
+            }
+            build(fingerprint);
+            return this.descriptor;
+        }
+
+        synchronized Path body() throws IOException {
+            if (this.bodyPath == null) {
+                build(WorldScanCache.packFingerprint(this.packId, this.files));
+            }
+            return this.bodyPath;
+        }
+
+        /**
+         * Blob storage keys are derived from the hash the plan saw, so a body
+         * whose bytes hash differently from an already-announced descriptor
+         * must never be uploaded — that would store content under the wrong
+         * key and break every future download of it. The fresh hash is
+         * recorded in the cache first so the retry plans against the truth.
+         */
+        private void build(String fingerprint) throws IOException {
+            Path target = Files.createTempFile("sharedworld-artifact-", ".pack");
+            LocalPackDescriptorDto built;
+            try {
+                built = SharedWorldPack.buildPack(this.packId, this.files, target);
+            } catch (IOException | RuntimeException buildFailure) {
+                try {
+                    Files.deleteIfExists(target);
+                } catch (IOException cleanupFailure) {
+                    buildFailure.addSuppressed(cleanupFailure);
+                }
+                throw buildFailure;
+            }
+            if (this.cache != null) {
+                this.cache.recordPackHash(this.packId, fingerprint, built.hash());
+            }
+            if (this.descriptor != null && !this.descriptor.hash().equals(built.hash())) {
+                Files.deleteIfExists(target);
+                throw new IOException("SharedWorld pack " + this.packId
+                        + " no longer matches the state this sync was planned against; the next sync will retry.");
+            }
+            this.descriptor = built;
+            this.bodyPath = target;
+        }
+
+        synchronized void deleteBodyIfBuilt() throws IOException {
+            if (this.bodyPath != null) {
+                Files.deleteIfExists(this.bodyPath);
+                this.bodyPath = null;
+            }
+        }
     }
 }

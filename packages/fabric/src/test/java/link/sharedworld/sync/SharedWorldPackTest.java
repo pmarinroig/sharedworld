@@ -116,6 +116,53 @@ final class SharedWorldPackTest {
         assertEquals("SharedWorld pack entry data/foo.txt grew while packing (expected 4 bytes).", error.getMessage());
     }
 
+    @Test
+    void describePackMatchesTheBuiltPackDescriptorExactly() throws Exception {
+        // The lazy sync path answers plan requests from describePack + a cached
+        // hash instead of building the pack; its size, ordering, and manifest
+        // must be indistinguishable from a real build.
+        PreparedWorldFile foo = preparedFile("data/foo.txt", "alpha-beta-gamma".getBytes());
+        PreparedWorldFile bar = preparedFile("nested/dir/bar.bin", new byte[]{1, 2, 3, 4, 5});
+        PreparedWorldFile override = new PreparedWorldFile(null, "level.dat", "override-hash", 9L, 9L, "application/octet-stream", false, "canonical".getBytes());
+        Path packFile = this.tempDir.resolve("golden.pack");
+
+        LocalPackDescriptorDto built = SharedWorldPack.buildPack("non-region", List.of(bar, override, foo), packFile);
+        LocalPackDescriptorDto described = SharedWorldPack.describePack("non-region", List.of(foo, bar, override), built.hash());
+
+        assertEquals(built.packId(), described.packId());
+        assertEquals(built.hash(), described.hash());
+        assertEquals(built.size(), described.size());
+        assertEquals(Files.size(packFile), described.size());
+        assertEquals(built.fileCount(), described.fileCount());
+        assertArrayEquals(built.files(), described.files());
+    }
+
+    @Test
+    void describePackOfAnEmptyFileListMatchesTheEmptyBuiltPack() throws Exception {
+        Path packFile = this.tempDir.resolve("empty.pack");
+        LocalPackDescriptorDto built = SharedWorldPack.buildPack("non-region", List.of(), packFile);
+        LocalPackDescriptorDto described = SharedWorldPack.describePack("non-region", List.of(), built.hash());
+
+        assertEquals(built.size(), described.size());
+        assertEquals(Files.size(packFile), described.size());
+        assertEquals(0, described.fileCount());
+    }
+
+    @Test
+    void extractReportsTheContentHashOfEveryEntry() throws Exception {
+        PreparedWorldFile foo = preparedFile("data/foo.txt", "alpha".getBytes());
+        PreparedWorldFile bar = preparedFile("nested/dir/bar.bin", new byte[]{1, 2, 3, 4});
+        Path packFile = this.tempDir.resolve("hashes.pack");
+        Path extractRoot = this.tempDir.resolve("hashes-extract");
+        SharedWorldPack.buildPack(List.of(foo, bar), packFile);
+
+        var extractedHashes = SharedWorldPack.extract(packFile, extractRoot);
+
+        assertEquals(foo.hash(), extractedHashes.get("data/foo.txt"));
+        assertEquals(bar.hash(), extractedHashes.get("nested/dir/bar.bin"));
+        assertEquals(LocalWorldHasher.hashFile(extractRoot.resolve("data").resolve("foo.txt")), extractedHashes.get("data/foo.txt"));
+    }
+
     private PreparedWorldFile preparedFile(String relativePath, byte[] bytes) throws Exception {
         Path file = this.tempDir.resolve("source").resolve(relativePath.replace('/', java.io.File.separatorChar));
         if (file.getParent() != null) {

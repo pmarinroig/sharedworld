@@ -13,14 +13,21 @@ import java.nio.channels.SeekableByteChannel;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 
 public final class SharedWorldPack {
     public static final String PACK_ID = "non-region";
+    /** Salted into cached pack-hash fingerprints so a format bump invalidates them. */
+    static final int FORMAT_VERSION = 1;
     private static final int MAGIC = 0x5357504B; // SWPK
-    private static final int VERSION = 1;
+    private static final int VERSION = FORMAT_VERSION;
     private static final int ALIGNMENT = 4096;
 
     private SharedWorldPack() {
@@ -30,7 +37,25 @@ public final class SharedWorldPack {
         return buildPack(PACK_ID, files, target);
     }
 
-    public static LocalPackDescriptorDto buildPack(String packId, List<PreparedWorldFile> files, Path target) throws IOException {
+    /**
+     * Describes the pack these files would build — same id, hash, size, and
+     * manifest as {@link #buildPack} — without writing any bytes. The size
+     * comes from the deterministic layout math (sorted entries, declared
+     * sizes, fixed alignment); the hash must be supplied by a caller that
+     * already knows it (the scan cache keyed by member fingerprint).
+     */
+    public static LocalPackDescriptorDto describePack(String packId, List<PreparedWorldFile> files, String packHash) {
+        PackLayout layout = computeLayout(files);
+        return new LocalPackDescriptorDto(
+                packId,
+                packHash,
+                layout.packSize(),
+                layout.headers().size(),
+                packedManifest(layout.headers())
+        );
+    }
+
+    private static PackLayout computeLayout(List<PreparedWorldFile> files) {
         List<PackEntryData> entries = files.stream()
                 .sorted(Comparator.comparing(PreparedWorldFile::relativePath))
                 .map(SharedWorldPack::toEntryData)
@@ -50,11 +75,32 @@ public final class SharedWorldPack {
             headers.add(new PackEntryHeader(entry, nextOffset));
             nextOffset = align(nextOffset + entry.size(), ALIGNMENT);
         }
+        // The last entry is not padded, so the file ends exactly at its final
+        // body byte; an empty pack is just the (unaligned) metadata block.
+        long packSize = headers.isEmpty()
+                ? metadataSize
+                : headers.get(headers.size() - 1).offset() + entries.get(entries.size() - 1).size();
+        return new PackLayout(headers, metadataSize, packSize);
+    }
+
+    private static PackedManifestFileDto[] packedManifest(List<PackEntryHeader> headers) {
+        return headers.stream().map(header -> new PackedManifestFileDto(
+                header.entry().relativePath(),
+                header.entry().hash(),
+                header.entry().size(),
+                header.entry().contentType()
+        )).toArray(PackedManifestFileDto[]::new);
+    }
+
+    public static LocalPackDescriptorDto buildPack(String packId, List<PreparedWorldFile> files, Path target) throws IOException {
+        PackLayout layout = computeLayout(files);
+        long metadataSize = layout.metadataSize();
+        List<PackEntryHeader> headers = layout.headers();
 
         try (DataOutputStream output = new DataOutputStream(new BufferedOutputStream(Files.newOutputStream(target)))) {
             output.writeInt(MAGIC);
             output.writeInt(VERSION);
-            output.writeInt(entries.size());
+            output.writeInt(headers.size());
             for (PackEntryHeader header : headers) {
                 output.writeInt(header.entry().pathBytes().length);
                 output.write(header.entry().pathBytes());
@@ -79,12 +125,7 @@ public final class SharedWorldPack {
                 LocalWorldHasher.hashFile(target),
                 Files.size(target),
                 headers.size(),
-                headers.stream().map(header -> new PackedManifestFileDto(
-                        header.entry().relativePath(),
-                        header.entry().hash(),
-                        header.entry().size(),
-                        header.entry().contentType()
-                )).toArray(PackedManifestFileDto[]::new)
+                packedManifest(headers)
         );
     }
 
@@ -118,13 +159,20 @@ public final class SharedWorldPack {
         }
     }
 
-    public static void extract(Path packFile, Path outputDirectory) throws IOException {
+    /**
+     * Extracts every entry and returns each entry's content hash, computed
+     * while the bytes are written so callers verify extractions without a
+     * second full read of everything extracted.
+     */
+    public static Map<String, String> extract(Path packFile, Path outputDirectory) throws IOException {
         List<PackEntryMetadata> entries = readMetadata(packFile);
+        Map<String, String> extractedHashes = new HashMap<>(entries.size());
         for (PackEntryMetadata entry : entries) {
             Path target = outputDirectory.resolve(entry.relativePath().replace('/', java.io.File.separatorChar));
             if (target.getParent() != null) {
                 Files.createDirectories(target.getParent());
             }
+            MessageDigest digest = newSha256();
             try (SeekableByteChannel channel = Files.newByteChannel(packFile);
                  var output = Files.newOutputStream(target)) {
                 channel.position(entry.offset());
@@ -135,10 +183,21 @@ public final class SharedWorldPack {
                     if (read <= 0) {
                         throw new IOException("SharedWorld pack ended early while extracting " + entry.relativePath() + ".");
                     }
+                    digest.update(buffer, 0, read);
                     output.write(buffer, 0, read);
                     remaining -= read;
                 }
             }
+            extractedHashes.put(entry.relativePath(), HexFormat.of().formatHex(digest.digest()));
+        }
+        return extractedHashes;
+    }
+
+    private static MessageDigest newSha256() throws IOException {
+        try {
+            return MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IOException("Missing SHA-256 implementation.", exception);
         }
     }
 
@@ -221,6 +280,9 @@ public final class SharedWorldPack {
     }
 
     private record PackEntryHeader(PackEntryData entry, long offset) {
+    }
+
+    private record PackLayout(List<PackEntryHeader> headers, long metadataSize, long packSize) {
     }
 
     private record PackEntryMetadata(String relativePath, long size, String contentType, String hash, long offset) {

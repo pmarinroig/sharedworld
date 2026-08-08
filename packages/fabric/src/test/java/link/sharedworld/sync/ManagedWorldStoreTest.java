@@ -6,12 +6,9 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Comparator;
-import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class ManagedWorldStoreTest {
@@ -19,46 +16,100 @@ final class ManagedWorldStoreTest {
     Path tempDir;
 
     @Test
-    void failedSnapshotCopyDeletesPartialStagingDirectory() throws IOException {
-        Path workingCopy = Files.createDirectories(this.tempDir.resolve("working-copy"));
-        Path stagingDirectory = this.tempDir.resolve("staging").resolve("snapshot-1");
+    void captureMirrorRefreshCopiesChangedAddsNewAndDeletesRemovedFiles() throws IOException {
+        ManagedWorldStore store = new ManagedWorldStore(this.tempDir.resolve("mirror-root"));
+        Path workingCopy = Files.createDirectories(store.workingCopy("world-1").resolve("region")).getParent();
+        Files.writeString(workingCopy.resolve("level.dat"), "level-v1");
+        Files.writeString(workingCopy.resolve("region").resolve("r.0.0.mca"), "region-v1");
+        Files.writeString(workingCopy.resolve("session.lock"), "lock");
 
-        IOException exception = assertThrows(IOException.class, () -> ManagedWorldStore.createSnapshotStagingCopy(
-                workingCopy,
-                stagingDirectory,
-                (sourceRoot, targetRoot) -> {
-                    Files.createDirectories(targetRoot.resolve("region"));
-                    Files.writeString(targetRoot.resolve("region").resolve("r.0.0.mca"), "partial");
-                    throw new IOException("copy failed");
-                },
-                ManagedWorldStoreTest::deleteIfExistsRecursively
-        ));
+        Path mirror = store.createSnapshotStagingCopy("world-1");
+        assertEquals("level-v1", Files.readString(mirror.resolve("level.dat")));
+        assertEquals("region-v1", Files.readString(mirror.resolve("region").resolve("r.0.0.mca")));
+        assertFalse(Files.exists(mirror.resolve("session.lock")));
 
-        assertEquals("copy failed", exception.getMessage());
-        assertFalse(Files.exists(stagingDirectory));
+        Files.writeString(workingCopy.resolve("level.dat"), "level-v2!");
+        Files.createDirectories(workingCopy.resolve("data"));
+        Files.writeString(workingCopy.resolve("data").resolve("new.dat"), "new");
+        Files.delete(workingCopy.resolve("region").resolve("r.0.0.mca"));
+
+        Path refreshed = store.createSnapshotStagingCopy("world-1");
+        assertEquals(mirror, refreshed);
+        assertEquals("level-v2!", Files.readString(refreshed.resolve("level.dat")));
+        assertEquals("new", Files.readString(refreshed.resolve("data").resolve("new.dat")));
+        assertFalse(Files.exists(refreshed.resolve("region").resolve("r.0.0.mca")));
     }
 
     @Test
-    void failedSnapshotCleanupIsSuppressedOntoOriginalCopyFailure() throws IOException {
-        Path workingCopy = Files.createDirectories(this.tempDir.resolve("working-copy"));
-        Path stagingDirectory = this.tempDir.resolve("staging").resolve("snapshot-1");
+    void captureMirrorSkipsFilesWhoseSizeAndMtimeMatch() throws IOException {
+        ManagedWorldStore store = new ManagedWorldStore(this.tempDir.resolve("mirror-skip-root"));
+        Path workingCopy = Files.createDirectories(store.workingCopy("world-1"));
+        Files.writeString(workingCopy.resolve("level.dat"), "abcdefgh");
+        Path mirror = store.createSnapshotStagingCopy("world-1");
 
-        IOException exception = assertThrows(IOException.class, () -> ManagedWorldStore.createSnapshotStagingCopy(
-                workingCopy,
-                stagingDirectory,
-                (sourceRoot, targetRoot) -> {
-                    Files.writeString(targetRoot.resolve("level.dat"), "partial");
-                    throw new IOException("copy failed");
+        // Same size, same mtime, different bytes: the stat compare must skip
+        // the copy (that skip is the entire point of the mirror), leaving the
+        // divergent mirror bytes in place.
+        Files.writeString(mirror.resolve("level.dat"), "HGFEDCBA");
+        Files.setLastModifiedTime(mirror.resolve("level.dat"), Files.getLastModifiedTime(workingCopy.resolve("level.dat")));
+
+        store.createSnapshotStagingCopy("world-1");
+        assertEquals("HGFEDCBA", Files.readString(mirror.resolve("level.dat")));
+    }
+
+    @Test
+    void ensureRegionBaselinesKeepsMatchingCopiesChangedAndDeletesStale() throws IOException {
+        ManagedWorldStore store = new ManagedWorldStore(this.tempDir.resolve("baseline-root"));
+        String bundleA = "region-bundle:region:0:0";
+        String bundleB = "region-bundle:region:0:1";
+        Path bodyA1 = Files.writeString(this.tempDir.resolve("body-a1"), "bundle-a-v1");
+        Path bodyB1 = Files.writeString(this.tempDir.resolve("body-b1"), "bundle-b-v1");
+
+        store.ensureRegionBaselines(
+                "world-1",
+                java.util.Map.of(bundleA, "hash-a1", bundleB, "hash-b1"),
+                packId -> packId.equals(bundleA) ? bodyA1 : bodyB1,
+                "snap-1"
+        );
+        assertEquals("bundle-a-v1", Files.readString(store.regionBundleBaselineFile("world-1", bundleA)));
+        assertEquals("bundle-b-v1", Files.readString(store.regionBundleBaselineFile("world-1", bundleB)));
+        assertEquals("snap-1", store.regionBaselineSnapshotId("world-1"));
+
+        // Unchanged hashes: the body supplier must never be consulted (a lazy
+        // artifact would have to pack the world to answer it).
+        store.ensureRegionBaselines(
+                "world-1",
+                java.util.Map.of(bundleA, "hash-a1", bundleB, "hash-b1"),
+                packId -> {
+                    throw new IOException("unchanged baselines must not request bodies");
                 },
-                targetRoot -> {
-                    throw new IOException("cleanup failed");
-                }
-        ));
+                "snap-2"
+        );
+        assertEquals("bundle-a-v1", Files.readString(store.regionBundleBaselineFile("world-1", bundleA)));
+        assertEquals("snap-2", store.regionBaselineSnapshotId("world-1"));
 
-        assertEquals("copy failed", exception.getMessage());
-        assertEquals(1, exception.getSuppressed().length);
-        assertEquals("cleanup failed", exception.getSuppressed()[0].getMessage());
-        assertTrue(Files.exists(stagingDirectory));
+        // A changed, B gone: A is recopied, B's baseline file is deleted.
+        Path bodyA2 = Files.writeString(this.tempDir.resolve("body-a2"), "bundle-a-v2");
+        store.ensureRegionBaselines("world-1", java.util.Map.of(bundleA, "hash-a2"), packId -> bodyA2, "snap-3");
+        assertEquals("bundle-a-v2", Files.readString(store.regionBundleBaselineFile("world-1", bundleA)));
+        assertFalse(Files.exists(store.regionBundleBaselineFile("world-1", bundleB)));
+        assertEquals("snap-3", store.regionBaselineSnapshotId("world-1"));
+    }
+
+    @Test
+    void deleteSnapshotStagingCopyLeavesTheMirrorButRemovesLegacyStaging() throws IOException {
+        ManagedWorldStore store = new ManagedWorldStore(this.tempDir.resolve("mirror-delete-root"));
+        Path workingCopy = Files.createDirectories(store.workingCopy("world-1"));
+        Files.writeString(workingCopy.resolve("level.dat"), "level");
+        Path mirror = store.createSnapshotStagingCopy("world-1");
+
+        store.deleteSnapshotStagingCopy(mirror);
+        assertTrue(Files.exists(mirror.resolve("level.dat")));
+
+        Path legacyStaging = Files.createDirectories(store.stagingRoot("world-1").resolve("snapshot-123"));
+        Files.writeString(legacyStaging.resolve("level.dat"), "staged");
+        store.deleteSnapshotStagingCopy(legacyStaging);
+        assertFalse(Files.exists(legacyStaging));
     }
 
     @org.junit.jupiter.api.Test
@@ -102,14 +153,4 @@ final class ManagedWorldStoreTest {
         assertTrue(Files.notExists(workingCopy.resolve("region").resolve("r.0.0.mca.artifact.789.part")));
     }
 
-    private static void deleteIfExistsRecursively(Path root) throws IOException {
-        if (!Files.exists(root)) {
-            return;
-        }
-        try (Stream<Path> stream = Files.walk(root)) {
-            for (Path path : stream.sorted(Comparator.reverseOrder()).toList()) {
-                Files.deleteIfExists(path);
-            }
-        }
-    }
 }

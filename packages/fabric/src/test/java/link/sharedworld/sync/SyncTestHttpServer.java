@@ -39,6 +39,7 @@ final class SyncTestHttpServer implements AutoCloseable {
     private SnapshotManifestDto finalizeManifest;
     private ErrorDto finalizeError;
     private String lastPrepareUploadsBody;
+    private String lastDownloadPlanBody;
     private String lastFinalizeSnapshotBody;
 
     SyncTestHttpServer() throws IOException {
@@ -106,6 +107,10 @@ final class SyncTestHttpServer implements AutoCloseable {
         return this.lastPrepareUploadsBody;
     }
 
+    String lastDownloadPlanBody() {
+        return this.lastDownloadPlanBody;
+    }
+
     String lastFinalizeSnapshotBody() {
         return this.lastFinalizeSnapshotBody;
     }
@@ -150,6 +155,7 @@ final class SyncTestHttpServer implements AutoCloseable {
                 return;
             }
             if (path.endsWith("/downloads/plan")) {
+                this.lastDownloadPlanBody = readBody(exchange);
                 if (this.downloadPlan == null) {
                     writeError(exchange, "missing_download_plan", "Download plan was not configured.", 500);
                     return;
