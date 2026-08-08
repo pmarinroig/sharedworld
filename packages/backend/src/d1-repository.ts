@@ -1153,7 +1153,7 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     for (const row of referrerRows) {
       const donorId = String(row.members_snapshot_id);
       const packId = String(row.pack_id);
-      const key = `${donorId} ${packId}`;
+      const key = `${donorId}\u0000${packId}`;
       if (promotionTargets.has(key)) {
         continue;
       }
@@ -1364,7 +1364,7 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     );
     const membersByPack = new Map<string, Array<{ path: string; hash: string; size: number; contentType: string }>>();
     for (const fileRow of memberRows) {
-      const key = `${String(fileRow.snapshot_id)} ${String(fileRow.pack_id)}`;
+      const key = `${String(fileRow.snapshot_id)}\u0000${String(fileRow.pack_id)}`;
       let members = membersByPack.get(key);
       if (!members) {
         members = [];
@@ -1379,7 +1379,7 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     }
     return packRows.map((row) => {
       const membersSnapshotId = asNullableString(row.members_snapshot_id) ?? snapshotId;
-      const members = membersByPack.get(`${membersSnapshotId} ${String(row.pack_id)}`) ?? [];
+      const members = membersByPack.get(`${membersSnapshotId}\u0000${String(row.pack_id)}`) ?? [];
       if (members.length === 0 && membersSnapshotId !== snapshotId) {
         console.warn("SharedWorld snapshot pack inherited zero member rows — donor missing?", {
           snapshotId,

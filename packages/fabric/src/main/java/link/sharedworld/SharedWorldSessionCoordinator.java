@@ -64,7 +64,7 @@ public final class SharedWorldSessionCoordinator {
                 SharedWorldCoordinatorSupport.systemClock(),
                 SharedWorldCoordinatorSupport.liveClientShell(),
                 SharedWorldCoordinatorSupport.currentPlayerIdentity(),
-                (parent, result, startupMode) -> SharedWorldClient.hostingManager().beginHosting(parent, result.world(), result.latestManifest(), result.assignment(), startupMode),
+                (parent, result, startupMode) -> SharedWorldClient.hostingManager().beginHosting(parent, result.world(), result.assignment(), startupMode),
                 new SessionUi() {
                     @Override
                     public Screen joinError(Screen parent, Throwable error) {
@@ -77,7 +77,7 @@ public final class SharedWorldSessionCoordinator {
 
                     @Override
                     public Screen hostAcquired(Screen parent, EnterSessionResponseDto result) {
-                        return new HostAcquiredScreen(parent, result.world(), result.latestManifest(), result.assignment());
+                        return new HostAcquiredScreen(parent);
                     }
 
                     @Override

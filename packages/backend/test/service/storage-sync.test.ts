@@ -798,7 +798,7 @@ describe("SharedWorldService storage and sync planning", () => {
     const downloadPlan = await instance.downloadPlan(
       { playerUuid: "player-owner", playerName: "Owner" },
       world.id,
-      []
+      { files: [], nonRegionPack: null }
     );
 
     expect(uploadPlan.syncPolicy.maxConcurrentUploads).toBe(3);

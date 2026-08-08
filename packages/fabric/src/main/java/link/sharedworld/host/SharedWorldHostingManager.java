@@ -79,7 +79,6 @@ public final class SharedWorldHostingManager {
     private volatile String statusMessage = "";
     private volatile String errorMessage;
     private volatile WorldSummaryDto world;
-    private volatile SnapshotManifestDto latestManifest;
     private volatile String hostPlayerUuid;
     private volatile boolean startupCancelRequested;
     private volatile boolean cancelLeaseReleaseSettled;
@@ -253,11 +252,11 @@ public final class SharedWorldHostingManager {
      * Authority source:
      * Backend host assignment for the current runtime epoch/token.
      */
-    public void beginHosting(Screen launchingScreen, WorldSummaryDto world, SnapshotManifestDto latestManifest, HostAssignmentDto assignment) {
-        beginHosting(launchingScreen, world, latestManifest, assignment, StartupMode.NORMAL);
+    public void beginHosting(Screen launchingScreen, WorldSummaryDto world, HostAssignmentDto assignment) {
+        beginHosting(launchingScreen, world, assignment, StartupMode.NORMAL);
     }
 
-    public void beginHosting(Screen launchingScreen, WorldSummaryDto world, SnapshotManifestDto latestManifest, HostAssignmentDto assignment, StartupMode startupMode) {
+    public void beginHosting(Screen launchingScreen, WorldSummaryDto world, HostAssignmentDto assignment, StartupMode startupMode) {
         if (this.startupStarted.get() && this.world != null && this.world.id().equals(world.id())) {
             // Re-entry into an attempt that is already running. If the backend
             // just issued a fresh assignment (a new epoch), release it instead
@@ -287,7 +286,6 @@ public final class SharedWorldHostingManager {
         }
 
         this.world = world;
-        this.latestManifest = latestManifest;
         this.runtimeEpoch = assignment.runtimeEpoch();
         this.hostToken = assignment.hostToken();
         this.hostPlayerUuid = this.apiClient.canonicalAssignedPlayerUuidWithHyphens(assignment.playerUuid());
@@ -1170,7 +1168,7 @@ public final class SharedWorldHostingManager {
                         ? WorldSnapshotCaptureCoordinator.CaptureMode.FINALIZATION_FLUSH
                         : WorldSnapshotCaptureCoordinator.CaptureMode.AUTOSAVE_WINDOW;
                 stagingDirectory = this.snapshotCaptureCoordinator.capture(context.worldId(), server, captureMode);
-                SnapshotManifestDto uploadedManifest = this.syncAccess.uploadSnapshot(
+                this.syncAccess.uploadSnapshot(
                         context.worldId(),
                         stagingDirectory,
                         requireHostPlayerUuid(),
@@ -1181,11 +1179,6 @@ public final class SharedWorldHostingManager {
                 dispatchToMainThread(() -> {
                     if (!isCurrentAttempt(context)) {
                         return;
-                    }
-                    // A null manifest means the sync layer proved nothing changed
-                    // and skipped the finalize; the previous manifest stays valid.
-                    if (uploadedManifest != null) {
-                        this.latestManifest = uploadedManifest;
                     }
                     this.lastAutosaveAt = System.currentTimeMillis();
                     // A release that began while this save was in flight owns the
@@ -1410,7 +1403,6 @@ public final class SharedWorldHostingManager {
         this.statusMessage = "";
         this.errorMessage = null;
         this.world = null;
-        this.latestManifest = null;
         this.hostPlayerUuid = null;
         this.coordinatedRelease = CoordinatedRelease.NONE;
         this.startupCancelRequested = false;

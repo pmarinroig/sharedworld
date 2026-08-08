@@ -3,29 +3,21 @@ package link.sharedworld.sync;
 import link.sharedworld.SharedWorldDevSessionBridge;
 import link.sharedworld.api.SharedWorldApiClient;
 import link.sharedworld.api.SharedWorldModels.DownloadPlanDto;
-import link.sharedworld.api.SharedWorldModels.DownloadPlanEntryDto;
-import link.sharedworld.api.SharedWorldModels.DownloadPackPlanDto;
-import link.sharedworld.api.SharedWorldModels.DownloadPlanStepDto;
 import link.sharedworld.api.SharedWorldModels.LocalFileDescriptorDto;
 import link.sharedworld.api.SharedWorldModels.LocalPackDescriptorDto;
 import link.sharedworld.api.SharedWorldModels.ManifestFileDto;
 import link.sharedworld.api.SharedWorldModels.SnapshotPackDto;
 import link.sharedworld.api.SharedWorldModels.SignedBlobUrlDto;
 import link.sharedworld.api.SharedWorldModels.SnapshotManifestDto;
-import link.sharedworld.api.SharedWorldModels.SyncPolicyDto;
 import link.sharedworld.api.SharedWorldModels.UploadPackPlanDto;
 import link.sharedworld.api.SharedWorldModels.UploadPlanDto;
 import link.sharedworld.api.SharedWorldModels.UploadPlanEntryDto;
-import link.sharedworld.util.RetryPolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.nio.file.FileAlreadyExistsException;
-import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -34,15 +26,12 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicLongArray;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 public final class WorldSyncCoordinator {
     private static final Logger LOGGER = LoggerFactory.getLogger("sharedworld-sync");
@@ -62,7 +51,6 @@ public final class WorldSyncCoordinator {
     private static final int REGION_DELTA_BLOCK_SIZE = 4 * 1024;
 
     private final SharedWorldApiClient apiClient;
-    private volatile SyncPolicy activeSyncPolicy;
     private final ManagedWorldStore worldStore;
 
     public WorldSyncCoordinator(SharedWorldApiClient apiClient, ManagedWorldStore worldStore) {
@@ -156,8 +144,7 @@ public final class WorldSyncCoordinator {
             );
             WorldSyncSupport.logTiming(LOGGER, "request upload plan", worldId, planStartedAt);
 
-            SyncPolicy resolvedPolicy = SyncPolicy.from(plan.syncPolicy());
-            this.activeSyncPolicy = resolvedPolicy;
+            WorldSyncSupport.SyncPolicy resolvedPolicy = WorldSyncSupport.SyncPolicy.from(plan.syncPolicy());
             failOnOversizedWorldFile(canonicalFiles, resolvedPolicy.maxUploadBodyBytes());
             Map<String, WorldSyncSupport.LazyArtifact> regionBundlesById = new HashMap<>();
             Map<String, String> bundleHashesById = new HashMap<>();
@@ -358,7 +345,7 @@ public final class WorldSyncCoordinator {
             for (WorldSyncSupport.LazyArtifact bundle : localRegionBundles) {
                 reportedLocalBundles.put(bundle.packId(), bundle);
             }
-            applyDownloadPlan(worldId, worldDirectory, plan, localPackArtifact, reportedLocalBundles, scanCache, progressListener);
+            new DownloadPlanApplier(this.apiClient, this.worldStore, worldId, worldDirectory, plan, localPackArtifact, reportedLocalBundles, scanCache, progressListener).apply();
         } finally {
             scanCache.save();
             if (localPackArtifact != null) {
@@ -382,7 +369,7 @@ public final class WorldSyncCoordinator {
             UploadPlanDto plan,
             WorldSyncSupport.LazyArtifact nonRegionArtifact,
             Map<String, WorldSyncSupport.LazyArtifact> regionBundlesById,
-            SyncPolicy policy,
+            WorldSyncSupport.SyncPolicy policy,
             WorldSyncProgressListener progressListener
     ) throws IOException, InterruptedException {
         // nonRegionArtifact is null when the non-region files went up as shard
@@ -463,12 +450,12 @@ public final class WorldSyncCoordinator {
 
             List<PreparedUpload> preparedUploads = new ArrayList<>(bundlesToPrepare.size() + (preparePack ? 1 : 0));
             for (Future<PreparedUpload> future : futures) {
-                preparedUploads.add(await(future));
+                preparedUploads.add(WorldSyncSupport.await(future));
             }
             WorldSyncSupport.logTiming(LOGGER, "prepare upload bodies", worldId, startedAt);
             return preparedUploads;
         } finally {
-            shutDownAndAwait(executor);
+            WorldSyncSupport.shutDownAndAwait(executor);
         }
     }
 
@@ -504,7 +491,7 @@ public final class WorldSyncCoordinator {
     private void uploadPreparedFiles(
             String worldId,
             List<PreparedUpload> preparedUploads,
-            SyncPolicy policy,
+            WorldSyncSupport.SyncPolicy policy,
             WorldSyncProgressListener progressListener,
             long totalUploadBytes
     ) throws IOException, InterruptedException {
@@ -551,7 +538,7 @@ public final class WorldSyncCoordinator {
                         return null;
                     }
                     limiter.awaitTurn();
-                    withTransportRetries(() -> this.apiClient.uploadBlob(
+                    WorldSyncSupport.withTransportRetries(policy, () -> this.apiClient.uploadBlob(
                             preparedUpload.uploadUrl(),
                             preparedUpload.bodyPath(),
                             preparedUpload.manifestFile() != null ? preparedUpload.manifestFile().contentType() : "application/octet-stream",
@@ -588,11 +575,11 @@ public final class WorldSyncCoordinator {
             }
 
             for (Future<Void> future : futures) {
-                await(future);
+                WorldSyncSupport.await(future);
             }
             WorldSyncSupport.logTiming(LOGGER, "upload changed files", worldId, startedAt);
         } finally {
-            shutDownAndAwait(executor);
+            WorldSyncSupport.shutDownAndAwait(executor);
         }
     }
 
@@ -621,340 +608,6 @@ public final class WorldSyncCoordinator {
                 DEV_SLOW_UPLOAD_MS_PROPERTY
         );
         Thread.sleep(delayMs);
-    }
-
-    private void applyDownloadPlan(
-            String worldId,
-            Path worldDirectory,
-            DownloadPlanDto plan,
-            WorldSyncSupport.LazyArtifact reportedLocalPack,
-            Map<String, WorldSyncSupport.LazyArtifact> reportedLocalBundles,
-            WorldScanCache scanCache,
-            WorldSyncProgressListener progressListener
-    ) throws IOException, InterruptedException {
-        SyncPolicy policy = SyncPolicy.from(plan.syncPolicy());
-        this.activeSyncPolicy = policy;
-        long totalDownloadBytes = Arrays.stream(plan.downloads())
-                .flatMap(download -> Arrays.stream(download.steps()))
-                .mapToLong(DownloadPlanStepDto::artifactSize)
-                .sum()
-                + (plan.nonRegionPackDownload() == null ? 0L : Arrays.stream(plan.nonRegionPackDownload().steps()).mapToLong(DownloadPlanStepDto::artifactSize).sum())
-                + (plan.regionBundleDownloads() == null ? 0L : Arrays.stream(plan.regionBundleDownloads()).flatMap(download -> Arrays.stream(download.steps())).mapToLong(DownloadPlanStepDto::artifactSize).sum());
-        AtomicLong downloadedBytes = new AtomicLong(0L);
-        int regionBundleFileCount = plan.regionBundleDownloads() == null ? 0 : Arrays.stream(plan.regionBundleDownloads()).mapToInt(download -> download.files().length).sum();
-        List<DownloadedFile> downloadedFiles = new ArrayList<>(plan.downloads().length + (plan.nonRegionPackDownload() == null ? 0 : plan.nonRegionPackDownload().files().length) + regionBundleFileCount);
-        long downloadStartedAt = System.nanoTime();
-        int totalTransferItems = plan.downloads().length + (plan.nonRegionPackDownload() == null ? 0 : 1) + (plan.regionBundleDownloads() == null ? 0 : plan.regionBundleDownloads().length);
-        AtomicLongArray perFileDownloadedBytes = new AtomicLongArray(totalTransferItems);
-        long[] downloadFileSizes = new long[totalTransferItems];
-        int offset = 0;
-        if (plan.nonRegionPackDownload() != null) {
-            downloadFileSizes[0] = Math.max(1L, Arrays.stream(plan.nonRegionPackDownload().steps()).mapToLong(DownloadPlanStepDto::artifactSize).sum());
-            offset = 1;
-        }
-        int bundleOffset = offset;
-        if (plan.regionBundleDownloads() != null) {
-            for (int i = 0; i < plan.regionBundleDownloads().length; i++) {
-                downloadFileSizes[bundleOffset + i] = Math.max(1L, Arrays.stream(plan.regionBundleDownloads()[i].steps()).mapToLong(DownloadPlanStepDto::artifactSize).sum());
-            }
-            offset += plan.regionBundleDownloads().length;
-        }
-        for (int i = 0; i < plan.downloads().length; i++) {
-            long artifactBytes = Arrays.stream(plan.downloads()[i].steps()).mapToLong(DownloadPlanStepDto::artifactSize).sum();
-            downloadFileSizes[i + offset] = Math.max(1L, artifactBytes);
-        }
-        Path downloadedPack = null;
-        Path extractedPackRoot = null;
-        Map<String, Path> downloadedRegionBundleArtifacts = new HashMap<>();
-        List<Path> extractedRegionBundleRoots = new ArrayList<>();
-        List<Future<DownloadedFile>> pendingEntryDownloads = List.of();
-
-        // All temps below (downloaded artifacts, extract roots, per-file .part
-        // temps) live inside the world container and are cleaned by the single
-        // finally at the end, so any of the validation/apply throw sites leaves
-        // no residue behind.
-        try {
-        if (plan.nonRegionPackDownload() != null) {
-            downloadedPack = downloadGroupedArtifactToTempFile(
-                    worldId,
-                    plan.nonRegionPackDownload(),
-                    this.worldStore.packBaselineFile(worldId),
-                    reportedLocalPack,
-                    "pack-full",
-                    "pack-delta",
-                    downloadedBytes,
-                    totalDownloadBytes,
-                    perFileDownloadedBytes,
-                    downloadFileSizes[0],
-                    downloadFileSizes,
-                    0,
-                    progressListener
-            );
-            if (!LocalWorldHasher.hashFile(downloadedPack).equals(plan.nonRegionPackDownload().hash())) {
-                throw new IOException("SharedWorld reconstructed pack hash mismatch.");
-            }
-            extractedPackRoot = Files.createTempDirectory(this.worldStore.worldContainer(worldId), "pack-extract-");
-            Map<String, String> extractedPackHashes = SharedWorldPack.extract(downloadedPack, extractedPackRoot);
-            for (var file : plan.nonRegionPackDownload().files()) {
-                Path tempFile = extractedPackRoot.resolve(file.path().replace('/', java.io.File.separatorChar));
-                if (!Files.exists(tempFile)) {
-                    throw new IOException("SharedWorld pack was missing extracted file " + file.path() + ".");
-                }
-                if (!file.hash().equals(extractedPackHashes.get(file.path()))) {
-                    throw new IOException("SharedWorld extracted pack file hash mismatch for " + file.path() + ".");
-                }
-                downloadedFiles.add(new DownloadedFile(file.path(), worldDirectory.resolve(file.path().replace('/', java.io.File.separatorChar)), tempFile));
-            }
-        }
-
-        if (plan.regionBundleDownloads() != null) {
-            for (int bundleIndex = 0; bundleIndex < plan.regionBundleDownloads().length; bundleIndex++) {
-                DownloadPackPlanDto bundle = plan.regionBundleDownloads()[bundleIndex];
-                Path downloadedBundle = downloadGroupedArtifactToTempFile(
-                        worldId,
-                        bundle,
-                        this.worldStore.regionBundleBaselineFile(worldId, bundle.packId()),
-                        reportedLocalBundles.get(bundle.packId()),
-                        "region-full",
-                        "region-delta",
-                        downloadedBytes,
-                        totalDownloadBytes,
-                        perFileDownloadedBytes,
-                        downloadFileSizes[bundleIndex + bundleOffset],
-                        downloadFileSizes,
-                        bundleIndex + bundleOffset,
-                        progressListener
-                );
-                if (!LocalWorldHasher.hashFile(downloadedBundle).equals(bundle.hash())) {
-                    throw new IOException("SharedWorld reconstructed region bundle hash mismatch for " + bundle.packId() + ".");
-                }
-                Path extractRoot = Files.createTempDirectory(this.worldStore.worldContainer(worldId), "region-bundle-extract-");
-                extractedRegionBundleRoots.add(extractRoot);
-                Map<String, String> extractedBundleHashes = SharedWorldPack.extract(downloadedBundle, extractRoot);
-                downloadedRegionBundleArtifacts.put(bundle.packId(), downloadedBundle);
-                for (var file : bundle.files()) {
-                    Path tempFile = extractRoot.resolve(file.path().replace('/', java.io.File.separatorChar));
-                    if (!Files.exists(tempFile)) {
-                        throw new IOException("SharedWorld region bundle was missing extracted file " + file.path() + ".");
-                    }
-                    if (!file.hash().equals(extractedBundleHashes.get(file.path()))) {
-                        throw new IOException("SharedWorld extracted region bundle file hash mismatch for " + file.path() + ".");
-                    }
-                    downloadedFiles.add(new DownloadedFile(file.path(), worldDirectory.resolve(file.path().replace('/', java.io.File.separatorChar)), tempFile));
-                }
-            }
-        }
-
-        if (plan.downloads().length > 0) {
-            ExecutorService executor = Executors.newFixedThreadPool(policy.maxParallelDownloads());
-            List<Future<DownloadedFile>> futures = new ArrayList<>(plan.downloads().length);
-            pendingEntryDownloads = futures;
-            try {
-                for (int downloadIndex = 0; downloadIndex < plan.downloads().length; downloadIndex++) {
-                    DownloadPlanEntryDto download = plan.downloads()[downloadIndex];
-                    int fileIndex = downloadIndex + offset;
-                    futures.add(executor.submit(() -> {
-                        Path target = worldDirectory.resolve(download.path().replace('/', java.io.File.separatorChar));
-                        if (target.getParent() != null) {
-                            Files.createDirectories(target.getParent());
-                        }
-                        Path tempFile = downloadEntryToTempFile(
-                                worldId,
-                                worldDirectory,
-                                target,
-                                download,
-                                downloadedBytes,
-                                totalDownloadBytes,
-                                perFileDownloadedBytes,
-                                downloadFileSizes[fileIndex],
-                                downloadFileSizes,
-                                fileIndex,
-                                progressListener
-                        );
-                        if (LocalWorldHasher.hashFile(tempFile).equals(download.hash())) {
-                            return new DownloadedFile(download.path(), target, tempFile);
-                        }
-                        throw new IOException("SharedWorld reconstructed region file hash mismatch for " + download.path() + ".");
-                    }));
-                }
-
-                for (Future<DownloadedFile> future : futures) {
-                    downloadedFiles.add(await(future));
-                }
-            } finally {
-                shutDownAndAwait(executor);
-            }
-        } else if (plan.nonRegionPackDownload() == null) {
-            WorldSyncSupport.report(progressListener, STAGE_DOWNLOADING_CHANGED_FILES, 1.0D, 0L, 0L, "No downloads required");
-        }
-
-        WorldSyncSupport.logTiming(LOGGER, "download changed files", worldDirectory.getFileName().toString(), downloadStartedAt);
-
-        WorldSyncSupport.report(progressListener, STAGE_APPLYING_WORLD_UPDATE, 0.72D, null, null, "Applying world update");
-        for (DownloadedFile downloadedFile : downloadedFiles) {
-            moveAtomically(downloadedFile.tempPath(), downloadedFile.targetPath());
-        }
-
-        Set<String> desiredPaths = new HashSet<>(List.of(plan.retainedPaths()));
-        for (DownloadPlanEntryDto download : plan.downloads()) {
-            desiredPaths.add(download.path());
-        }
-        if (plan.nonRegionPackDownload() != null) {
-            for (var file : plan.nonRegionPackDownload().files()) {
-                desiredPaths.add(file.path());
-            }
-        }
-        if (plan.regionBundleDownloads() != null) {
-            for (var bundle : plan.regionBundleDownloads()) {
-                for (var file : bundle.files()) {
-                    desiredPaths.add(file.path());
-                }
-            }
-        }
-
-        if (Files.exists(worldDirectory)) {
-            try (Stream<Path> stream = Files.walk(worldDirectory)) {
-                for (Path path : stream.filter(Files::isRegularFile).sorted(Comparator.reverseOrder()).toList()) {
-                    String relativePath = worldDirectory.relativize(path).toString().replace('\\', '/');
-                    if (!desiredPaths.contains(relativePath) && !"session.lock".equals(path.getFileName().toString())) {
-                        Files.deleteIfExists(path);
-                    }
-                }
-            }
-        }
-
-        pruneEmptyDirectories(worldDirectory);
-        seedScanCacheAfterApply(scanCache, plan, downloadedFiles);
-        if (plan.snapshotId() != null) {
-            Map<String, String> downloadedBundleHashes = new HashMap<>();
-            if (plan.regionBundleDownloads() != null) {
-                for (DownloadPackPlanDto bundle : plan.regionBundleDownloads()) {
-                    downloadedBundleHashes.put(bundle.packId(), bundle.hash());
-                }
-            }
-            this.worldStore.updateRegionBaselines(worldId, downloadedRegionBundleArtifacts, downloadedBundleHashes, plan.snapshotId());
-            if (downloadedPack != null) {
-                this.worldStore.refreshPackBaseline(worldId, downloadedPack, plan.nonRegionPackDownload().hash(), plan.snapshotId());
-            }
-        }
-        WorldSyncSupport.report(progressListener, STAGE_APPLYING_WORLD_UPDATE, 1.0D, null, null, "World update applied");
-        } finally {
-            for (Future<DownloadedFile> future : pendingEntryDownloads) {
-                if (future.isDone() && !future.isCancelled()) {
-                    try {
-                        DownloadedFile completed = future.get();
-                        if (completed != null) {
-                            Files.deleteIfExists(completed.tempPath());
-                        }
-                    } catch (ExecutionException | InterruptedException | IOException ignored) {
-                        // Failed futures cleaned their own temp; nothing to reclaim.
-                    }
-                }
-            }
-            for (DownloadedFile downloadedFile : downloadedFiles) {
-                Files.deleteIfExists(downloadedFile.tempPath());
-            }
-            if (extractedPackRoot != null) {
-                deleteRecursivelyQuietly(extractedPackRoot);
-            }
-            if (downloadedPack != null) {
-                Files.deleteIfExists(downloadedPack);
-            }
-            for (Path bundleArtifact : downloadedRegionBundleArtifacts.values()) {
-                Files.deleteIfExists(bundleArtifact);
-            }
-            for (Path extractRoot : extractedRegionBundleRoots) {
-                deleteRecursivelyQuietly(extractRoot);
-            }
-        }
-    }
-
-    /**
-     * Everything just moved into place was hash-verified against the plan, so
-     * the scan cache can adopt those hashes (and the downloaded packs' hashes,
-     * via their manifests) immediately: the next sync on this machine is all
-     * cache hits instead of re-hashing a world it just downloaded.
-     */
-    private static void seedScanCacheAfterApply(WorldScanCache scanCache, DownloadPlanDto plan, List<DownloadedFile> downloadedFiles) {
-        if (scanCache == null) {
-            return;
-        }
-        Map<String, String> planHashesByPath = new HashMap<>();
-        if (plan.nonRegionPackDownload() != null) {
-            for (var file : plan.nonRegionPackDownload().files()) {
-                planHashesByPath.put(file.path(), file.hash());
-            }
-        }
-        if (plan.regionBundleDownloads() != null) {
-            for (DownloadPackPlanDto bundle : plan.regionBundleDownloads()) {
-                for (var file : bundle.files()) {
-                    planHashesByPath.put(file.path(), file.hash());
-                }
-            }
-        }
-        for (DownloadPlanEntryDto download : plan.downloads()) {
-            planHashesByPath.put(download.path(), download.hash());
-        }
-        for (DownloadedFile downloadedFile : downloadedFiles) {
-            String hash = planHashesByPath.get(downloadedFile.relativePath());
-            if (hash == null) {
-                continue;
-            }
-            try {
-                var attributes = Files.readAttributes(downloadedFile.targetPath(), java.nio.file.attribute.BasicFileAttributes.class);
-                scanCache.recordVerifiedFileHash(downloadedFile.relativePath(), attributes.size(), attributes.lastModifiedTime().toMillis(), hash);
-            } catch (IOException exception) {
-                // Seeding is an optimization; a file we cannot stat just stays
-                // uncached and gets hashed on the next scan.
-            }
-        }
-        if (plan.nonRegionPackDownload() != null) {
-            scanCache.recordPackHash(
-                    SharedWorldPack.PACK_ID,
-                    WorldScanCache.packFingerprintFromManifest(SharedWorldPack.PACK_ID, plan.nonRegionPackDownload().files()),
-                    plan.nonRegionPackDownload().hash()
-            );
-        }
-        if (plan.regionBundleDownloads() != null) {
-            for (DownloadPackPlanDto bundle : plan.regionBundleDownloads()) {
-                scanCache.recordPackHash(
-                        bundle.packId(),
-                        WorldScanCache.packFingerprintFromManifest(bundle.packId(), bundle.files()),
-                        bundle.hash()
-                );
-            }
-        }
-    }
-
-    private static void deleteRecursivelyQuietly(Path root) {
-        try {
-            if (Files.exists(root)) {
-                deleteRecursively(root);
-            }
-        } catch (IOException exception) {
-            LOGGER.warn("SharedWorld failed to clean up a sync temp directory {}", root, exception);
-        }
-    }
-
-    /**
-     * shutdownNow interrupts workers but does not wait for them; deleting their
-     * temp files while they are still writing recreates the leak. Wait briefly,
-     * preserving this thread's own interrupt status (sync cancellation).
-     */
-    private static void shutDownAndAwait(ExecutorService executor) {
-        executor.shutdownNow();
-        boolean interrupted = Thread.interrupted();
-        try {
-            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
-                LOGGER.warn("SharedWorld sync worker pool did not terminate promptly after shutdown");
-            }
-        } catch (InterruptedException exception) {
-            interrupted = true;
-        } finally {
-            if (interrupted) {
-                Thread.currentThread().interrupt();
-            }
-        }
     }
 
     private PreparedUpload prepareGroupedArtifactUpload(
@@ -1027,266 +680,6 @@ public final class WorldSyncCoordinator {
         );
     }
 
-    private Path downloadEntryToTempFile(
-            String worldId,
-            Path worldDirectory,
-            Path target,
-            DownloadPlanEntryDto download,
-            AtomicLong downloadedBytes,
-            long totalDownloadBytes,
-            AtomicLongArray perFileDownloadedBytes,
-            long totalFileBytes,
-            long[] allFileSizes,
-            int fileIndex,
-            WorldSyncProgressListener progressListener
-    ) throws IOException, InterruptedException {
-        Path currentBase = null;
-        long fileTransferred = 0L;
-
-        try {
-        for (int stepIndex = 0; stepIndex < download.steps().length; stepIndex++) {
-            DownloadPlanStepDto step = download.steps()[stepIndex];
-            Path artifactFile = Files.createTempFile(
-                    target.getParent() == null ? worldDirectory : target.getParent(),
-                    target.getFileName().toString() + ".artifact.",
-                    ".part"
-            );
-            long stepStart = fileTransferred;
-            try {
-                if ("whole-gzip".equals(step.transferMode())) {
-                    withTransportRetries(() -> this.apiClient.downloadBlobToFile(step.download(), artifactFile, (bytesTransferred, ignoredTotalBytes) ->
-                            reportFileTransfer(fileIndex, stepStart, step.artifactSize(), bytesTransferred, downloadedBytes, totalDownloadBytes, perFileDownloadedBytes, totalFileBytes, allFileSizes, progressListener)
-                    ));
-                    fileTransferred = finalizeFileTransfer(fileIndex, stepStart, step.artifactSize(), downloadedBytes, totalDownloadBytes, perFileDownloadedBytes, totalFileBytes, allFileSizes, progressListener);
-                    currentBase = artifactFile;
-                } else {
-                        throw new IOException("SharedWorld download step had unknown transfer mode " + step.transferMode() + ".");
-                }
-            } finally {
-                if (currentBase == null || !currentBase.equals(artifactFile)) {
-                    Files.deleteIfExists(artifactFile);
-                }
-            }
-        }
-
-        if (currentBase == null) {
-            throw new IOException("SharedWorld download plan did not produce a file for " + download.path() + ".");
-        }
-        return currentBase;
-        } catch (IOException | RuntimeException | InterruptedException failure) {
-            // The chain cursor is always a temp this walk created, never a
-            // baseline or reported-local artifact.
-            if (currentBase != null) {
-                Files.deleteIfExists(currentBase);
-            }
-            throw failure;
-        }
-    }
-
-    private Path downloadGroupedArtifactToTempFile(
-            String worldId,
-            DownloadPackPlanDto download,
-            Path baselineFile,
-            WorldSyncSupport.LazyArtifact reportedLocalArtifact,
-            String fullTransferMode,
-            String deltaTransferMode,
-            AtomicLong downloadedBytes,
-            long totalDownloadBytes,
-            AtomicLongArray perFileDownloadedBytes,
-            long totalFileBytes,
-            long[] allFileSizes,
-            int fileIndex,
-            WorldSyncProgressListener progressListener
-    ) throws IOException, InterruptedException {
-        Path currentBase = null;
-        long fileTransferred = 0L;
-
-        try {
-        for (DownloadPlanStepDto step : download.steps()) {
-            Path artifactFile = Files.createTempFile(this.worldStore.worldContainer(worldId), "pack-artifact-", ".part");
-            long stepStart = fileTransferred;
-            try {
-                if (fullTransferMode.equals(step.transferMode())) {
-                    withTransportRetries(() -> this.apiClient.downloadRawBlobToFile(step.download(), artifactFile, (bytesTransferred, ignoredTotalBytes) ->
-                            reportFileTransfer(fileIndex, stepStart, step.artifactSize(), bytesTransferred, downloadedBytes, totalDownloadBytes, perFileDownloadedBytes, totalFileBytes, allFileSizes, progressListener)
-                    ));
-                    fileTransferred = finalizeFileTransfer(fileIndex, stepStart, step.artifactSize(), downloadedBytes, totalDownloadBytes, perFileDownloadedBytes, totalFileBytes, allFileSizes, progressListener);
-                    currentBase = artifactFile;
-                } else if (deltaTransferMode.equals(step.transferMode())) {
-                    Path baseFile = resolveGroupedDeltaBase(currentBase, baselineFile, reportedLocalArtifact, step);
-                    if (baseFile == null || !Files.exists(baseFile)) {
-                        throw new IOException("SharedWorld grouped artifact delta base was missing.");
-                    }
-                    withTransportRetries(() -> this.apiClient.downloadRawBlobToFile(step.download(), artifactFile, (bytesTransferred, ignoredTotalBytes) ->
-                            reportFileTransfer(fileIndex, stepStart, step.artifactSize(), bytesTransferred, downloadedBytes, totalDownloadBytes, perFileDownloadedBytes, totalFileBytes, allFileSizes, progressListener)
-                    ));
-                    fileTransferred = finalizeFileTransfer(fileIndex, stepStart, step.artifactSize(), downloadedBytes, totalDownloadBytes, perFileDownloadedBytes, totalFileBytes, allFileSizes, progressListener);
-                    Path patchedFile = Files.createTempFile(this.worldStore.worldContainer(worldId), "pack-patched-", ".pack");
-                    try {
-                        ArtifactDeltaEngine.applyDelta(baseFile, artifactFile, patchedFile);
-                    } catch (IOException | RuntimeException applyFailure) {
-                        Files.deleteIfExists(patchedFile);
-                        throw applyFailure;
-                    }
-                    if (currentBase != null && !currentBase.equals(baseFile)) {
-                        Files.deleteIfExists(currentBase);
-                    }
-                    currentBase = patchedFile;
-                } else {
-                    throw new IOException("SharedWorld grouped artifact download step had unknown transfer mode " + step.transferMode() + ".");
-                }
-            } finally {
-                if (currentBase == null || !currentBase.equals(artifactFile)) {
-                    Files.deleteIfExists(artifactFile);
-                }
-            }
-        }
-
-        if (currentBase == null) {
-            throw new IOException("SharedWorld grouped artifact download plan did not produce an artifact.");
-        }
-        return currentBase;
-        } catch (IOException | RuntimeException | InterruptedException failure) {
-            // The chain cursor is always a downloaded or patched temp this walk
-            // created, never a baseline or reported-local artifact.
-            if (currentBase != null) {
-                Files.deleteIfExists(currentBase);
-            }
-            throw failure;
-        }
-    }
-
-    private Path resolveGroupedDeltaBase(Path currentBase, Path baselineFile, WorldSyncSupport.LazyArtifact reportedLocalArtifact, DownloadPlanStepDto step) throws IOException {
-        if (currentBase != null) {
-            return currentBase;
-        }
-        if (step.baseHash() == null) {
-            return null;
-        }
-        if (baselineFile != null && Files.exists(baselineFile) && step.baseHash().equals(LocalWorldHasher.hashFile(baselineFile))) {
-            return baselineFile;
-        }
-        // The backend may base deltas on the state this client just reported;
-        // building that artifact now is byte-exact for the claim even when the
-        // cached baseline has diverged (cancelled sync, partial apply). Only
-        // this rare path pays for a body build, and the built bytes are still
-        // hash-checked before being trusted as a delta base.
-        if (reportedLocalArtifact != null && step.baseHash().equals(reportedLocalArtifact.descriptor().hash())) {
-            Path body = reportedLocalArtifact.body();
-            if (Files.exists(body) && step.baseHash().equals(LocalWorldHasher.hashFile(body))) {
-                return body;
-            }
-        }
-        return null;
-    }
-
-    private void reportFileTransfer(
-            int fileIndex,
-            long stepStart,
-            long stepSize,
-            long stepTransferred,
-            AtomicLong downloadedBytes,
-            long totalDownloadBytes,
-            AtomicLongArray perFileDownloadedBytes,
-            long totalFileBytes,
-            long[] allFileSizes,
-            WorldSyncProgressListener progressListener
-    ) {
-        long clampedTransferred = Math.max(0L, Math.min(stepTransferred, stepSize));
-        long overallForFile = Math.max(0L, Math.min(stepStart + clampedTransferred, totalFileBytes));
-        long previous = perFileDownloadedBytes.getAndSet(fileIndex, overallForFile);
-        long delta = Math.max(0L, overallForFile - previous);
-        long current = downloadedBytes.addAndGet(delta);
-        WorldSyncSupport.report(
-                progressListener,
-                STAGE_DOWNLOADING_CHANGED_FILES,
-                WorldSyncSupport.weightedTransferFraction(current, totalDownloadBytes, perFileDownloadedBytes, allFileSizes),
-                current,
-                totalDownloadBytes,
-                "Downloading changed files"
-        );
-    }
-
-    private long finalizeFileTransfer(
-            int fileIndex,
-            long stepStart,
-            long stepSize,
-            AtomicLong downloadedBytes,
-            long totalDownloadBytes,
-            AtomicLongArray perFileDownloadedBytes,
-            long totalFileBytes,
-            long[] allFileSizes,
-            WorldSyncProgressListener progressListener
-    ) {
-        long overallForFile = Math.max(0L, Math.min(stepStart + stepSize, totalFileBytes));
-        long previous = perFileDownloadedBytes.getAndSet(fileIndex, overallForFile);
-        long delta = Math.max(0L, overallForFile - previous);
-        long current = downloadedBytes.addAndGet(delta);
-        WorldSyncSupport.report(
-                progressListener,
-                STAGE_DOWNLOADING_CHANGED_FILES,
-                WorldSyncSupport.weightedTransferFraction(current, totalDownloadBytes, perFileDownloadedBytes, allFileSizes),
-                current,
-                totalDownloadBytes,
-                "Downloading changed files"
-        );
-        return overallForFile;
-    }
-
-    private void pruneEmptyDirectories(Path worldDirectory) throws IOException {
-        if (!Files.exists(worldDirectory)) {
-            return;
-        }
-        try (Stream<Path> stream = Files.walk(worldDirectory)) {
-            for (Path path : stream.sorted(Comparator.reverseOrder()).toList()) {
-                if (Files.isDirectory(path) && !path.equals(worldDirectory)) {
-                    try (Stream<Path> children = Files.list(path)) {
-                        if (children.findAny().isEmpty()) {
-                            Files.deleteIfExists(path);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private static void deleteRecursively(Path root) throws IOException {
-        if (!Files.exists(root)) {
-            return;
-        }
-        try (Stream<Path> stream = Files.walk(root)) {
-            for (Path path : stream.sorted(Comparator.reverseOrder()).toList()) {
-                Files.deleteIfExists(path);
-            }
-        }
-    }
-
-    private static void moveAtomically(Path source, Path target) throws IOException {
-        if (target.getParent() != null) {
-            Files.createDirectories(target.getParent());
-        }
-        try {
-            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-        } catch (AtomicMoveNotSupportedException exception) {
-            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
-        }
-    }
-
-    private static <T> T await(Future<T> future) throws IOException, InterruptedException {
-        try {
-            return future.get();
-        } catch (ExecutionException exception) {
-            Throwable cause = exception.getCause();
-            if (cause instanceof IOException ioException) {
-                throw ioException;
-            }
-            if (cause instanceof InterruptedException interruptedException) {
-                throw interruptedException;
-            }
-            throw new IOException("SharedWorld sync task failed.", cause);
-        }
-    }
-
     @FunctionalInterface
     public interface SnapshotUploadProgressListener {
         void onProgress(long uploadedBytes, long totalBytes);
@@ -1300,75 +693,6 @@ public final class WorldSyncCoordinator {
             ManifestFileDto manifestFile,
             SnapshotPackDto snapshotPack
     ) {
-    }
-
-    private record DownloadedFile(String relativePath, Path targetPath, Path tempPath) {
-    }
-
-    private interface BlobTransfer {
-        void run() throws IOException, InterruptedException;
-    }
-
-    /**
-     * Bounded retry for blob transport failures only. Integrity failures
-     * (hash mismatches, missing delta bases) throw before or after the
-     * transfer itself and are never retried — sync fails closed on those.
-     * A retried transfer restarts its progress reporting, which can briefly
-     * overstate the progress bar; correctness is unaffected.
-     */
-    private void withTransportRetries(BlobTransfer transfer) throws IOException, InterruptedException {
-        SyncPolicy policy = this.activeSyncPolicy;
-        RetryPolicy retry = new RetryPolicy(3, policy == null ? 750L : policy.retryBaseDelayMs(), policy == null ? 8_000L : policy.retryMaxDelayMs());
-        IOException lastFailure = null;
-        for (int attempt = 1; attempt <= retry.maxAttempts(); attempt++) {
-            long delayMs = retry.delayBeforeAttemptMs(attempt);
-            if (delayMs > 0L) {
-                Thread.sleep(delayMs);
-            }
-            try {
-                transfer.run();
-                return;
-            } catch (IOException exception) {
-                if (!SharedWorldApiClient.isRetryableTransportError(exception) || !retry.shouldRetry(attempt)) {
-                    throw exception;
-                }
-                LOGGER.warn("SharedWorld blob transfer failed (attempt {}); retrying", attempt, exception);
-                lastFailure = exception;
-            }
-        }
-        throw lastFailure;
-    }
-
-    private record SyncPolicy(
-            int maxParallelDownloads,
-            int maxConcurrentUploadPreparations,
-            int maxConcurrentUploads,
-            int maxUploadStartsPerSecond,
-            long retryBaseDelayMs,
-            long retryMaxDelayMs,
-            long maxUploadBodyBytes
-    ) {
-        /**
-         * The default matches the backend's UPLOAD_MAX_BODY_BYTES fallback:
-         * just under the storage relay's hard request-body limit. A backend
-         * predating the field serializes nothing and lands on the same value.
-         */
-        private static final long DEFAULT_MAX_UPLOAD_BODY_BYTES = 95_000_000L;
-
-        private static SyncPolicy from(SyncPolicyDto dto) {
-            if (dto == null) {
-                return new SyncPolicy(4, 1, 1, 1, 750L, 8_000L, DEFAULT_MAX_UPLOAD_BODY_BYTES);
-            }
-            return new SyncPolicy(
-                    Math.max(1, dto.maxParallelDownloads()),
-                    Math.max(1, dto.maxConcurrentUploadPreparations()),
-                    Math.max(1, dto.maxConcurrentUploads()),
-                    Math.max(1, dto.maxUploadStartsPerSecond()),
-                    Math.max(1L, dto.retryBaseDelayMs()),
-                    Math.max(1L, dto.retryMaxDelayMs()),
-                    dto.maxUploadBodyBytes() > 0L ? dto.maxUploadBodyBytes() : DEFAULT_MAX_UPLOAD_BODY_BYTES
-            );
-        }
     }
 
     private static final class UploadStartLimiter {

@@ -224,10 +224,7 @@ export class SharedWorldService {
     return syncPlan.prepareUploads(this.svc, ctx, worldId, request);
   }
 
-  async downloadPlan(ctx: RequestContext, worldId: string, requestOrFiles: UploadPlanRequest | UploadPlanRequest["files"]): Promise<DownloadPlan> {
-    const request: UploadPlanRequest = Array.isArray(requestOrFiles)
-      ? { files: requestOrFiles, nonRegionPack: null }
-      : requestOrFiles;
+  async downloadPlan(ctx: RequestContext, worldId: string, request: UploadPlanRequest): Promise<DownloadPlan> {
     return syncPlan.downloadPlan(this.svc, ctx, worldId, request);
   }
 
@@ -241,14 +238,7 @@ export class SharedWorldService {
 
   // --- session and runtime protocol ---
 
-  async enterSession(
-    ctx: RequestContext,
-    worldId: string,
-    requestOrNow: EnterSessionRequest | Date = {},
-    nowArg?: Date
-  ): Promise<EnterSessionResponse> {
-    const request = requestOrNow instanceof Date ? {} : requestOrNow;
-    const now = requestOrNow instanceof Date ? requestOrNow : nowArg ?? new Date();
+  async enterSession(ctx: RequestContext, worldId: string, request: EnterSessionRequest = {}, now = new Date()): Promise<EnterSessionResponse> {
     return session.enterSession(this.svc, ctx, worldId, request, now);
   }
 

@@ -2,7 +2,8 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 
 import type { Env } from "../../src/env.ts";
 import { HttpError } from "../../src/http.ts";
-import { GoogleDriveStorageProvider, type StorageBinding } from "../../src/storage.ts";
+import type { StorageBinding } from "../../src/storage.ts";
+import { GoogleDriveStorageProvider } from "../../src/storage/drive.ts";
 import { createSqliteRepository } from "../support/sqlite-d1.ts";
 
 /**

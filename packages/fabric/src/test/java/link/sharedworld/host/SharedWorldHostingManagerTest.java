@@ -255,7 +255,6 @@ final class SharedWorldHostingManagerTest {
                 () -> manager.beginHosting(
                         null,
                         worldWithoutSnapshot("world-1", "Handoff World"),
-                        null,
                         new SharedWorldModels.HostAssignmentDto("world-1", "22222222222222222222222222222222", "Guest", 7L, "token-7", Instant.EPOCH.toString())
                 )
         );
@@ -1275,7 +1274,6 @@ final class SharedWorldHostingManagerTest {
 
     private static void primeStartup(SharedWorldHostingManager manager, SharedWorldModels.WorldSummaryDto world, long runtimeEpoch, SharedWorldHostingManager.StartupMode startupMode) throws Exception {
         setField(manager, "world", world);
-        setField(manager, "latestManifest", latestManifest(world.id()));
         setField(manager, "hostPlayerUuid", HOST_UUID);
         setField(manager, "runtimeEpoch", runtimeEpoch);
         setField(manager, "hostToken", "token-" + runtimeEpoch);
@@ -1939,7 +1937,6 @@ final class SharedWorldHostingManagerTest {
             manager.beginHosting(
                     null,
                     world("world-1", "Handoff World"),
-                    latestManifest("world-1"),
                     new SharedWorldModels.HostAssignmentDto("world-1", HOST_UUID, "Host", 8L, "token-8", null)
             );
 

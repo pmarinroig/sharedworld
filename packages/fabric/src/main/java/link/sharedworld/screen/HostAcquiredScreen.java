@@ -2,9 +2,6 @@ package link.sharedworld.screen;
 
 import link.sharedworld.SharedWorldClient;
 import link.sharedworld.SharedWorldText;
-import link.sharedworld.api.SharedWorldModels.HostAssignmentDto;
-import link.sharedworld.api.SharedWorldModels.SnapshotManifestDto;
-import link.sharedworld.api.SharedWorldModels.WorldSummaryDto;
 import link.sharedworld.host.SharedWorldHostingManager;
 import link.sharedworld.progress.SharedWorldProgressRenderer;
 import link.sharedworld.progress.SharedWorldProgressState;
@@ -15,18 +12,12 @@ import net.minecraft.network.chat.Component;
 
 public final class HostAcquiredScreen extends link.sharedworld.versioned.VersionedScreen {
     private final Screen parent;
-    private final WorldSummaryDto world;
-    private final SnapshotManifestDto latestManifest;
-    private final HostAssignmentDto assignment;
     private Button actionButton;
     private boolean cancelRequested;
 
-    public HostAcquiredScreen(Screen parent, WorldSummaryDto world, SnapshotManifestDto latestManifest, HostAssignmentDto assignment) {
+    public HostAcquiredScreen(Screen parent) {
         super(Component.translatable("screen.sharedworld.host_acquired"));
         this.parent = parent;
-        this.world = world;
-        this.latestManifest = latestManifest;
-        this.assignment = assignment;
     }
 
     @Override
