@@ -278,8 +278,12 @@ public final class SharedWorldHostingManager {
         if (assignment == null) {
             throw new IllegalStateException("SharedWorld host startup requires a backend host assignment.");
         }
-        if (latestManifest == null) {
-            throw new IllegalStateException("SharedWorld host startup requires a finalized snapshot manifest. Fresh-world startup is no longer supported.");
+        // "Does this world have a snapshot" comes from the world summary, not
+        // the manifest body: 0.3.2+ backends omit the manifest from session
+        // enter (it costs thousands of file entries on large worlds and the
+        // client never read past this check).
+        if (world.lastSnapshotId() == null) {
+            throw new IllegalStateException("SharedWorld host startup requires a finalized snapshot. Fresh-world startup is no longer supported.");
         }
 
         this.world = world;

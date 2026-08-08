@@ -239,7 +239,7 @@ final class SharedWorldHostingManagerTest {
     }
 
     @Test
-    void beginHostingFailsClosedWhenManifestIsMissing() {
+    void beginHostingFailsClosedWhenWorldHasNoSnapshot() {
         SharedWorldHostingManager manager = manager(
                 new ManagedWorldStore(this.tempDir.resolve("managed-fail-closed")),
                 new RecordingSyncAccess(this.tempDir.resolve("prepared-world")),
@@ -248,18 +248,20 @@ final class SharedWorldHostingManagerTest {
                 worldId -> false
         );
 
+        // The has-snapshot check reads world.lastSnapshotId, not the manifest
+        // body: 0.3.2+ backends omit the manifest from session enter entirely.
         IllegalStateException error = assertThrows(
                 IllegalStateException.class,
                 () -> manager.beginHosting(
                         null,
-                        world("world-1", "Handoff World"),
+                        worldWithoutSnapshot("world-1", "Handoff World"),
                         null,
                         new SharedWorldModels.HostAssignmentDto("world-1", "22222222222222222222222222222222", "Guest", 7L, "token-7", Instant.EPOCH.toString())
                 )
         );
 
         assertEquals(
-                "SharedWorld host startup requires a finalized snapshot manifest. Fresh-world startup is no longer supported.",
+                "SharedWorld host startup requires a finalized snapshot. Fresh-world startup is no longer supported.",
                 error.getMessage()
         );
     }
@@ -1296,6 +1298,14 @@ final class SharedWorldHostingManagerTest {
     }
 
     private static SharedWorldModels.WorldSummaryDto world(String worldId, String worldName) {
+        return world(worldId, worldName, "snapshot-1");
+    }
+
+    private static SharedWorldModels.WorldSummaryDto worldWithoutSnapshot(String worldId, String worldName) {
+        return world(worldId, worldName, null);
+    }
+
+    private static SharedWorldModels.WorldSummaryDto world(String worldId, String worldName, String lastSnapshotId) {
         return new SharedWorldModels.WorldSummaryDto(
                 worldId,
                 "world",
@@ -1306,8 +1316,8 @@ final class SharedWorldHostingManagerTest {
                 null,
                 1,
                 "handoff",
-                "snapshot-1",
-                Instant.EPOCH.toString(),
+                lastSnapshotId,
+                lastSnapshotId == null ? null : Instant.EPOCH.toString(),
                 null,
                 null,
                 null,

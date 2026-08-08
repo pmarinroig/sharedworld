@@ -19,6 +19,7 @@ import {
   type WorldRuntimeStatus
 } from "../../../shared/src/index.ts";
 
+import { clientVersionAtLeast } from "../http.ts";
 import type { RequestContext } from "../repository.ts";
 import type { ServiceContext } from "./context.ts";
 import { parsePositiveInt } from "./sync-plan.ts";
@@ -49,7 +50,14 @@ export async function enterSession(
     await svc.realtime.coordinator(worldId).assertSessionAccess(actor);
   }
   const world = await getWorld(svc, ctx, worldId, now);
-  const latestManifest = await svc.repository.getLatestSnapshot(worldId);
+  // 0.3.2+ clients decide "does this world have a snapshot" from
+  // world.lastSnapshotId and never read the manifest body, so loading and
+  // serializing it (thousands of file entries on large worlds) is pure CPU
+  // burn for them. Older clients null-check the field and keep the full
+  // manifest.
+  const latestManifest = clientVersionAtLeast(ctx.clientVersion, 0, 3, 2)
+    ? null
+    : await svc.repository.getLatestSnapshot(worldId);
   const decision = await svc.realtime.coordinator(worldId).enterSession(actor, request, now);
   return {
     action: decision.action,

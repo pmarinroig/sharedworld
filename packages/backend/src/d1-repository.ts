@@ -799,6 +799,12 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     return this.loadSnapshot(String(row.id), String(row.world_id), String(row.created_at), String(row.created_by_uuid));
   }
 
+  /**
+   * Set-based on purpose: the old shape loaded every snapshot's full manifest
+   * plus a per-snapshot storage query (O(snapshots × packs) D1 round-trips),
+   * which blew the Worker CPU budget on large worlds. The whole list now
+   * costs four fixed queries regardless of world or history size.
+   */
   async listSnapshotSummaries(worldId: string): Promise<WorldSnapshotSummary[]> {
     const world = await this.first<Row>(
       "SELECT storage_provider, storage_account_id FROM worlds WHERE id = ? AND deleted_at IS NULL",
@@ -807,10 +813,6 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     if (!world) {
       return [];
     }
-    const latestSnapshotId = await this.first<Row>(
-      "SELECT id FROM snapshots WHERE world_id = ? ORDER BY created_at DESC, id DESC LIMIT 1",
-      worldId
-    );
     const rows = await this.all<Row>(
       `SELECT s.id, s.created_at, s.created_by_uuid, s.data_version, s.minecraft_version
        FROM snapshots s
@@ -818,50 +820,87 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
        ORDER BY s.created_at DESC, s.id DESC`,
       worldId
     );
-    const summaries: WorldSnapshotSummary[] = [];
-    for (const row of rows) {
-      const snapshot = await this.loadSnapshot(String(row.id), worldId, String(row.created_at), String(row.created_by_uuid));
-      const packedFiles = snapshot.packs.flatMap((pack) => pack.files);
-      const storedBytes = await this.first<Row>(
-        `WITH referenced_keys AS (
-           SELECT sf.storage_key AS storage_key, MAX(sf.compressed_size) AS fallback_size
-           FROM snapshot_files sf
-           WHERE sf.snapshot_id = ? AND sf.pack_id IS NULL
-           GROUP BY sf.storage_key
-           UNION
-           SELECT sp.storage_key AS storage_key, NULL AS fallback_size
-           FROM snapshot_packs sp
-           WHERE sp.snapshot_id = ?
-         ),
-         deduped_keys AS (
-           SELECT storage_key, MAX(fallback_size) AS fallback_size
-           FROM referenced_keys
-           GROUP BY storage_key
-         )
-         SELECT COALESCE(SUM(COALESCE(so.size, dk.fallback_size, 0)), 0) AS used
-         FROM deduped_keys dk
-         LEFT JOIN storage_objects so
-           ON so.provider = ?
-          AND so.storage_account_id = ?
-          AND so.storage_key = dk.storage_key`,
-        String(row.id),
-        String(row.id),
-        String(world.storage_provider ?? "google-drive"),
-        String(world.storage_account_id ?? "")
-      );
-      summaries.push({
+    if (rows.length === 0) {
+      return [];
+    }
+    // Same ordering the dedicated latest-snapshot query uses, so the first
+    // row is the latest snapshot.
+    const latestSnapshotId = String(rows[0].id);
+
+    const looseAggregates = await this.all<Row>(
+      `SELECT sf.snapshot_id AS sid, COUNT(*) AS n, COALESCE(SUM(sf.size), 0) AS total
+       FROM snapshot_files sf
+       JOIN snapshots s ON s.id = sf.snapshot_id
+       WHERE s.world_id = ? AND sf.pack_id IS NULL
+       GROUP BY sf.snapshot_id`,
+      worldId
+    );
+    // Pack members resolve through the donor snapshot that physically holds
+    // them (members_snapshot_id, always one hop); LEFT JOIN so a pack with a
+    // missing donor degrades to zero members instead of dropping the pack.
+    const packAggregates = await this.all<Row>(
+      `SELECT sp.snapshot_id AS sid, COUNT(sf.path) AS n, COALESCE(SUM(sf.size), 0) AS total
+       FROM snapshot_packs sp
+       JOIN snapshots s ON s.id = sp.snapshot_id
+       LEFT JOIN snapshot_files sf
+         ON sf.snapshot_id = COALESCE(sp.members_snapshot_id, sp.snapshot_id)
+        AND sf.pack_id = sp.pack_id
+       WHERE s.world_id = ?
+       GROUP BY sp.snapshot_id`,
+      worldId
+    );
+    // Identical per-snapshot dedupe semantics as the old per-snapshot CTE —
+    // the grouping key just gains the snapshot id so one query answers all.
+    const storedAggregates = await this.all<Row>(
+      `WITH referenced_keys AS (
+         SELECT sf.snapshot_id AS sid, sf.storage_key AS storage_key, MAX(sf.compressed_size) AS fallback_size
+         FROM snapshot_files sf
+         JOIN snapshots s ON s.id = sf.snapshot_id
+         WHERE s.world_id = ? AND sf.pack_id IS NULL
+         GROUP BY sf.snapshot_id, sf.storage_key
+         UNION
+         SELECT sp.snapshot_id AS sid, sp.storage_key AS storage_key, NULL AS fallback_size
+         FROM snapshot_packs sp
+         JOIN snapshots s ON s.id = sp.snapshot_id
+         WHERE s.world_id = ?
+       ),
+       deduped_keys AS (
+         SELECT sid, storage_key, MAX(fallback_size) AS fallback_size
+         FROM referenced_keys
+         GROUP BY sid, storage_key
+       )
+       SELECT dk.sid AS sid, COALESCE(SUM(COALESCE(so.size, dk.fallback_size, 0)), 0) AS used
+       FROM deduped_keys dk
+       LEFT JOIN storage_objects so
+         ON so.provider = ?
+        AND so.storage_account_id = ?
+        AND so.storage_key = dk.storage_key
+       GROUP BY dk.sid`,
+      worldId,
+      worldId,
+      String(world.storage_provider ?? "google-drive"),
+      String(world.storage_account_id ?? "")
+    );
+
+    const looseBySnapshot = new Map(looseAggregates.map((row) => [String(row.sid), row]));
+    const packsBySnapshot = new Map(packAggregates.map((row) => [String(row.sid), row]));
+    const storedBySnapshot = new Map(storedAggregates.map((row) => [String(row.sid), row]));
+    return rows.map((row) => {
+      const loose = looseBySnapshot.get(String(row.id));
+      const packs = packsBySnapshot.get(String(row.id));
+      const stored = storedBySnapshot.get(String(row.id));
+      return {
         snapshotId: String(row.id),
         createdAt: String(row.created_at),
         createdByUuid: String(row.created_by_uuid),
         dataVersion: row.data_version == null ? null : Number(row.data_version),
         minecraftVersion: asNullableString(row.minecraft_version),
-        fileCount: snapshot.files.length + packedFiles.length,
-        totalSize: snapshot.files.reduce((sum, file) => sum + file.size, 0) + packedFiles.reduce((sum, file) => sum + file.size, 0),
-        totalCompressedSize: Number(storedBytes?.used ?? 0),
-        isLatest: String(row.id) === String(latestSnapshotId?.id ?? "")
-      });
-    }
-    return summaries;
+        fileCount: Number(loose?.n ?? 0) + Number(packs?.n ?? 0),
+        totalSize: Number(loose?.total ?? 0) + Number(packs?.total ?? 0),
+        totalCompressedSize: Number(stored?.used ?? 0),
+        isLatest: String(row.id) === latestSnapshotId
+      };
+    });
   }
 
   async listSnapshotsForWorld(worldId: string): Promise<SnapshotRecord[]> {
@@ -1299,43 +1338,67 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
         baseHash: asNullableString(row.base_hash),
         chainDepth: row.chain_depth == null ? null : Number(row.chain_depth)
       })),
-      packs: await Promise.all(packRows.map(async (row) => {
-        // Inherited packs resolve member rows from the donor snapshot that
-        // physically holds them (members_snapshot_id, always one hop).
-        const membersSnapshotId = asNullableString(row.members_snapshot_id) ?? snapshotId;
-        const memberRows = await this.all<Row>(
-          `SELECT path, hash, size, content_type
-           FROM snapshot_files
-           WHERE snapshot_id = ? AND pack_id = ?
-           ORDER BY path ASC`,
-          membersSnapshotId,
-          String(row.pack_id)
-        );
-        if (memberRows.length === 0 && membersSnapshotId !== snapshotId) {
-          console.warn("SharedWorld snapshot pack inherited zero member rows — donor missing?", {
-            snapshotId,
-            packId: String(row.pack_id),
-            membersSnapshotId
-          });
-        }
-        return {
-          packId: String(row.pack_id),
-          hash: String(row.hash),
-          size: Number(row.size),
-          storageKey: String(row.storage_key),
-          transferMode: String(row.transfer_mode) as FileTransferMode,
-          baseSnapshotId: asNullableString(row.base_snapshot_id),
-          baseHash: asNullableString(row.base_hash),
-          chainDepth: row.chain_depth == null ? null : Number(row.chain_depth),
-          files: memberRows.map((fileRow) => ({
-            path: String(fileRow.path),
-            hash: String(fileRow.hash),
-            size: Number(fileRow.size),
-            contentType: String(fileRow.content_type)
-          }))
-        };
-      }))
+      packs: await this.loadSnapshotPacks(snapshotId, packRows)
     };
+  }
+
+  /**
+   * Resolves every pack's member rows in one query instead of one per pack —
+   * large worlds carry 100+ capped bundle/shard packs, and a per-pack query
+   * here put whole-manifest loads (session enter, upload/download plans,
+   * backup lists) over the Worker CPU budget. Inherited packs resolve their
+   * members from the donor snapshot that physically holds them
+   * (members_snapshot_id, always one hop).
+   */
+  private async loadSnapshotPacks(snapshotId: string, packRows: Row[]): Promise<SnapshotManifest["packs"]> {
+    if (packRows.length === 0) {
+      return [];
+    }
+    const memberSnapshotIds = [...new Set(packRows.map((row) => asNullableString(row.members_snapshot_id) ?? snapshotId))];
+    const memberRows = await this.all<Row>(
+      `SELECT snapshot_id, pack_id, path, hash, size, content_type
+       FROM snapshot_files
+       WHERE pack_id IS NOT NULL AND snapshot_id IN (${sqlPlaceholders(memberSnapshotIds.length)})
+       ORDER BY path ASC`,
+      ...memberSnapshotIds
+    );
+    const membersByPack = new Map<string, Array<{ path: string; hash: string; size: number; contentType: string }>>();
+    for (const fileRow of memberRows) {
+      const key = `${String(fileRow.snapshot_id)} ${String(fileRow.pack_id)}`;
+      let members = membersByPack.get(key);
+      if (!members) {
+        members = [];
+        membersByPack.set(key, members);
+      }
+      members.push({
+        path: String(fileRow.path),
+        hash: String(fileRow.hash),
+        size: Number(fileRow.size),
+        contentType: String(fileRow.content_type)
+      });
+    }
+    return packRows.map((row) => {
+      const membersSnapshotId = asNullableString(row.members_snapshot_id) ?? snapshotId;
+      const members = membersByPack.get(`${membersSnapshotId} ${String(row.pack_id)}`) ?? [];
+      if (members.length === 0 && membersSnapshotId !== snapshotId) {
+        console.warn("SharedWorld snapshot pack inherited zero member rows — donor missing?", {
+          snapshotId,
+          packId: String(row.pack_id),
+          membersSnapshotId
+        });
+      }
+      return {
+        packId: String(row.pack_id),
+        hash: String(row.hash),
+        size: Number(row.size),
+        storageKey: String(row.storage_key),
+        transferMode: String(row.transfer_mode) as FileTransferMode,
+        baseSnapshotId: asNullableString(row.base_snapshot_id),
+        baseHash: asNullableString(row.base_hash),
+        chainDepth: row.chain_depth == null ? null : Number(row.chain_depth),
+        files: members
+      };
+    });
   }
 
   private async first<T extends Row>(query: string, ...values: unknown[]): Promise<T | null> {

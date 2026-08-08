@@ -95,7 +95,8 @@ export async function authenticate(request: Request, service: AuthenticatedRoute
   return {
     playerUuid: session.playerUuid,
     playerName: session.playerName,
-    requestOrigin: new URL(request.url).origin
+    requestOrigin: new URL(request.url).origin,
+    clientVersion: request.headers.get("x-sharedworld-version")
   };
 }
 

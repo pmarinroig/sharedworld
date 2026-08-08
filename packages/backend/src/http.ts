@@ -44,6 +44,27 @@ export interface ErrorLogContext {
 }
 
 /**
+ * True when the x-sharedworld-version header parses to a version at or above
+ * the given triplet. Fails toward "old client": a missing or unparseable
+ * header keeps the legacy response shape, so a surprise here can only cost
+ * bytes, never break a client.
+ */
+export function clientVersionAtLeast(clientVersion: string | null | undefined, major: number, minor: number, patch: number): boolean {
+  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(clientVersion ?? "");
+  if (!match) {
+    return false;
+  }
+  const parsed = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const wanted = [major, minor, patch];
+  for (let i = 0; i < 3; i++) {
+    if (parsed[i] !== wanted[i]) {
+      return parsed[i] > wanted[i];
+    }
+  }
+  return true;
+}
+
+/**
  * The startup-progress relay races phase transitions by design (a report can
  * land right after live promotion or release retired the epoch), so its
  * host_not_active 409s are expected traffic, not a failing client.

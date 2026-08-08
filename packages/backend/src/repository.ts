@@ -89,6 +89,8 @@ export interface RequestContext {
   playerUuid: string;
   playerName: string;
   requestOrigin?: string;
+  /** Contents of the x-sharedworld-version request header (sent by 0.2.2+ clients). */
+  clientVersion?: string | null;
 }
 
 export interface WorldUpdateRecord extends UpdateWorldRequest {
