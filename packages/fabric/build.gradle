@@ -94,15 +94,17 @@ sourceSets {
         }
     }
     devHelper {
-        java.srcDir("src/devhelper/java")
-        java.srcDir("src/devhelperVersioned/${mcBucketName}/java")
-        resources.srcDir("src/devhelper/resources")
+        // setSrcDirs, not srcDir: the source-set's default dirs are the
+        // camel-cased src/devHelper/*, which on case-insensitive filesystems
+        // (macOS) alias the lowercase dirs and duplicate every entry.
+        java.setSrcDirs(["src/devhelper/java", "src/devhelperVersioned/${mcBucketName}/java"])
+        resources.setSrcDirs(["src/devhelper/resources"])
         compileClasspath += sourceSets.main.compileClasspath + sourceSets.main.output
         runtimeClasspath += output + compileClasspath + sourceSets.main.runtimeClasspath
     }
     devHelperE2e {
-        java.srcDir("src/devhelperE2e/java")
-        resources.srcDir("src/devhelperE2e/resources")
+        java.setSrcDirs(["src/devhelperE2e/java"])
+        resources.setSrcDirs(["src/devhelperE2e/resources"])
         compileClasspath += sourceSets.main.compileClasspath + sourceSets.main.output + sourceSets.devHelper.output
         runtimeClasspath += output + compileClasspath + sourceSets.main.runtimeClasspath
     }
@@ -449,6 +451,13 @@ tasks.named("test").configure {
     useJUnitPlatform {
         excludeTags "integration"
     }
+    // Private tmpdir per test JVM: the temp-leak tests snapshot
+    // java.io.tmpdir for sharedworld-* entries, and the release gate runs
+    // the classic and modern lanes' test JVMs concurrently — a shared OS
+    // tmpdir makes those snapshots race the other lane's temp churn.
+    def testTmpDir = layout.buildDirectory.dir("test-tmpdir").get().asFile
+    doFirst { testTmpDir.mkdirs() }
+    systemProperty "java.io.tmpdir", testTmpDir.absolutePath
 }
 
 tasks.register("integrationTest", Test) {

@@ -1,4 +1,17 @@
 ALLOW_DEV_AUTH=true
 ALLOW_DEV_INSECURE_E4MC=true
+# Mock Google OAuth: the link step completes instantly as dev-google@example.com,
+# but there is NO mock Drive API — flows that actually upload/download (share a
+# world, sync) will fail with drive_reauth_required. For real Drive syncs, set
+# this to false and fill the real OAuth client credentials below (Google Cloud
+# Console -> APIs & Services -> Credentials; the redirect URI
+# http://127.0.0.1:8787/storage/google/callback must be authorized on that client).
+ALLOW_DEV_GOOGLE_OAUTH=true
+#GOOGLE_OAUTH_CLIENT_ID=
+#GOOGLE_OAUTH_CLIENT_SECRET=
+# wrangler.toml's [vars] point these at the production worker; local dev must
+# override them or storage-link / blob URLs get built against prod.
+PUBLIC_BASE_URL=http://127.0.0.1:8787
+GOOGLE_OAUTH_REDIRECT_URI=http://127.0.0.1:8787/storage/google/callback
 DEV_AUTH_SECRET=sharedworld-dev-secret
 SIGNING_SECRET=replace-with-a-long-random-secret

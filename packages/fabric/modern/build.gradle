@@ -238,6 +238,13 @@ tasks.named("test").configure {
     useJUnitPlatform {
         excludeTags "integration"
     }
+    // Private tmpdir per test JVM: the temp-leak tests snapshot
+    // java.io.tmpdir for sharedworld-* entries, and the release gate runs
+    // the classic and modern lanes' test JVMs concurrently — a shared OS
+    // tmpdir makes those snapshots race the other lane's temp churn.
+    def testTmpDir = layout.buildDirectory.dir("test-tmpdir").get().asFile
+    doFirst { testTmpDir.mkdirs() }
+    systemProperty "java.io.tmpdir", testTmpDir.absolutePath
 }
 
 java {

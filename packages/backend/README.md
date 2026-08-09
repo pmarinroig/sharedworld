@@ -32,17 +32,17 @@ Tests run the production repository against in-memory SQLite loaded with
 
 ```bash
 cp .dev.vars.example .dev.vars
-XDG_CONFIG_HOME=/tmp/sharedworld-xdg npx wrangler dev --ip 127.0.0.1 --port 8787
+npx wrangler dev --ip 127.0.0.1 --port 8787
 ```
 
 ## Deploy
 
 ```bash
-XDG_CONFIG_HOME=/tmp/sharedworld-xdg npx wrangler deploy
+npx wrangler deploy
 ```
 
 ## Apply Remote Migrations
 
 ```bash
-XDG_CONFIG_HOME=/tmp/sharedworld-xdg npx wrangler d1 migrations apply sharedworld --remote
+npx wrangler d1 migrations apply sharedworld --remote
 ```
