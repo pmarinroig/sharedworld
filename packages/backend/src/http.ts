@@ -5,6 +5,8 @@ export class HttpError extends Error {
   code: string;
   /** When set, errorResponse emits a Retry-After header with this value. */
   retryAfterSeconds?: number;
+  /** Serialized to clients as ApiErrorShape.reason when set. */
+  reason?: string;
   /**
    * HTTP status an upstream dependency (e.g. Mojang, Google Drive) answered
    * with, when this error wraps an upstream failure. Never serialized to
@@ -98,7 +100,8 @@ export function errorResponse(error: unknown, context: ErrorLogContext = {}): Re
     const payload: ApiErrorShape = {
       error: error.code,
       message: error.message,
-      status: error.status
+      status: error.status,
+      ...(error.reason === undefined ? {} : { reason: error.reason })
     };
     const headers = error.retryAfterSeconds === undefined ? undefined : { "retry-after": String(error.retryAfterSeconds) };
     return json(payload, { status: error.status, headers });

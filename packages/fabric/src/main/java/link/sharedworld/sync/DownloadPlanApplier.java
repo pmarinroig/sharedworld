@@ -112,6 +112,7 @@ final class DownloadPlanApplier {
         Map<String, Path> downloadedRegionBundleArtifacts = new HashMap<>();
         List<Path> extractedRegionBundleRoots = new ArrayList<>();
         List<Future<DownloadedFile>> pendingEntryDownloads = List.of();
+        List<Future<DownloadedBundle>> pendingBundleDownloads = List.of();
 
         // All temps below (downloaded artifacts, extract roots, per-file .part
         // temps) live inside the world container and are cleaned by the single
@@ -144,34 +145,30 @@ final class DownloadPlanApplier {
             }
         }
 
-        if (this.plan.regionBundleDownloads() != null) {
-            for (int bundleIndex = 0; bundleIndex < this.plan.regionBundleDownloads().length; bundleIndex++) {
-                DownloadPackPlanDto bundle = this.plan.regionBundleDownloads()[bundleIndex];
-                Path downloadedBundle = downloadGroupedArtifactToTempFile(
-                        bundle,
-                        this.worldStore.regionBundleBaselineFile(this.worldId, bundle.packId()),
-                        this.reportedLocalBundles.get(bundle.packId()),
-                        "region-full",
-                        "region-delta",
-                        bundleIndex + this.bundleIndexOffset
-                );
-                if (!LocalWorldHasher.hashFile(downloadedBundle).equals(bundle.hash())) {
-                    throw new IOException("SharedWorld reconstructed region bundle hash mismatch for " + bundle.packId() + ".");
+        if (this.plan.regionBundleDownloads() != null && this.plan.regionBundleDownloads().length > 0) {
+            // Bundles and superpack shards used to download strictly one at a
+            // time, which made large-world joins serial on the network; each
+            // task is independent (own temp files, own baseline, own lazy
+            // local artifact) so they fan out like loose entries do, honoring
+            // the backend's maxParallelDownloads.
+            ExecutorService bundleExecutor = Executors.newFixedThreadPool(
+                    Math.min(this.policy.maxParallelDownloads(), this.plan.regionBundleDownloads().length));
+            List<Future<DownloadedBundle>> bundleFutures = new ArrayList<>(this.plan.regionBundleDownloads().length);
+            pendingBundleDownloads = bundleFutures;
+            try {
+                for (int bundleIndex = 0; bundleIndex < this.plan.regionBundleDownloads().length; bundleIndex++) {
+                    DownloadPackPlanDto bundle = this.plan.regionBundleDownloads()[bundleIndex];
+                    int fileIndex = bundleIndex + this.bundleIndexOffset;
+                    bundleFutures.add(bundleExecutor.submit(() -> downloadAndExtractBundle(bundle, fileIndex)));
                 }
-                Path extractRoot = Files.createTempDirectory(this.worldStore.worldContainer(this.worldId), "region-bundle-extract-");
-                extractedRegionBundleRoots.add(extractRoot);
-                Map<String, String> extractedBundleHashes = SharedWorldPack.extract(downloadedBundle, extractRoot);
-                downloadedRegionBundleArtifacts.put(bundle.packId(), downloadedBundle);
-                for (var file : bundle.files()) {
-                    Path tempFile = extractRoot.resolve(file.path().replace('/', java.io.File.separatorChar));
-                    if (!Files.exists(tempFile)) {
-                        throw new IOException("SharedWorld region bundle was missing extracted file " + file.path() + ".");
-                    }
-                    if (!file.hash().equals(extractedBundleHashes.get(file.path()))) {
-                        throw new IOException("SharedWorld extracted region bundle file hash mismatch for " + file.path() + ".");
-                    }
-                    downloadedFiles.add(new DownloadedFile(file.path(), this.worldDirectory.resolve(file.path().replace('/', java.io.File.separatorChar)), tempFile));
+                for (Future<DownloadedBundle> future : bundleFutures) {
+                    DownloadedBundle result = WorldSyncSupport.await(future);
+                    downloadedRegionBundleArtifacts.put(result.bundle().packId(), result.artifact());
+                    extractedRegionBundleRoots.add(result.extractRoot());
+                    downloadedFiles.addAll(result.files());
                 }
+            } finally {
+                WorldSyncSupport.shutDownAndAwait(bundleExecutor);
             }
         }
 
@@ -266,6 +263,21 @@ final class DownloadPlanApplier {
                         }
                     } catch (ExecutionException | InterruptedException | IOException ignored) {
                         // Failed futures cleaned their own temp; nothing to reclaim.
+                    }
+                }
+            }
+            for (Future<DownloadedBundle> future : pendingBundleDownloads) {
+                if (future.isDone() && !future.isCancelled()) {
+                    try {
+                        DownloadedBundle completed = future.get();
+                        if (completed != null) {
+                            // Merged results also sit in the artifact/extract
+                            // collections below; the deletes are idempotent.
+                            Files.deleteIfExists(completed.artifact());
+                            WorldSyncSupport.deleteRecursivelyQuietly(completed.extractRoot());
+                        }
+                    } catch (ExecutionException | InterruptedException | IOException ignored) {
+                        // Failed futures cleaned their own temps; nothing to reclaim.
                     }
                 }
             }
@@ -384,6 +396,49 @@ final class DownloadPlanApplier {
             if (currentBase != null) {
                 Files.deleteIfExists(currentBase);
             }
+            throw failure;
+        }
+    }
+
+    /**
+     * One bundle's full pipeline — download/reconstruct, whole-artifact hash
+     * check, extract, per-file hash check — self-cleaning on failure so a
+     * sibling task's crash never strands this task's temps.
+     */
+    private DownloadedBundle downloadAndExtractBundle(DownloadPackPlanDto bundle, int fileIndex) throws IOException, InterruptedException {
+        Path downloadedBundle = downloadGroupedArtifactToTempFile(
+                bundle,
+                this.worldStore.regionBundleBaselineFile(this.worldId, bundle.packId()),
+                this.reportedLocalBundles.get(bundle.packId()),
+                "region-full",
+                "region-delta",
+                fileIndex
+        );
+        try {
+            if (!LocalWorldHasher.hashFile(downloadedBundle).equals(bundle.hash())) {
+                throw new IOException("SharedWorld reconstructed region bundle hash mismatch for " + bundle.packId() + ".");
+            }
+            Path extractRoot = Files.createTempDirectory(this.worldStore.worldContainer(this.worldId), "region-bundle-extract-");
+            try {
+                Map<String, String> extractedBundleHashes = SharedWorldPack.extract(downloadedBundle, extractRoot);
+                List<DownloadedFile> files = new ArrayList<>(bundle.files().length);
+                for (var file : bundle.files()) {
+                    Path tempFile = extractRoot.resolve(file.path().replace('/', java.io.File.separatorChar));
+                    if (!Files.exists(tempFile)) {
+                        throw new IOException("SharedWorld region bundle was missing extracted file " + file.path() + ".");
+                    }
+                    if (!file.hash().equals(extractedBundleHashes.get(file.path()))) {
+                        throw new IOException("SharedWorld extracted region bundle file hash mismatch for " + file.path() + ".");
+                    }
+                    files.add(new DownloadedFile(file.path(), this.worldDirectory.resolve(file.path().replace('/', java.io.File.separatorChar)), tempFile));
+                }
+                return new DownloadedBundle(bundle, downloadedBundle, extractRoot, files);
+            } catch (IOException | RuntimeException failure) {
+                WorldSyncSupport.deleteRecursivelyQuietly(extractRoot);
+                throw failure;
+            }
+        } catch (IOException | RuntimeException failure) {
+            Files.deleteIfExists(downloadedBundle);
             throw failure;
         }
     }
@@ -530,5 +585,8 @@ final class DownloadPlanApplier {
     }
 
     private record DownloadedFile(String relativePath, Path targetPath, Path tempPath) {
+    }
+
+    private record DownloadedBundle(DownloadPackPlanDto bundle, Path artifact, Path extractRoot, List<DownloadedFile> files) {
     }
 }

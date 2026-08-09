@@ -42,7 +42,10 @@ public final class SharedWorldPushChannel {
 
     private static final long KEEPALIVE_INTERVAL_MS = 20_000L;
     private static final long RECONNECT_BASE_DELAY_MS = 1_000L;
-    private static final long RECONNECT_MAX_DELAY_MS = 60_000L;
+    // Capped below the coordinator's 30s host-disconnect grace: a hosting
+    // client whose socket dropped must get a reconnect attempt in before the
+    // grace forfeits its lease (the old 60s cap could not).
+    private static final long RECONNECT_MAX_DELAY_MS = 15_000L;
 
     /** One live socket. Implementations must be safe to close twice. */
     public interface Transport {

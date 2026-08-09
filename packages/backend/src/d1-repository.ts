@@ -596,6 +596,33 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     return row ? mapStorageObject(row) : null;
   }
 
+  async listExistingStorageKeys(
+    provider: StorageProviderType,
+    storageAccountId: string,
+    storageKeys: readonly string[]
+  ): Promise<Set<string>> {
+    const existing = new Set<string>();
+    // D1 caps bound parameters per query; stay comfortably under it. Large
+    // worlds carry hundreds of packs, and a per-key query here put upload
+    // prepare/finalize over the client's request timeout.
+    const CHUNK = 80;
+    for (let offset = 0; offset < storageKeys.length; offset += CHUNK) {
+      const chunk = storageKeys.slice(offset, offset + CHUNK);
+      const rows = await this.all<Row>(
+        `SELECT storage_key
+         FROM storage_objects
+         WHERE provider = ? AND storage_account_id = ? AND storage_key IN (${sqlPlaceholders(chunk.length)})`,
+        provider,
+        storageAccountId,
+        ...chunk
+      );
+      for (const row of rows) {
+        existing.add(String(row.storage_key));
+      }
+    }
+    return existing;
+  }
+
   async deleteStorageObject(provider: StorageProviderType, storageAccountId: string, storageKey: string): Promise<void> {
     await this.run(
       "DELETE FROM storage_objects WHERE provider = ? AND storage_account_id = ? AND storage_key = ?",

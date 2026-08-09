@@ -92,7 +92,7 @@ export function decodeCallBody(body: string): { method: string; args: unknown[] 
 }
 
 export interface ErrorEnvelope {
-  error: { status: number; code: string; message: string };
+  error: { status: number; code: string; message: string; reason?: string };
 }
 
 export function isErrorEnvelope(value: unknown): value is ErrorEnvelope {
@@ -101,13 +101,22 @@ export function isErrorEnvelope(value: unknown): value is ErrorEnvelope {
 
 export function toErrorEnvelope(error: unknown): ErrorEnvelope {
   if (error instanceof HttpError) {
-    return { error: { status: error.status, code: error.code, message: error.message } };
+    return {
+      error: {
+        status: error.status,
+        code: error.code,
+        message: error.message,
+        ...(error.reason === undefined ? {} : { reason: error.reason })
+      }
+    };
   }
   throw error;
 }
 
 export function rethrowEnvelope(envelope: ErrorEnvelope): never {
-  throw new HttpError(envelope.error.status, envelope.error.code, envelope.error.message);
+  const error = new HttpError(envelope.error.status, envelope.error.code, envelope.error.message);
+  error.reason = envelope.error.reason;
+  throw error;
 }
 
 interface StubLike {

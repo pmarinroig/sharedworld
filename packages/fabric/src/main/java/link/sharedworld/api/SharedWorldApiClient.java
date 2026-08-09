@@ -393,7 +393,9 @@ public final class SharedWorldApiClient {
         body.put("files", files);
         body.put("nonRegionPack", nonRegionPack);
         body.put("regionBundles", regionBundles);
-        return request("POST", "/worlds/" + worldId + "/uploads/prepare", body, UploadPlanDto.class, true);
+        // Plan computation only — no server-side write — so a transport blip
+        // is retried instead of aborting the whole create/sync.
+        return requestWithTransportRetry("POST", "/worlds/" + worldId + "/uploads/prepare", body, UploadPlanDto.class);
     }
 
     public UploadPlanDto prepareUploads(String worldId, LocalFileDescriptorDto[] files, LocalPackDescriptorDto nonRegionPack, LocalPackDescriptorDto[] regionBundles) throws IOException, InterruptedException {
@@ -438,7 +440,8 @@ public final class SharedWorldApiClient {
         body.put("files", files);
         body.put("nonRegionPack", nonRegionPack);
         body.put("regionBundles", regionBundles);
-        return request("POST", "/worlds/" + worldId + "/downloads/plan", body, DownloadPlanDto.class, true);
+        // Plan computation only — no server-side write — safe to retry.
+        return requestWithTransportRetry("POST", "/worlds/" + worldId + "/downloads/plan", body, DownloadPlanDto.class);
     }
 
     public void uploadBlob(SignedBlobUrlDto signedUrl, Path bodyFile, String contentType) throws IOException, InterruptedException {
@@ -457,7 +460,12 @@ public final class SharedWorldApiClient {
                 });
         HttpRequest.Builder builder = HttpRequest.newBuilder()
                 .uri(URI.create(signedUrl.url()))
-                .timeout(Duration.ofSeconds(60))
+                // The timeout covers the whole exchange including body
+                // streaming: a 40 MB shard on a residential uplink takes
+                // minutes, so a tight deadline turned every large-world
+                // upload into "request timed out". Stall detection belongs
+                // to the progress listener, not this deadline.
+                .timeout(Duration.ofMinutes(10))
                 .method(signedUrl.method(), bodyPublisher);
         builder.header("authorization", "Bearer " + ensureSession().token());
 
@@ -908,6 +916,19 @@ public final class SharedWorldApiClient {
                 && "host_not_active".equals(apiError.error());
     }
 
+    /**
+     * host_not_active refined by the backend: this host's own lease lapsed —
+     * nobody took over. False for older backends (no reason field) and for
+     * genuine replacements, so callers can keep the takeover copy for those.
+     */
+    public static boolean isHostLeaseExpiredError(Throwable error) {
+        SharedWorldApiException apiError = findApiError(error);
+        return apiError != null
+                && apiError.status() == 409
+                && "host_not_active".equals(apiError.error())
+                && "lease_expired".equals(apiError.reason());
+    }
+
     public static String errorCode(Throwable error) {
         SharedWorldApiException apiError = findApiError(error);
         return apiError == null ? null : apiError.error();
@@ -931,6 +952,11 @@ public final class SharedWorldApiClient {
         for (Throwable cause = error; cause != null; cause = cause.getCause() == cause ? null : cause.getCause()) {
             if (cause instanceof java.net.UnknownHostException || cause instanceof java.net.ConnectException) {
                 return link.sharedworld.SharedWorldText.string("screen.sharedworld.error_internet_unreachable");
+            }
+            if (cause instanceof java.net.http.HttpTimeoutException) {
+                // The JDK's message is the bare "request timed out" — players
+                // saw it verbatim on create/sync screens.
+                return link.sharedworld.SharedWorldText.string("screen.sharedworld.error_request_timed_out");
             }
             String message = cause.getMessage();
             if (message != null && (message.contains("UnresolvedAddressException") || message.contains("Connection refused"))) {
@@ -999,7 +1025,8 @@ public final class SharedWorldApiClient {
                     error.error(),
                     error.message(),
                     error.status(),
-                    parseRetryAfterSeconds(response.headers().firstValue("retry-after").orElse(null))
+                    parseRetryAfterSeconds(response.headers().firstValue("retry-after").orElse(null)),
+                    error.reason()
             );
         }
 
@@ -1019,10 +1046,16 @@ public final class SharedWorldApiClient {
             new link.sharedworld.util.RetryPolicy(3, 500L, 4_000L);
 
     /**
-     * Bounded transport retry for safe idempotent reads only. Mutating calls
-     * are never replayed here; their coordinators own retry semantics.
+     * Bounded transport retry for safe idempotent calls only: reads, plus the
+     * plan computations (uploads/prepare, downloads/plan) that write nothing
+     * server-side. Mutating calls are never replayed here; their coordinators
+     * own retry semantics.
      */
     private <T> T requestWithTransportRetry(String method, String path, Class<T> responseType) throws IOException, InterruptedException {
+        return requestWithTransportRetry(method, path, null, responseType);
+    }
+
+    private <T> T requestWithTransportRetry(String method, String path, Object body, Class<T> responseType) throws IOException, InterruptedException {
         IOException lastFailure = null;
         for (int attempt = 1; attempt <= READ_RETRY_POLICY.maxAttempts(); attempt++) {
             long delayMs = READ_RETRY_POLICY.delayBeforeAttemptMs(attempt);
@@ -1030,7 +1063,7 @@ public final class SharedWorldApiClient {
                 Thread.sleep(delayMs);
             }
             try {
-                return request(method, path, null, responseType, true);
+                return request(method, path, body, responseType, true);
             } catch (IOException exception) {
                 if (!isRetryableTransportError(exception) || !READ_RETRY_POLICY.shouldRetry(attempt)) {
                     throw exception;
@@ -1058,7 +1091,12 @@ public final class SharedWorldApiClient {
         for (Throwable cause = error; cause != null; cause = cause.getCause() == cause ? null : cause.getCause()) {
             if (cause instanceof java.net.ConnectException
                     || cause instanceof java.net.http.HttpTimeoutException
-                    || cause instanceof java.net.UnknownHostException) {
+                    || cause instanceof java.net.UnknownHostException
+                    // TLS record corruption (e.g. "bad record MAC") on a
+                    // long-lived transfer is a transient link fault, not a
+                    // protocol outcome; without a retry it killed multi-minute
+                    // release uploads on their first blip.
+                    || cause instanceof javax.net.ssl.SSLException) {
                 return true;
             }
         }
@@ -1080,16 +1118,22 @@ public final class SharedWorldApiClient {
         private final String error;
         private final int status;
         private final Integer retryAfterSeconds;
+        private final String reason;
 
         public SharedWorldApiException(String error, String message, int status) {
-            this(error, message, status, null);
+            this(error, message, status, null, null);
         }
 
         public SharedWorldApiException(String error, String message, int status, Integer retryAfterSeconds) {
+            this(error, message, status, retryAfterSeconds, null);
+        }
+
+        public SharedWorldApiException(String error, String message, int status, Integer retryAfterSeconds, String reason) {
             super(message);
             this.error = error;
             this.status = status;
             this.retryAfterSeconds = retryAfterSeconds;
+            this.reason = reason;
         }
 
         public String error() {
@@ -1103,6 +1147,15 @@ public final class SharedWorldApiClient {
         /** The backend's Retry-After header in seconds, or null when absent. */
         public Integer retryAfterSeconds() {
             return this.retryAfterSeconds;
+        }
+
+        /**
+         * Refinement of error() for codes covering more than one situation
+         * (host_not_active: "lease_expired" vs "replaced"); null from older
+         * backends.
+         */
+        public String reason() {
+            return this.reason;
         }
     }
 

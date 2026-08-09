@@ -632,4 +632,11 @@ export interface ApiErrorShape {
   error: string;
   message: string;
   status: number;
+  /**
+   * Machine-readable refinement of `error` for codes that cover more than one
+   * situation. host_not_active carries "lease_expired" (this host's own lease
+   * lapsed) or "replaced" (a different player holds the runtime now) so
+   * clients can render honest copy; absent for older backends.
+   */
+  reason?: string;
 }

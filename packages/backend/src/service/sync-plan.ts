@@ -23,7 +23,7 @@ import {
 } from "../../../shared/src/index.ts";
 
 import { HttpError } from "../http.ts";
-import type { RequestContext, WorldStorageBinding } from "../repository.ts";
+import type { RequestContext } from "../repository.ts";
 import type { WorldRuntimeRecord } from "../runtime-protocol.ts";
 import {
   HOST_TOKEN_HEADER,
@@ -38,6 +38,7 @@ import {
   requireSessionAccessAllowingRevokedHost,
   requireWorldStorageBinding
 } from "./runtime-access.ts";
+import { storageKeysExist } from "./snapshots.ts";
 
 /**
  * Responsibility:
@@ -75,8 +76,40 @@ export async function prepareUploads(
     (latest?.packs ?? []).filter((pack) => isRegionBundleId(pack.packId)).map((pack) => [pack.packId, pack])
   );
   const binding = await requireWorldStorageBinding(svc, worldId);
+  // One batched existence lookup for every candidate full/delta key: large
+  // worlds carry hundreds of packs, and a per-pack query here put upload
+  // prepare past the client's request timeout (same shape as the manifest
+  // load fix in loadSnapshotPacks).
+  const regionBundleKeys = (request.regionBundles ?? []).map((bundle) =>
+    groupedArtifactCandidateKeys(
+      bundle,
+      latestRegionBundleById.get(bundle.packId) ?? null,
+      MAX_REGION_DELTA_CHAIN_DEPTH,
+      storageKeyForRegionBundleFull,
+      storageKeyForRegionBundleDelta,
+      REGION_FULL_TRANSFER_MODE,
+      REGION_DELTA_TRANSFER_MODE
+    )
+  );
+  const nonRegionPackKeys = groupedArtifactCandidateKeys(
+    request.nonRegionPack ?? null,
+    latestPack,
+    MAX_PACK_DELTA_CHAIN_DEPTH,
+    storageKeyForPackFull,
+    storageKeyForPackDelta,
+    PACK_FULL_TRANSFER_MODE,
+    PACK_DELTA_TRANSFER_MODE
+  );
+  const existingStorageKeys = await storageKeysExist(
+    svc,
+    binding,
+    [...regionBundleKeys, nonRegionPackKeys].flatMap((keys) =>
+      keys ? [keys.fullStorageKey, ...(keys.deltaStorageKey ? [keys.deltaStorageKey] : [])] : []
+    ),
+    "ask-provider"
+  );
   const regionBundleUploads: NonNullable<Awaited<ReturnType<typeof prepareGroupedArtifactUpload>>>[] = [];
-  for (const bundle of request.regionBundles ?? []) {
+  for (const [index, bundle] of (request.regionBundles ?? []).entries()) {
     const plan = await prepareGroupedArtifactUpload(
       svc,
       ctx,
@@ -85,12 +118,8 @@ export async function prepareUploads(
       latest?.snapshotId ?? null,
       latestRegionBundleById.get(bundle.packId) ?? null,
       authorizedRuntime.runtime,
-      binding,
-      MAX_REGION_DELTA_CHAIN_DEPTH,
-      storageKeyForRegionBundleFull,
-      storageKeyForRegionBundleDelta,
-      REGION_FULL_TRANSFER_MODE,
-      REGION_DELTA_TRANSFER_MODE
+      regionBundleKeys[index] ?? null,
+      existingStorageKeys
     );
     if (plan != null) {
       regionBundleUploads.push(plan);
@@ -104,12 +133,8 @@ export async function prepareUploads(
     latest?.snapshotId ?? null,
     latestPack,
     authorizedRuntime.runtime,
-    binding,
-    MAX_PACK_DELTA_CHAIN_DEPTH,
-    storageKeyForPackFull,
-    storageKeyForPackDelta,
-    PACK_FULL_TRANSFER_MODE,
-    PACK_DELTA_TRANSFER_MODE
+    nonRegionPackKeys,
+    existingStorageKeys
   );
   failOnOversizedFullUpload(svc, [nonRegionPackUpload, ...regionBundleUploads]);
   return {
@@ -315,6 +340,44 @@ export function maxUploadBodyBytes(svc: ServiceContext): number {
   return parsePositiveInt(svc.env.UPLOAD_MAX_BODY_BYTES, 95_000_000);
 }
 
+type GroupedArtifactCandidateKeys = {
+  fullStorageKey: string;
+  deltaStorageKey: string | null;
+  baseChainDepth: number;
+  fullTransferMode: typeof PACK_FULL_TRANSFER_MODE | typeof REGION_FULL_TRANSFER_MODE;
+};
+
+/**
+ * The storage keys a pack upload could target (full slot, plus a delta slot
+ * when the chain depth allows). Computed for every pack up front so their
+ * existence resolves in one batched query; null when the pack needs no upload.
+ */
+function groupedArtifactCandidateKeys(
+  pack: LocalPackDescriptor | null,
+  latestPack: SnapshotPack | null,
+  maxChainDepth: number,
+  fullStorageKeyForHash: (hash: string) => string,
+  deltaStorageKeyForHashes: (baseHash: string, hash: string) => string,
+  fullTransferMode: typeof PACK_FULL_TRANSFER_MODE | typeof REGION_FULL_TRANSFER_MODE,
+  deltaTransferMode: typeof PACK_DELTA_TRANSFER_MODE | typeof REGION_DELTA_TRANSFER_MODE
+): GroupedArtifactCandidateKeys | null {
+  if (!pack || latestPack?.hash === pack.hash) {
+    return null;
+  }
+  const baseChainDepth = latestPack?.transferMode === deltaTransferMode
+    ? (latestPack.chainDepth ?? 0)
+    : 0;
+  const deltaAvailable = latestPack != null
+    && (latestPack.transferMode === fullTransferMode || latestPack.transferMode === deltaTransferMode)
+    && baseChainDepth < maxChainDepth;
+  return {
+    fullStorageKey: fullStorageKeyForHash(pack.hash),
+    deltaStorageKey: deltaAvailable ? deltaStorageKeyForHashes(latestPack.hash, pack.hash) : null,
+    baseChainDepth,
+    fullTransferMode
+  };
+}
+
 async function prepareGroupedArtifactUpload(
   svc: ServiceContext,
   ctx: RequestContext,
@@ -323,12 +386,8 @@ async function prepareGroupedArtifactUpload(
   latestSnapshotId: string | null,
   latestPack: SnapshotPack | null,
   runtime: Pick<WorldRuntimeRecord, "runtimeEpoch" | "runtimeToken">,
-  binding: WorldStorageBinding,
-  maxChainDepth: number,
-  fullStorageKeyForHash: (hash: string) => string,
-  deltaStorageKeyForHashes: (baseHash: string, hash: string) => string,
-  fullTransferMode: typeof PACK_FULL_TRANSFER_MODE | typeof REGION_FULL_TRANSFER_MODE,
-  deltaTransferMode: typeof PACK_DELTA_TRANSFER_MODE | typeof REGION_DELTA_TRANSFER_MODE
+  candidateKeys: GroupedArtifactCandidateKeys | null,
+  existingStorageKeys: ReadonlySet<string>
 ) {
   if (!pack) {
     return null;
@@ -344,17 +403,13 @@ async function prepareGroupedArtifactUpload(
       baseChainDepth: latestPack.chainDepth ?? null
     };
   }
+  if (!candidateKeys) {
+    return null;
+  }
 
-  const fullStorageKey = fullStorageKeyForHash(pack.hash);
-  const fullExists = await svc.storageProvider.exists(binding, fullStorageKey);
-  const baseChainDepth = latestPack?.transferMode === deltaTransferMode
-    ? (latestPack.chainDepth ?? 0)
-    : 0;
-  const deltaAvailable = latestPack != null
-    && (latestPack.transferMode === fullTransferMode || latestPack.transferMode === deltaTransferMode)
-    && baseChainDepth < maxChainDepth;
-  const deltaStorageKey = deltaAvailable ? deltaStorageKeyForHashes(latestPack.hash, pack.hash) : null;
-  const deltaExists = deltaStorageKey ? await svc.storageProvider.exists(binding, deltaStorageKey) : false;
+  const { fullStorageKey, deltaStorageKey, baseChainDepth, fullTransferMode } = candidateKeys;
+  const fullExists = existingStorageKeys.has(fullStorageKey);
+  const deltaExists = deltaStorageKey != null && existingStorageKeys.has(deltaStorageKey);
 
   return {
     pack,

@@ -50,8 +50,12 @@ public final class SharedWorldHostingManager {
     private static final long MAX_SUGGESTED_AUTOSAVE_INTERVAL_MS = 60 * 60_000L;
     // 0.3.0: while the realtime channel is connected the coordinator extends
     // the lease from socket keepalives and settings/membership changes arrive
-    // as pushes, so the live heartbeat drops to a safety-net cadence.
-    private static final long PUSH_CONNECTED_HEARTBEAT_INTERVAL_MS = 5 * 60_000L;
+    // as pushes, so the live heartbeat relaxes. 0.3.3: relaxed to 60s, not
+    // 5min — a half-open socket looks connected to us (keepalives are
+    // fire-and-forget) while the coordinator's keepalive view goes stale, and
+    // only a heartbeat cadence under the 90s lease keeps hosting alive on
+    // HTTP alone through that.
+    private static final long PUSH_CONNECTED_HEARTBEAT_INTERVAL_MS = 60_000L;
     // Local gamerule reads are free; only diffs go over HTTP. Decoupled from
     // the heartbeat so stretched heartbeats never delay gamerule persistence.
     private static final long GAMERULES_LOCAL_POLL_INTERVAL_MS = 5_000L;
@@ -883,7 +887,7 @@ public final class SharedWorldHostingManager {
                     runtime == null ? null : runtime.runtimeEpoch(),
                     this.coordinatedRelease != CoordinatedRelease.NONE
             );
-            handleHostAuthorityLost(heartbeatAuthorityLossMessage(duringSnapshotUpload));
+            handleHostAuthorityLost(heartbeatAuthorityLossMessage(null, duringSnapshotUpload));
             return;
         }
         if ("host-finalizing".equals(runtime.phase())) {
@@ -894,7 +898,7 @@ public final class SharedWorldHostingManager {
                     "SharedWorld heartbeat unexpectedly reported host-finalizing without coordinated release for {}",
                     context.worldId()
             );
-            handleHostAuthorityLost(heartbeatAuthorityLossMessage(duringSnapshotUpload));
+            handleHostAuthorityLost(heartbeatAuthorityLossMessage(null, duringSnapshotUpload));
             return;
         }
         if (!"host-starting".equals(runtime.phase()) && !"host-live".equals(runtime.phase())) {
@@ -903,7 +907,7 @@ public final class SharedWorldHostingManager {
                     runtime.phase(),
                     context.worldId()
             );
-            handleHostAuthorityLost(heartbeatAuthorityLossMessage(duringSnapshotUpload));
+            handleHostAuthorityLost(heartbeatAuthorityLossMessage(null, duringSnapshotUpload));
             return;
         }
         this.lastHeartbeatAt = System.currentTimeMillis();
@@ -974,7 +978,7 @@ public final class SharedWorldHostingManager {
             return;
         }
         if (SharedWorldApiClient.isHostNotActiveError(exception)) {
-            handleHostAuthorityLost(heartbeatAuthorityLossMessage(duringSnapshotUpload));
+            handleHostAuthorityLost(heartbeatAuthorityLossMessage(exception, duringSnapshotUpload));
             return;
         }
         this.consecutiveHeartbeatFailures += 1;
@@ -987,7 +991,14 @@ public final class SharedWorldHostingManager {
         }
     }
 
-    private String heartbeatAuthorityLossMessage(boolean duringSnapshotUpload) {
+    private String heartbeatAuthorityLossMessage(Exception exception, boolean duringSnapshotUpload) {
+        // "Someone else took over" was a lie for a solo host whose own lease
+        // lapsed; the backend now says which one happened.
+        if (SharedWorldApiClient.isHostLeaseExpiredError(exception)) {
+            return SharedWorldText.string(duringSnapshotUpload
+                    ? "screen.sharedworld.hosting_lease_expired_upload"
+                    : "screen.sharedworld.hosting_lease_expired");
+        }
         if (duringSnapshotUpload) {
             return SharedWorldText.string("screen.sharedworld.hosting_lost_authority_upload");
         }
@@ -1080,7 +1091,7 @@ public final class SharedWorldHostingManager {
                 if (SharedWorldApiClient.isHostNotActiveError(exception)) {
                     dispatchToMainThread(() -> {
                         if (isCurrentAttempt(context)) {
-                            handleHostAuthorityLost(SharedWorldText.string("screen.sharedworld.hosting_lost_authority_upload"));
+                            handleHostAuthorityLost(heartbeatAuthorityLossMessage(exception, true));
                         }
                     });
                     return;

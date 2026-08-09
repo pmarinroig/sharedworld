@@ -782,7 +782,14 @@ public final class SharedWorldModels {
     ) {
     }
 
-    public record ErrorDto(String error, String message, int status) {
+    /**
+     * reason refines codes that cover more than one situation (host_not_active:
+     * "lease_expired" vs "replaced"); null from older backends.
+     */
+    public record ErrorDto(String error, String message, int status, String reason) {
+        public ErrorDto(String error, String message, int status) {
+            this(error, message, status, null);
+        }
     }
 
     /**

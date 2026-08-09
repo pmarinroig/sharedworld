@@ -136,8 +136,31 @@ export interface WaitingObservation {
   waiterSessionId: string | null;
 }
 
-function hostNotActiveError(): HttpError {
-  return new HttpError(409, "host_not_active", "Someone else is hosting this world now, so this upload was stopped.");
+function hostNotActiveError(reason?: "lease_expired" | "replaced"): HttpError {
+  const error = new HttpError(409, "host_not_active", "Someone else is hosting this world now, so this upload was stopped.");
+  error.reason = reason;
+  return error;
+}
+
+/**
+ * host_not_active covers two very different situations, and 0.3.2 clients
+ * render both as "someone else took over hosting" — a lie for a solo host
+ * whose own lease lapsed. The reason lets newer clients tell them apart:
+ * "lease_expired" (no runtime survives — the caller's own lease lapsed) vs
+ * "replaced" (a different player holds the runtime now). Same-player
+ * mismatches (own newer session, wrong phase) stay reasonless.
+ */
+function hostNotActiveReason(
+  runtime: WorldRuntimeRecord | null,
+  playerUuid: string
+): "lease_expired" | "replaced" | undefined {
+  if (runtime == null) {
+    return "lease_expired";
+  }
+  if (runtime.hostUuid !== playerUuid) {
+    return "replaced";
+  }
+  return undefined;
 }
 
 /**
@@ -292,7 +315,15 @@ export class WorldCoordinator {
     const resolved = await this.resolve(now);
     const runtime = resolved.runtime;
     if (runtime == null || !matchesHostAuthorization(runtime, actor.playerUuid, request.runtimeEpoch, request.hostToken)) {
-      throw hostNotActiveError();
+      throw hostNotActiveError(hostNotActiveReason(runtime, actor.playerUuid));
+    }
+    // The host just proved itself reachable over HTTPS; a socket-grace
+    // deadline armed by a dropped push channel must not forfeit its lease
+    // while heartbeats keep landing. The socket may still be down, so only
+    // the deadline clears — connected state belongs to the gateway.
+    const link = this.store.getHostLink();
+    if (link.graceDeadlineAt != null) {
+      this.store.setHostLink({ connected: link.connected, graceDeadlineAt: null });
     }
     if (runtime.phase === "host-finalizing") {
       await this.afterStateChange(now);
@@ -400,7 +431,7 @@ export class WorldCoordinator {
       throw new HttpError(409, "not_finalizing", "SharedWorld is not currently finalizing.");
     }
     if (!matchesHostAuthorization(runtime, actor.playerUuid, request.runtimeEpoch, request.hostToken)) {
-      throw hostNotActiveError();
+      throw hostNotActiveError(hostNotActiveReason(runtime, actor.playerUuid));
     }
     await this.retireRuntime(runtime, now);
     this.store.clearWarning();
@@ -438,7 +469,7 @@ export class WorldCoordinator {
       if (this.isReleasedEpochReplay(request.runtimeEpoch, resolved.warning)) {
         return this.releaseResult(request.graceful, resolved, now);
       }
-      throw hostNotActiveError();
+      throw hostNotActiveError(hostNotActiveReason(runtime, actor.playerUuid));
     }
     this.store.deleteWaiter(actor.playerUuid);
     await this.retireRuntime(runtime, now);
@@ -544,19 +575,8 @@ export class WorldCoordinator {
       const graceDeadline = link.graceDeadlineAt != null ? new Date(link.graceDeadlineAt) : null;
       const graceDue = graceDeadline != null && graceDeadline.getTime() <= now.getTime();
       if (graceDue || leaseDeadlinePassed(runtime, now)) {
-        // Connection signals are lossy: the gateway's connected/closed pokes
-        // can die with a coordinator mid-reset ("Internal error in Durable
-        // Object storage caused object to be reset" seen in production), so
-        // neither link.connected nor an armed grace deadline is trusted on
-        // its own. The gateway's keepalive timestamp is the ground truth —
-        // verify with a probe before declaring the host gone, and repair the
-        // link state when the host turns out to be reachable.
-        const lastSeen = await this.effects.probeHostReachability(runtime.hostUuid ?? "");
-        const reachable = lastSeen != null && now.getTime() - lastSeen.getTime() < HOST_LEASE_TIMEOUT_MS;
-        if (reachable) {
-          this.store.putRuntime(refreshLiveRuntime(runtime, null, now));
-          this.store.setHostLink({ connected: true, graceDeadlineAt: null });
-        } else if (graceDue) {
+        const rescued = await this.rescueReachableHost(runtime, now);
+        if (rescued == null && graceDue) {
           await this.expireRuntime(runtime, now);
         }
       }
@@ -620,7 +640,7 @@ export class WorldCoordinator {
     if (!resolved.runtime
       || !allowedPhases.includes(resolved.runtime.phase)
       || !matchesHostAuthorization(resolved.runtime, actor.playerUuid, runtimeEpoch, hostToken)) {
-      throw hostNotActiveError();
+      throw hostNotActiveError(hostNotActiveReason(resolved.runtime, actor.playerUuid));
     }
     return resolved.runtime;
   }
@@ -635,7 +655,17 @@ export class WorldCoordinator {
     const memberships = await this.effects.listMemberships(this.worldId);
     const waiters = this.store.listWaiters();
     const candidate = choosePreferredCandidate(waiters.filter((waiter) => waiter.waiting), memberships);
-    const before = this.store.getRuntime();
+    let before = this.store.getRuntime();
+    if (before != null
+      && (before.phase === "host-starting" || before.phase === "host-live")
+      && leaseDeadlinePassed(before, now)) {
+      // Same mercy as onAlarm: an over-deadline lease is not trusted on its
+      // own — the renewal alarm can lose a race against inbound traffic (an
+      // autosave upload's blob PUTs each run this path), so a host whose
+      // socket keepalive is fresh gets its lease renewed here instead of
+      // being expired with a false unclean-shutdown warning.
+      before = (await this.rescueReachableHost(before, now)) ?? before;
+    }
     const timeoutWarning = timedOutUncleanShutdownWarning(before, now);
     if (timeoutWarning != null && before != null) {
       await this.expireRuntime(before, now, { clearWaiters: true });
@@ -650,6 +680,28 @@ export class WorldCoordinator {
       ? before?.runtimeEpoch ?? warning?.runtimeEpoch ?? this.store.getLastEpoch()
       : null;
     return { runtime: afterTimeout, candidate, warning, retiredRuntimeEpoch };
+  }
+
+  /**
+   * Connection signals are lossy: the gateway's connected/closed pokes can
+   * die with a coordinator mid-reset ("Internal error in Durable Object
+   * storage caused object to be reset" seen in production), so neither
+   * link.connected nor an armed grace deadline is trusted on its own. The
+   * gateway's keepalive timestamp is the ground truth — verify with a probe
+   * before declaring the host gone, and repair the link state when the host
+   * turns out to be reachable. Returns the renewed runtime, or null when the
+   * host is genuinely unreachable.
+   */
+  private async rescueReachableHost(runtime: WorldRuntimeRecord, now: Date): Promise<WorldRuntimeRecord | null> {
+    const lastSeen = await this.effects.probeHostReachability(runtime.hostUuid ?? "");
+    const reachable = lastSeen != null && now.getTime() - lastSeen.getTime() < HOST_LEASE_TIMEOUT_MS;
+    if (!reachable) {
+      return null;
+    }
+    const refreshed = refreshLiveRuntime(runtime, null, now);
+    this.store.putRuntime(refreshed);
+    this.store.setHostLink({ connected: true, graceDeadlineAt: null });
+    return refreshed;
   }
 
   private async claimHost(

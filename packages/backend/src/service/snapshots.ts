@@ -196,19 +196,47 @@ export async function maybeDeleteUnreferencedBlob(svc: ServiceContext, binding: 
 }
 
 export async function storageKeyExists(svc: ServiceContext, binding: WorldStorageBinding, storageKey: string): Promise<boolean> {
-  if (binding.provider === "google-drive") {
-    if (binding.storageAccountId == null) {
+  return (await storageKeysExist(svc, binding, [storageKey])).has(storageKey);
+}
+
+/**
+ * Existence for a whole key set at once. Large worlds carry hundreds of packs;
+ * checking them one query at a time put upload prepare/finalize past the
+ * client's request timeout, so callers with more than one key must use this.
+ *
+ * `whenUnverifiable` picks the fallback when there is no object metadata to
+ * check (unlinked world, R2 without a bucket binding): finalize validation
+ * assumes keys are present (a missing check must not reject a snapshot), while
+ * upload planning asks the provider so fresh worlds still get signed slots.
+ */
+export async function storageKeysExist(
+  svc: ServiceContext,
+  binding: WorldStorageBinding,
+  storageKeys: readonly string[],
+  whenUnverifiable: "assume-present" | "ask-provider" = "assume-present"
+): Promise<Set<string>> {
+  const unique = [...new Set(storageKeys)];
+  if (unique.length === 0) {
+    return new Set();
+  }
+  if (binding.provider === "google-drive" && binding.storageAccountId != null) {
+    // Drive providers record every stored object in the repository; those rows are
+    // the authoritative existence check (the real provider's exists() is the same lookup).
+    return svc.repository.listExistingStorageKeys(binding.provider, binding.storageAccountId, unique);
+  }
+  if (whenUnverifiable === "assume-present") {
+    if (binding.provider === "google-drive") {
       // Unlinked worlds do not have cheap object metadata to validate against.
-      return true;
+      return new Set(unique);
     }
-    // Drive providers record every stored object in the repository; that row is the
-    // authoritative existence check (the real provider's exists() is the same lookup).
-    return (await svc.repository.getStorageObject(binding.provider, binding.storageAccountId, storageKey)) != null;
+    if (binding.provider === "r2" && svc.storageProvider.provider === "r2" && svc.env.BLOBS == null) {
+      return new Set(unique);
+    }
   }
-  if (binding.provider === "r2" && svc.storageProvider.provider === "r2" && svc.env.BLOBS == null) {
-    return true;
-  }
-  return svc.storageProvider.exists(binding, storageKey);
+  const checks = await Promise.all(
+    unique.map(async (key) => ({ key, exists: await svc.storageProvider.exists(binding, key) }))
+  );
+  return new Set(checks.filter((check) => check.exists).map((check) => check.key));
 }
 
 /**
@@ -221,6 +249,10 @@ async function validateFinalizeSnapshotRequest(svc: ServiceContext, worldId: str
   const snapshotCache = new Map<string, SnapshotManifest | null>();
   const seenPaths = new Set<string>();
   const seenPackIds = new Set<string>();
+  const existingStorageKeys = await storageKeysExist(svc, binding, [
+    ...request.files.map((file) => file.storageKey),
+    ...(request.packs ?? []).map((pack) => pack.storageKey)
+  ]);
 
   if (request.baseSnapshotId != null) {
     await requireSnapshotForValidation(svc, worldId, request.baseSnapshotId, snapshotCache);
@@ -232,7 +264,7 @@ async function validateFinalizeSnapshotRequest(svc: ServiceContext, worldId: str
       throw new HttpError(400, "duplicate_snapshot_path", `Snapshot includes duplicate file path '${file.path}'.`);
     }
     seenPaths.add(file.path);
-    await assertStorageKeyExists(svc, binding, file.storageKey);
+    assertStorageKeyExists(existingStorageKeys, file.storageKey);
     await validateManifestFileBase(svc, worldId, file, snapshotCache);
   }
 
@@ -242,7 +274,7 @@ async function validateFinalizeSnapshotRequest(svc: ServiceContext, worldId: str
       throw new HttpError(400, "duplicate_snapshot_pack", `Snapshot includes duplicate pack id '${pack.packId}'.`);
     }
     seenPackIds.add(pack.packId);
-    await assertStorageKeyExists(svc, binding, pack.storageKey);
+    assertStorageKeyExists(existingStorageKeys, pack.storageKey);
     for (const file of pack.files) {
       if (file.path.trim().length === 0) {
         throw new HttpError(400, "invalid_snapshot_path", "Snapshot packed file path is required.");
@@ -362,9 +394,8 @@ async function requireSnapshotForValidation(
   return snapshot;
 }
 
-async function assertStorageKeyExists(svc: ServiceContext, binding: WorldStorageBinding, storageKey: string): Promise<void> {
-  const exists = await storageKeyExists(svc, binding, storageKey);
-  if (!exists) {
+function assertStorageKeyExists(existingStorageKeys: ReadonlySet<string>, storageKey: string): void {
+  if (!existingStorageKeys.has(storageKey)) {
     throw new HttpError(400, "snapshot_storage_missing", `Snapshot storage object '${storageKey}' was not found.`);
   }
 }

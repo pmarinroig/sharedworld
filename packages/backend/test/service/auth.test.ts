@@ -186,6 +186,40 @@ describe("SharedWorldService auth", () => {
     expect((caught as HttpError).retryAfterSeconds).toBe(60);
   });
 
+  test("a Mojang 403 (blocked egress) short-circuits the ladder", async () => {
+    let attempts = 0;
+    const instance = createTestService(
+      createSqliteRepository(),
+      {
+        async verifyJoin() {
+          attempts += 1;
+          const error = new HttpError(
+            503,
+            "identity_verification_unavailable",
+            "Minecraft's identity service rejected the SharedWorld server's request."
+          );
+          error.upstreamStatus = 403;
+          throw error;
+        }
+      }
+    );
+
+    const challenge = await instance.createChallenge();
+    let caught: unknown = null;
+    try {
+      await instance.completeAuth({ serverId: challenge.serverId, playerName: "Owner" });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(HttpError);
+    expect((caught as HttpError).status).toBe(503);
+    expect((caught as HttpError).code).toBe("identity_verification_unavailable");
+    // Mojang blocks this worker's egress outright; further attempts are
+    // wasted subrequests that cannot succeed.
+    expect(attempts).toBe(1);
+    expect((caught as HttpError).retryAfterSeconds).toBe(10);
+  });
+
   test("mixed propagation lag and transient unavailability prefers the retryable 503 over the terminal 403", async () => {
     let attempts = 0;
     const instance = createTestService(

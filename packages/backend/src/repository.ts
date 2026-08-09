@@ -153,6 +153,8 @@ export interface StorageRepository {
   findStorageAccountsByOwner(provider: StorageProviderType, ownerPlayerUuid: string): Promise<StorageAccountRecord[]>;
   upsertStorageObject(record: StorageObjectRecord): Promise<void>;
   getStorageObject(provider: StorageProviderType, storageAccountId: string, storageKey: string): Promise<StorageObjectRecord | null>;
+  /** Which of the given storage keys have object rows — one batched query, not one per key. */
+  listExistingStorageKeys(provider: StorageProviderType, storageAccountId: string, storageKeys: readonly string[]): Promise<Set<string>>;
   deleteStorageObject(provider: StorageProviderType, storageAccountId: string, storageKey: string): Promise<void>;
 }
 

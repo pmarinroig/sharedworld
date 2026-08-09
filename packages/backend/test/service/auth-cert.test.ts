@@ -270,4 +270,34 @@ describe("MojangServicesKeyProvider", () => {
     const empty = new MojangServicesKeyProvider(createSqliteRepository(), env);
     await expectHttpError(empty.playerCertificateKeys(new Date()), 503, "identity_verification_unavailable");
   });
+
+  test("a failed refresh throttles further fetch attempts instead of retrying per request", async () => {
+    const keys = await keysPromise;
+    let hits = 0;
+    const server = Bun.serve({
+      port: 0,
+      fetch() {
+        hits += 1;
+        return new Response(null, { status: 403 });
+      }
+    });
+    try {
+      const repository = createSqliteRepository();
+      await repository.putMojangServicesKeys("2020-01-01T00:00:00.000Z", JSON.stringify([keys.servicesPublicB64]));
+      const provider = new MojangServicesKeyProvider(repository, {
+        MOJANG_SERVICES_PUBLICKEYS_ENDPOINT: `http://127.0.0.1:${server.port}/publickeys`
+      });
+      expect(await provider.playerCertificateKeys(new Date())).toHaveLength(1);
+      expect(await provider.playerCertificateKeys(new Date())).toHaveLength(1);
+      expect(hits).toBe(1);
+      // The row re-expires later (one retry per throttle window), rather than
+      // being refreshed to a full TTL by a failure.
+      const restamped = await repository.getMojangServicesKeys();
+      expect(restamped).not.toBeNull();
+      const age = Date.now() - new Date(restamped!.fetchedAt).getTime();
+      expect(age).toBeGreaterThan(60 * 60_000);
+    } finally {
+      server.stop(true);
+    }
+  });
 });

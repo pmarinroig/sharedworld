@@ -167,18 +167,48 @@ class DoCoordinatorEffects implements CoordinatorEffects {
   }
 
   async setHostWatch(hostUuid: string, watching: boolean): Promise<boolean> {
-    const response = await this.gateway(hostUuid).fetch("https://do/watch", {
-      method: "POST",
-      body: JSON.stringify({ worldId: this.worldId, watching })
-    });
-    const body = await response.json() as { connected: boolean };
-    return body.connected;
+    try {
+      const body = await this.gatewayCall(hostUuid, "https://do/watch", {
+        method: "POST",
+        body: JSON.stringify({ worldId: this.worldId, watching })
+      }) as { connected: boolean };
+      return body.connected;
+    } catch (error) {
+      // The watch only tunes connection-signal fidelity (and signals are
+      // lossy by design); claiming or retiring a host must not fail on it.
+      console.warn("SharedWorld host watch poke failed", { watching, error: String(error) });
+      return false;
+    }
   }
 
   async probeHostReachability(hostUuid: string): Promise<Date | null> {
-    const response = await this.gateway(hostUuid).fetch("https://do/probe");
-    const body = await response.json() as { lastSeenAt: string | null };
+    // No catch: callers treat a throw as "renewal aborted, expiry skipped" —
+    // the safe failure for a lease decision. Returning null here instead
+    // would read as "unreachable" and forfeit a healthy host's lease.
+    const body = await this.gatewayCall(hostUuid, "https://do/probe") as { lastSeenAt: string | null };
     return body.lastSeenAt == null ? null : new Date(body.lastSeenAt);
+  }
+
+  /**
+   * Gateway pokes get the same one-immediate-retry treatment as coordinator
+   * stub calls (see callStub in service.ts): a gateway DO mid-reset rejects
+   * the fetch or answers a non-JSON error page, and both probe/watch are
+   * read-mostly calls that are safe to repeat against the restarted object.
+   */
+  private async gatewayCall(hostUuid: string, url: string, init?: { method?: string; body?: string }): Promise<unknown> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const response = await this.gateway(hostUuid).fetch(url, init);
+        if (!response.ok) {
+          throw new Error(`gateway poke returned HTTP ${response.status}`);
+        }
+        return await response.json();
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError;
   }
 }
 

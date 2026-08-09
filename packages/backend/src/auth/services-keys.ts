@@ -22,6 +22,7 @@ export interface ServicesKeyProvider {
 }
 
 const CACHE_TTL_MS = 24 * 60 * 60_000;
+const FAILED_REFRESH_RETRY_MS = 60 * 60_000;
 const FETCH_TIMEOUT_MS = 5_000;
 const DEFAULT_ENDPOINT = "https://api.minecraftservices.com/publickeys";
 
@@ -48,6 +49,13 @@ export class MojangServicesKeyProvider implements ServicesKeyProvider {
       return parseKeysJson(keysJson);
     } catch (error) {
       if (cached) {
+        // Mojang blocks Workers egress on this endpoint, so once the TTL
+        // lapses every login would re-attempt (and re-fail) the fetch.
+        // Back-date the row so it re-expires in FAILED_REFRESH_RETRY_MS
+        // instead of on every request; backend-seed-mojang-keys.sh remains
+        // the real refresh path.
+        const retryStamp = new Date(now.getTime() - CACHE_TTL_MS + FAILED_REFRESH_RETRY_MS);
+        await this.store.putMojangServicesKeys(retryStamp.toISOString(), cached.keysJson);
         console.warn("SharedWorld Mojang publickeys refresh failed; serving stale key set", {
           fetchedAt: cached.fetchedAt,
           cause: String(error)

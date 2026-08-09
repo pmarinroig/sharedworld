@@ -38,7 +38,7 @@ async function becomeLiveHost(h: CoordinatorHarness, who = OWNER, now = T0): Pro
   return { runtimeEpoch: assignment.runtimeEpoch, hostToken: assignment.hostToken };
 }
 
-async function expectHttpError(promise: Promise<unknown>, code: string): Promise<void> {
+async function expectHttpError(promise: Promise<unknown>, code: string, reason?: string): Promise<void> {
   try {
     await promise;
     throw new Error(`expected ${code} but the call succeeded`);
@@ -47,6 +47,9 @@ async function expectHttpError(promise: Promise<unknown>, code: string): Promise
       throw error;
     }
     expect(error.code).toBe(code);
+    if (reason !== undefined) {
+      expect(error.reason).toBe(reason);
+    }
   }
 }
 
@@ -130,11 +133,13 @@ describe("fencing", () => {
     expect(reentry.action).toBe("host");
     expect(reentry.assignment?.runtimeEpoch).toBe(2);
 
-    await expectHttpError(h.coordinator.heartbeat(OWNER, { ...oldAuth, joinTarget: null }, at(98)), "host_not_active");
-    await expectHttpError(h.coordinator.beginFinalization(OWNER, oldAuth, at(98)), "host_not_active");
+    // The new host is a different player: the deposed host's error says so.
+    await expectHttpError(h.coordinator.heartbeat(OWNER, { ...oldAuth, joinTarget: null }, at(98)), "host_not_active", "replaced");
+    await expectHttpError(h.coordinator.beginFinalization(OWNER, oldAuth, at(98)), "host_not_active", "replaced");
     await expectHttpError(
       h.coordinator.validateHostAuthority(OWNER, oldAuth.runtimeEpoch, oldAuth.hostToken, ["host-live"], at(98)),
-      "host_not_active"
+      "host_not_active",
+      "replaced"
     );
     expect(h.store.getRuntime()?.runtimeEpoch).toBe(2);
   });
@@ -166,9 +171,10 @@ describe("fencing", () => {
     const h = makeCoordinator();
     seedMembers(h);
     const auth = await becomeLiveHost(h);
-    // Expiry recorded the warning for epoch 1.
+    // Expiry recorded the warning for epoch 1. No one took over: the error
+    // must say the lease expired, not blame a phantom other host.
     await h.coordinator.runtimeStatus(OWNER, at(120));
-    await expectHttpError(h.coordinator.releaseHost(OWNER, { ...auth, graceful: true }, at(121)), "host_not_active");
+    await expectHttpError(h.coordinator.releaseHost(OWNER, { ...auth, graceful: true }, at(121)), "host_not_active", "lease_expired");
     await expectHttpError(h.coordinator.completeFinalization(OWNER, auth, at(121)), "not_finalizing");
   });
 });
@@ -284,6 +290,42 @@ describe("connection-driven liveness (signal, never truth)", () => {
     // Keepalive goes stale: the next lease-deadline alarm forfeits.
     await h.coordinator.onAlarm(at(95 + 91));
     expect(h.store.getRuntime()).toBeNull();
+  });
+
+  test("an over-deadline lease hit by an inbound request probes the keepalive before expiring", async () => {
+    const h = makeCoordinator();
+    seedMembers(h);
+    const auth = await becomeLiveHost(h);
+    // The renewal alarm lost the race: an inbound request (e.g. a blob PUT's
+    // authority check) lands after the lease deadline while the host's socket
+    // keepalive is fresh. The host must be rescued, not expired with a false
+    // unclean-shutdown warning.
+    h.effects.lastKeepaliveAt = at(85);
+    const status = await h.coordinator.runtimeStatus(OWNER, at(95));
+    expect(status.phase).toBe("host-live");
+    expect(h.store.getWarning()).toBeNull();
+    await h.coordinator.validateHostAuthority(OWNER, auth.runtimeEpoch, auth.hostToken, ["host-live"], at(96));
+    // With the keepalive stale, the same path still expires the lease.
+    await h.coordinator.runtimeStatus(OWNER, at(96 + 92));
+    expect(h.store.getRuntime()).toBeNull();
+    expect(h.store.getWarning()?.hostUuid).toBe(OWNER.playerUuid);
+  });
+
+  test("a successful heartbeat clears an armed socket-grace deadline", async () => {
+    const h = makeCoordinator();
+    seedMembers(h);
+    const auth = await becomeLiveHost(h);
+    await h.coordinator.hostSocketClosed(OWNER.playerUuid, at(10));
+    expect(h.store.getHostLink().graceDeadlineAt).not.toBeNull();
+    // The host is demonstrably reachable over HTTPS; a stale grace deadline
+    // must not forfeit its lease while heartbeats keep landing.
+    await h.coordinator.heartbeat(OWNER, { ...auth, joinTarget: null }, at(15));
+    expect(h.store.getHostLink().graceDeadlineAt).toBeNull();
+    // Socket state still belongs to the gateway: connected stays false.
+    expect(h.store.getHostLink().connected).toBe(false);
+    await h.coordinator.onAlarm(at(41));
+    expect(h.store.getRuntime()?.phase).toBe("host-live");
+    expect(h.store.getWarning()).toBeNull();
   });
 
   test("[P7] lease expiry publishes the runtime change so watchers hear about it", async () => {

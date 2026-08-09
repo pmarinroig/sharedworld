@@ -226,10 +226,13 @@ export class AuthDomainService {
       } catch (error) {
         if (error instanceof HttpError && error.code === "identity_verification_unavailable") {
           transientFailure = error;
-          if (error.upstreamStatus === 429) {
-            // Mojang is rate-limiting this worker's egress; burning the
+          if (error.upstreamStatus === 429 || error.upstreamStatus === 403) {
+            // 429: Mojang is rate-limiting this worker's egress; burning the
             // remaining ladder attempts within ~2s only deepens the
-            // throttling. Surface the retryable 503 immediately.
+            // throttling. 403: Mojang blocks this worker's egress outright
+            // (the Cloudflare IP ban), so every further attempt is a wasted
+            // subrequest that cannot succeed. Surface the retryable 503
+            // immediately either way.
             break;
           }
           continue;
