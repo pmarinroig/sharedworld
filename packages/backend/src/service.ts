@@ -39,7 +39,11 @@ import type {
   WorldMembership,
   WorldRuntimeStatus,
   WorldSnapshotSummary,
-  WorldSummary
+  WorldSummary,
+  CreateBlobSessionRequest,
+  CreateBlobSessionResponse,
+  CommitBlobSessionRequest,
+  CommitBlobSessionResponse
 } from "../../shared/src/index.ts";
 
 import { AuthDomainService } from "./auth/service.ts";
@@ -232,8 +236,16 @@ export class SharedWorldService {
     return syncPlan.uploadStorageBlob(this.svc, ctx, worldId, storageKey, request);
   }
 
-  async downloadStorageBlob(ctx: RequestContext, worldId: string, storageKey: string): Promise<Response> {
-    return syncPlan.downloadStorageBlob(this.svc, ctx, worldId, storageKey);
+  async createBlobUploadSession(ctx: RequestContext, worldId: string, request: CreateBlobSessionRequest): Promise<CreateBlobSessionResponse> {
+    return syncPlan.createBlobUploadSession(this.svc, ctx, worldId, request);
+  }
+
+  async commitBlobUploadSession(ctx: RequestContext, worldId: string, request: CommitBlobSessionRequest): Promise<CommitBlobSessionResponse> {
+    return syncPlan.commitBlobUploadSession(this.svc, ctx, worldId, request);
+  }
+
+  async downloadStorageBlob(ctx: RequestContext, worldId: string, storageKey: string, request?: Request): Promise<Response> {
+    return syncPlan.downloadStorageBlob(this.svc, ctx, worldId, storageKey, request);
   }
 
   // --- session and runtime protocol ---

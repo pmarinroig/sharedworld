@@ -100,7 +100,8 @@ final class WorldSyncCoordinatorUploadTest {
                             server.uploadUrl("pack-delta"),
                             "base-snapshot",
                             baselinePack.descriptor().hash(),
-                            0
+                            0,
+                            2
                     ),
                     new UploadPackPlanDto[0],
                     SyncTestHttpServer.syncPolicy()
@@ -115,6 +116,8 @@ final class WorldSyncCoordinatorUploadTest {
             assertTrue(server.uploadedBlobBody("pack-delta").length < currentPack.descriptor().size());
             assertTrue(server.lastFinalizeSnapshotBody().contains("\"transferMode\":\"pack-delta\""));
             assertTrue(server.lastFinalizeSnapshotBody().contains("\"baseSnapshotId\":\"base-snapshot\""));
+            assertTrue(server.lastFinalizeSnapshotBody().contains("\"deltaFormatVersion\":2"), server.lastFinalizeSnapshotBody());
+            assertTrue(server.lastFinalizeSnapshotBody().contains("\"deltaBlobSize\":"), server.lastFinalizeSnapshotBody());
         }
     }
 
@@ -352,7 +355,7 @@ final class WorldSyncCoordinatorUploadTest {
             IOException error = assertThrows(IOException.class, () -> coordinator.uploadSnapshot(WORLD_ID, worldDirectory, HOST_UUID, 7L, "token-7"));
 
             assertTrue(error.getMessage().contains("data/huge.bin"), error.getMessage());
-            assertTrue(error.getMessage().contains("cannot be synced"), error.getMessage());
+            assertTrue(error.getMessage().contains("relay transfer path is limited"), error.getMessage());
             // The doomed upload never started.
             assertNull(server.uploadedBlobBody("pack-full-oversized"));
         }

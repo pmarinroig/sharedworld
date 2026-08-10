@@ -109,7 +109,10 @@ public final class ManagedWorldStore {
                 if (name.startsWith("pack-extract-")
                         || name.startsWith("region-bundle-extract-")
                         || (name.startsWith("pack-artifact-") && name.endsWith(".part"))
-                        || (name.startsWith("pack-patched-") && name.endsWith(".pack"))) {
+                        || (name.startsWith("pack-patched-") && name.endsWith(".pack"))
+                        // Resumable-download partials; the temps they resume
+                        // onto are per-attempt, so a crash orphans them.
+                        || name.endsWith(".swpart")) {
                     deleteQuietly(entry);
                 }
             }
@@ -121,7 +124,7 @@ public final class ManagedWorldStore {
             try (Stream<Path> stream = Files.walk(workingCopy)) {
                 for (Path path : stream.filter(Files::isRegularFile).toList()) {
                     String name = path.getFileName().toString();
-                    if (name.contains(".artifact.") && name.endsWith(".part")) {
+                    if ((name.contains(".artifact.") && name.endsWith(".part")) || name.endsWith(".swpart")) {
                         deleteQuietly(path);
                     }
                 }

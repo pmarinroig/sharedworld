@@ -49,6 +49,8 @@ export type RouterService = Pick<
   | "updateWorld"
   | "updateWorldSettings"
   | "uploadStorageBlob"
+  | "createBlobUploadSession"
+  | "commitBlobUploadSession"
 >;
 
 type AuthenticatedRouterService = Pick<RouterService, "getSession">;

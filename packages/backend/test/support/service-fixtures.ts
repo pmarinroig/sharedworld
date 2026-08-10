@@ -362,18 +362,27 @@ export function createBlobBucket(entries: Record<string, Uint8Array>): R2Bucket 
     async head(key) {
       return entries[key] ? { key, size: entries[key].byteLength } : null;
     },
-    async get(key) {
+    async get(key, options) {
       const value = entries[key];
       if (!value) {
         return null;
       }
+      const range = options?.range;
+      const sliced = range
+        ? value.slice(range.offset, range.length == null ? value.byteLength : range.offset + range.length)
+        : value;
       return {
         key,
         size: value.byteLength,
-        body: null,
+        body: new ReadableStream({
+          start(controller) {
+            controller.enqueue(sliced.slice());
+            controller.close();
+          }
+        }),
         httpMetadata: { contentType: "image/png" },
         async arrayBuffer() {
-          return copyArrayBuffer(value);
+          return copyArrayBuffer(sliced);
         }
       };
     },

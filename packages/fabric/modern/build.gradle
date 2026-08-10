@@ -245,6 +245,9 @@ tasks.named("test").configure {
     def testTmpDir = layout.buildDirectory.dir("test-tmpdir").get().asFile
     doFirst { testTmpDir.mkdirs() }
     systemProperty "java.io.tmpdir", testTmpDir.absolutePath
+    // Opt-in >2GiB sparse-file delta test; forwarded from the gradle JVM so
+    // `-Dsharedworld.test.hugeDelta=true` on the command line reaches JUnit.
+    systemProperty "sharedworld.test.hugeDelta", System.getProperty("sharedworld.test.hugeDelta", "false")
 }
 
 java {

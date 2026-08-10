@@ -1,9 +1,9 @@
 import { HttpError } from "../http.ts";
 import type { Env } from "../env.ts";
 import type { SharedWorldRepository, StorageAccountRecord } from "../repository.ts";
-import type { StorageBinding, StorageProvider, StorageQuota, StoredBlob } from "../storage.ts";
+import type { BlobRange, ResumableProbe, ResumableUploadCapable, StorageBinding, StorageProvider, StorageQuota, StoredBlob } from "../storage.ts";
 
-export class GoogleDriveStorageProvider implements StorageProvider {
+export class GoogleDriveStorageProvider implements StorageProvider, ResumableUploadCapable {
   readonly provider = "google-drive" as const;
   private static readonly ACCOUNT_LIMITERS = new Map<string, AccountRequestLimiter>();
 
@@ -40,39 +40,50 @@ export class GoogleDriveStorageProvider implements StorageProvider {
     });
   }
 
-  async get(binding: StorageBinding, storageKey: string): Promise<StoredBlob | null> {
+  async get(binding: StorageBinding, storageKey: string, range?: BlobRange | null): Promise<StoredBlob | null> {
     const account = await this.requireAccount(binding);
     const object = await this.repository.getStorageObject(this.provider, account.id, storageKey);
     if (!object) {
       return null;
     }
 
-    const response = await this.withDriveRetries(
-      account,
-      "download",
-      () => this.driveRequestChecked(account, `${apiBase(this.env)}/files/${encodeURIComponent(object.objectId)}?alt=media`, {}, {
-        code: "drive_download_failed",
-        label: "Google Drive download failed.",
-        allowNotFound: true
-      })
-    );
+    const rangeHeader = range ? `bytes=${range.offset}-${range.endInclusive ?? ""}` : null;
+    let response: Response | null;
+    try {
+      response = await this.withDriveRetries(
+        account,
+        "download",
+        () => this.driveRequestChecked(account, `${apiBase(this.env)}/files/${encodeURIComponent(object.objectId)}?alt=media`,
+          rangeHeader ? { headers: { range: rangeHeader } } : {}, {
+            code: "drive_download_failed",
+            label: "Google Drive download failed.",
+            allowNotFound: true
+          })
+      );
+    } catch (error) {
+      if (error instanceof HttpError && error.upstreamStatus === 416) {
+        throw new HttpError(416, "range_not_satisfiable", "Requested range is beyond the end of the stored blob.");
+      }
+      throw error;
+    }
     if (response == null) {
       await this.repository.deleteStorageObject(this.provider, account.id, storageKey);
       return null;
     }
 
-    const blob = await response.arrayBuffer();
+    // The body streams straight through — GB-scale blobs must never be
+    // buffered in the isolate. Retries above cover response establishment
+    // only; a mid-stream break reaches the client, which resumes via Range.
+    const status = response.status === 206 ? 206 : 200;
+    const contentLength = response.headers.get("content-length");
     return {
-      body: new ReadableStream({
-        start(controller) {
-          controller.enqueue(new Uint8Array(blob));
-          controller.close();
-        }
-      }),
+      body: response.body,
       contentType: response.headers.get("content-type") ?? object.contentType,
-      size: blob.byteLength,
-      async arrayBuffer() {
-        return blob;
+      size: contentLength != null ? Number(contentLength) : (status === 200 ? object.size : null),
+      status,
+      contentRange: response.headers.get("content-range"),
+      arrayBuffer() {
+        return response.arrayBuffer();
       }
     };
   }
@@ -111,6 +122,127 @@ export class GoogleDriveStorageProvider implements StorageProvider {
       usedBytes: payload.storageQuota?.usage ? Number(payload.storageQuota.usage) : null,
       totalBytes: payload.storageQuota?.limit ? Number(payload.storageQuota.limit) : null
     };
+  }
+
+  /**
+   * Starts a Drive resumable-upload session and returns the session URI from
+   * the Location header, verbatim (the URI is its own credential; the client
+   * PUTs chunks straight to it). A storage key that already has an object row
+   * re-uses the Drive file id via the update variant so a re-upload can never
+   * leak a duplicate Drive file.
+   */
+  async createResumableSession(binding: StorageBinding, storageKey: string, contentType: string, expectedSize: number): Promise<string> {
+    const account = await this.requireAccount(binding);
+    const existing = await this.repository.getStorageObject(this.provider, account.id, storageKey);
+    const url = existing?.objectId
+      ? `${uploadBase(this.env)}/files/${encodeURIComponent(existing.objectId)}?uploadType=resumable`
+      : `${uploadBase(this.env)}/files?uploadType=resumable`;
+    const metadata = existing?.objectId
+      ? {}
+      : { name: driveObjectName(storageKey), parents: ["appDataFolder"] };
+    const response = await this.withDriveRetries(account, "upload", async () => {
+      await this.accountLimiter(account.id).scheduleUploadStart();
+      return this.driveRequestChecked(account, url, {
+        method: existing?.objectId ? "PATCH" : "POST",
+        headers: {
+          "content-type": "application/json; charset=UTF-8",
+          "x-upload-content-type": contentType,
+          "x-upload-content-length": String(expectedSize)
+        },
+        body: JSON.stringify(metadata)
+      }, {
+        code: "drive_upload_failed",
+        label: "Google Drive resumable session could not be started."
+      });
+    });
+    const sessionUrl = response?.headers.get("location");
+    if (!sessionUrl) {
+      throw new HttpError(502, "drive_upload_failed", "Google Drive did not return a resumable session URI.");
+    }
+    return sessionUrl;
+  }
+
+  /**
+   * Asks the session where it stands ("bytes *\/N" status probe). No auth
+   * header: the session URI is the credential, and this keeps the worker's
+   * probe identical to what the client is allowed to send.
+   */
+  async probeResumableSession(_binding: StorageBinding, sessionUrl: string, expectedSize: number): Promise<ResumableProbe> {
+    const response = await fetch(sessionUrl, {
+      method: "PUT",
+      headers: { "content-range": `bytes */${expectedSize}` }
+    });
+    if (response.status === 308) {
+      const range = response.headers.get("range");
+      const match = range == null ? null : /^bytes=0-(\d+)$/.exec(range);
+      return { status: "incomplete", receivedUpTo: match ? Number(match[1]) + 1 : 0 };
+    }
+    if (response.status === 200 || response.status === 201) {
+      const payload = await response.json().catch(() => ({})) as { id?: string; size?: string | number };
+      if (!payload.id) {
+        throw new HttpError(502, "drive_upload_failed", "Google Drive completed the upload without reporting a file id.");
+      }
+      const size = payload.size != null ? Number(payload.size) : null;
+      if (size != null && Number.isFinite(size)) {
+        return { status: "complete", fileId: payload.id, size };
+      }
+      return { status: "complete", fileId: payload.id, size: await this.fetchObjectSize(_binding, payload.id) };
+    }
+    if (response.status === 404 || response.status === 410) {
+      return { status: "expired" };
+    }
+    throw new HttpError(502, "drive_upload_failed", `Google Drive resumable probe failed (HTTP ${response.status}).`);
+  }
+
+  private async fetchObjectSize(binding: StorageBinding, fileId: string): Promise<number> {
+    const account = await this.requireAccount(binding);
+    const response = await this.withDriveRetries(account, "download", () =>
+      this.driveRequestChecked(account, `${apiBase(this.env)}/files/${encodeURIComponent(fileId)}?fields=id,size`, {}, {
+        code: "drive_upload_failed",
+        label: "Google Drive file metadata read failed."
+      }));
+    const payload = await response!.json() as { size?: string | number };
+    const size = payload.size != null ? Number(payload.size) : Number.NaN;
+    if (!Number.isFinite(size)) {
+      throw new HttpError(502, "drive_upload_failed", "Google Drive did not report a size for the uploaded file.");
+    }
+    return size;
+  }
+
+  /** Records the object row from Drive-reported facts; deletes a superseded old Drive file. */
+  async registerUploadedObject(binding: StorageBinding, storageKey: string, fileId: string, size: number, contentType: string): Promise<void> {
+    const account = await this.requireAccount(binding);
+    const existing = await this.repository.getStorageObject(this.provider, account.id, storageKey);
+    if (existing && existing.objectId !== fileId) {
+      await this.deleteObjectById(binding, existing.objectId);
+    }
+    await this.repository.upsertStorageObject({
+      provider: this.provider,
+      storageAccountId: account.id,
+      storageKey,
+      objectId: fileId,
+      contentType,
+      size,
+      createdAt: existing?.createdAt ?? new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+  }
+
+  async deleteObjectById(binding: StorageBinding, fileId: string): Promise<void> {
+    const account = await this.requireAccount(binding);
+    try {
+      await this.driveRequestChecked(account, `${apiBase(this.env)}/files/${encodeURIComponent(fileId)}`, {
+        method: "DELETE"
+      }, {
+        code: "drive_delete_failed",
+        label: "Google Drive delete failed.",
+        allowNotFound: true
+      });
+    } catch (error) {
+      // Cleanup only — an orphaned Drive file must never fail the request
+      // that discovered it.
+      console.warn("SharedWorld Drive object cleanup failed", { fileId, cause: String(error) });
+    }
   }
 
   private async requireAccount(binding: StorageBinding): Promise<StorageAccountRecord> {

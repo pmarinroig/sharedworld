@@ -83,7 +83,10 @@ describe("D1 repository snapshot pack member inheritance", () => {
     ["hash", { hash: "pack-hash-2" }],
     ["storageKey", { storageKey: "packs/full/two.pack" }],
     ["size", { size: 41 }],
-    ["chainDepth", { transferMode: "pack-delta", baseSnapshotId: "unused", baseHash: "unused", chainDepth: 1 } as Partial<SnapshotPack>]
+    ["chainDepth", { transferMode: "pack-delta", baseSnapshotId: "unused", baseHash: "unused", chainDepth: 1 } as Partial<SnapshotPack>],
+    ["deltaFormatVersion", { deltaFormatVersion: 2 } as Partial<SnapshotPack>],
+    ["deltaBlobSize", { deltaBlobSize: 123 } as Partial<SnapshotPack>],
+    ["chainDeltaBytes", { chainDeltaBytes: 456 } as Partial<SnapshotPack>]
   ])("a pack differing in %s is materialized with its own member rows", async (_field, overrides) => {
     const repository = createSqliteRepository();
     const world = await repository.createWorld(owner, "Change SMP", "change-smp");

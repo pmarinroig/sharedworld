@@ -323,8 +323,26 @@ public final class SharedWorldModels {
             String baseSnapshotId,
             String baseHash,
             Integer chainDepth,
+            /** Delta artifact format version; null = v1 (0.3.x). */
+            Integer deltaFormatVersion,
+            /** True byte size of the delta blob (feeds the server accumulator). */
+            Long deltaBlobSize,
             PackedManifestFileDto[] files
     ) {
+        /** Pre-delta-v2 arity (0.3.x call sites and stubs). */
+        public SnapshotPackDto(
+                String packId,
+                String hash,
+                long size,
+                String storageKey,
+                String transferMode,
+                String baseSnapshotId,
+                String baseHash,
+                Integer chainDepth,
+                PackedManifestFileDto[] files
+        ) {
+            this(packId, hash, size, storageKey, transferMode, baseSnapshotId, baseHash, chainDepth, null, null, files);
+        }
     }
 
     public record SnapshotManifestDto(
@@ -392,8 +410,28 @@ public final class SharedWorldModels {
             SignedBlobUrlDto deltaUpload,
             String baseSnapshotId,
             String baseHash,
-            Integer baseChainDepth
+            Integer baseChainDepth,
+            /** 2 when deltaStorageKey is a delta2 slot to fill with a v2 artifact; null = legacy v1 slot. */
+            Integer deltaFormatVersion
     ) {
+        /** Pre-delta-v2 arity (0.3.x call sites and stubs). */
+        public UploadPackPlanDto(
+                LocalPackDescriptorDto pack,
+                boolean alreadyPresent,
+                String storageKey,
+                String transferMode,
+                SignedBlobUrlDto upload,
+                String fullStorageKey,
+                SignedBlobUrlDto fullUpload,
+                String deltaStorageKey,
+                SignedBlobUrlDto deltaUpload,
+                String baseSnapshotId,
+                String baseHash,
+                Integer baseChainDepth
+        ) {
+            this(pack, alreadyPresent, storageKey, transferMode, upload, fullStorageKey, fullUpload,
+                    deltaStorageKey, deltaUpload, baseSnapshotId, baseHash, baseChainDepth, null);
+        }
     }
 
     public record UploadPlanDto(
@@ -409,7 +447,12 @@ public final class SharedWorldModels {
              * changed" (every pack alreadyPresent AND this set matches the local
              * pack ids) and skip the finalize call entirely.
              */
-            String[] latestPackIds
+            String[] latestPackIds,
+            /**
+             * Present on 0.4.0+ backends with direct-to-provider uploads;
+             * null means relay-only (old backend or unlinked provider).
+             */
+            DirectUploadPolicyDto directUpload
     ) {
         /** Pre-skip arity: older stubs/backends without latestPackIds. */
         public UploadPlanDto(
@@ -420,8 +463,30 @@ public final class SharedWorldModels {
                 UploadPackPlanDto[] regionBundleUploads,
                 SyncPolicyDto syncPolicy
         ) {
-            this(worldId, snapshotBaseId, uploads, nonRegionPackUpload, regionBundleUploads, syncPolicy, null);
+            this(worldId, snapshotBaseId, uploads, nonRegionPackUpload, regionBundleUploads, syncPolicy, null, null);
         }
+
+        /** Pre-direct-upload arity (0.3.x backends). */
+        public UploadPlanDto(
+                String worldId,
+                String snapshotBaseId,
+                UploadPlanEntryDto[] uploads,
+                UploadPackPlanDto nonRegionPackUpload,
+                UploadPackPlanDto[] regionBundleUploads,
+                SyncPolicyDto syncPolicy,
+                String[] latestPackIds
+        ) {
+            this(worldId, snapshotBaseId, uploads, nonRegionPackUpload, regionBundleUploads, syncPolicy, latestPackIds, null);
+        }
+    }
+
+    public record DirectUploadPolicyDto(long chunkSizeBytes, Long maxUploadBytes) {
+    }
+
+    public record CreateBlobSessionResponseDto(String uploadId, String sessionUrl, long chunkSizeBytes, String expiresAt) {
+    }
+
+    public record CommitBlobSessionResponseDto(String storageKey, long size) {
     }
 
     public record IconUploadPrepareResponseDto(
@@ -437,8 +502,21 @@ public final class SharedWorldModels {
             long artifactSize,
             String baseSnapshotId,
             String baseHash,
+            /** Delta artifact format version of this step; null = v1. */
+            Integer deltaFormatVersion,
             SignedBlobUrlDto download
     ) {
+        /** Pre-delta-v2 arity (0.3.x call sites and stubs). */
+        public DownloadPlanStepDto(
+                String transferMode,
+                String storageKey,
+                long artifactSize,
+                String baseSnapshotId,
+                String baseHash,
+                SignedBlobUrlDto download
+        ) {
+            this(transferMode, storageKey, artifactSize, baseSnapshotId, baseHash, null, download);
+        }
     }
 
     public record DownloadPlanEntryDto(

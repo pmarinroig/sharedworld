@@ -145,7 +145,11 @@ public final class WorldSyncCoordinator {
             WorldSyncSupport.logTiming(LOGGER, "request upload plan", worldId, planStartedAt);
 
             WorldSyncSupport.SyncPolicy resolvedPolicy = WorldSyncSupport.SyncPolicy.from(plan.syncPolicy());
-            failOnOversizedWorldFile(canonicalFiles, resolvedPolicy.maxUploadBodyBytes());
+            if (plan.directUpload() == null) {
+                // Only the relay path caps per-body bytes; with direct uploads
+                // available there is no size gate to fail.
+                failOnOversizedWorldFile(canonicalFiles, resolvedPolicy.maxUploadBodyBytes());
+            }
             Map<String, WorldSyncSupport.LazyArtifact> regionBundlesById = new HashMap<>();
             Map<String, String> bundleHashesById = new HashMap<>();
             for (WorldSyncSupport.LazyArtifact bundle : regionBundles) {
@@ -173,7 +177,8 @@ public final class WorldSyncCoordinator {
                     .collect(Collectors.toMap(PreparedUpload::relativePath, prepared -> prepared));
 
             long totalUploadBytes = preparedUploads.stream().mapToLong(PreparedUpload::bodySize).sum();
-            uploadPreparedFiles(worldId, preparedUploads, resolvedPolicy, progressListener, totalUploadBytes);
+            uploadPreparedFiles(worldId, preparedUploads, resolvedPolicy, progressListener, totalUploadBytes,
+                    plan.directUpload(), runtimeEpoch, hostToken);
 
             WorldSyncSupport.report(progressListener, STAGE_FINALIZING_SNAPSHOT, 0.96D, null, null, "Finalizing snapshot");
             long finalizeStartedAt = System.nanoTime();
@@ -468,8 +473,9 @@ public final class WorldSyncCoordinator {
         for (PreparedWorldFile file : canonicalFiles) {
             if (file.size() > maxUploadBodyBytes) {
                 throw new IOException("SharedWorld cannot upload this world: " + file.relativePath() + " is "
-                        + megabytes(file.size()) + " MB, and single files above " + megabytes(maxUploadBodyBytes)
-                        + " MB cannot be synced. Remove or shrink that file inside the world folder.");
+                        + megabytes(file.size()) + " MB, and this backend's relay transfer path is limited to "
+                        + megabytes(maxUploadBodyBytes) + " MB per file. Remove or shrink that file, or wait for the "
+                        + "SharedWorld backend to enable large-file uploads.");
             }
         }
     }
@@ -493,13 +499,20 @@ public final class WorldSyncCoordinator {
             List<PreparedUpload> preparedUploads,
             WorldSyncSupport.SyncPolicy policy,
             WorldSyncProgressListener progressListener,
-            long totalUploadBytes
+            long totalUploadBytes,
+            link.sharedworld.api.SharedWorldModels.DirectUploadPolicyDto directUpload,
+            long runtimeEpoch,
+            String hostToken
     ) throws IOException, InterruptedException {
         if (preparedUploads.isEmpty()) {
             WorldSyncSupport.report(progressListener, STAGE_UPLOADING_CHANGED_FILES, 1.0D, 0L, 0L, "No changed files to upload");
             return;
         }
-        failOnOversizedUploadBody(preparedUploads, policy.maxUploadBodyBytes());
+        if (directUpload == null) {
+            // Only the relay path has a per-body byte ceiling; direct uploads
+            // are bounded by provider quota alone.
+            failOnOversizedUploadBody(preparedUploads, policy.maxUploadBodyBytes());
+        }
 
         applyConfiguredDevUploadDelay(worldId);
 
@@ -537,26 +550,48 @@ public final class WorldSyncCoordinator {
                     if (preparedUpload.uploadUrl() == null || preparedUpload.bodyPath() == null) {
                         return null;
                     }
+                    link.sharedworld.api.SharedWorldApiClient.UploadProgressListener transferProgress = (bytesTransferred, totalBytes) -> {
+                        long clampedTransferred = Math.max(0L, Math.min(bytesTransferred, preparedUpload.bodySize()));
+                        long previous = perFileUploadedBytes.getAndSet(fileIndex, clampedTransferred);
+                        long delta = Math.max(0L, clampedTransferred - previous);
+                        long current = uploadedBytes.addAndGet(delta);
+                        WorldSyncSupport.report(
+                                progressListener,
+                                STAGE_UPLOADING_CHANGED_FILES,
+                                WorldSyncSupport.weightedTransferFraction(current, totalUploadBytes, perFileUploadedBytes, fileSizes),
+                                current,
+                                totalUploadBytes,
+                                "Uploading changed files"
+                        );
+                    };
+                    String contentType = preparedUpload.manifestFile() != null
+                            ? preparedUpload.manifestFile().contentType()
+                            : "application/octet-stream";
+                    String directStorageKey = preparedUpload.snapshotPack() != null
+                            ? preparedUpload.snapshotPack().storageKey()
+                            : null;
                     limiter.awaitTurn();
-                    WorldSyncSupport.withTransportRetries(policy, () -> this.apiClient.uploadBlob(
-                            preparedUpload.uploadUrl(),
-                            preparedUpload.bodyPath(),
-                            preparedUpload.manifestFile() != null ? preparedUpload.manifestFile().contentType() : "application/octet-stream",
-                            (bytesTransferred, totalBytes) -> {
-                                long clampedTransferred = Math.max(0L, Math.min(bytesTransferred, preparedUpload.bodySize()));
-                                long previous = perFileUploadedBytes.getAndSet(fileIndex, clampedTransferred);
-                                long delta = Math.max(0L, clampedTransferred - previous);
-                                long current = uploadedBytes.addAndGet(delta);
-                                WorldSyncSupport.report(
-                                        progressListener,
-                                        STAGE_UPLOADING_CHANGED_FILES,
-                                        WorldSyncSupport.weightedTransferFraction(current, totalUploadBytes, perFileUploadedBytes, fileSizes),
-                                        current,
-                                        totalUploadBytes,
-                                        "Uploading changed files"
-                                );
-                            }
-                    ));
+                    if (directUpload != null && directStorageKey != null) {
+                        // The uploader owns transport retries with resume; an
+                        // outer whole-transfer retry would restart from byte 0.
+                        this.apiClient.uploadBlobDirect(
+                                worldId,
+                                directStorageKey,
+                                runtimeEpoch,
+                                hostToken,
+                                preparedUpload.bodyPath(),
+                                contentType,
+                                directUpload.chunkSizeBytes(),
+                                transferProgress
+                        );
+                    } else {
+                        WorldSyncSupport.withTransportRetries(policy, () -> this.apiClient.uploadBlob(
+                                preparedUpload.uploadUrl(),
+                                preparedUpload.bodyPath(),
+                                contentType,
+                                transferProgress
+                        ));
+                    }
                     long finalProgress = perFileUploadedBytes.getAndSet(fileIndex, preparedUpload.bodySize());
                     long remaining = Math.max(0L, preparedUpload.bodySize() - finalProgress);
                     if (remaining > 0L) {
@@ -623,6 +658,10 @@ public final class WorldSyncCoordinator {
             int deltaBlockSize
     ) throws IOException {
         boolean canUseDelta = upload.deltaStorageKey() != null
+                // 0.4.0 clients write v2 deltas only, into delta2 slots the
+                // backend offers to capable clients; an old backend (field
+                // absent) gets full artifacts — no v1 writer remains.
+                && Integer.valueOf(2).equals(upload.deltaFormatVersion())
                 && upload.baseHash() != null
                 && upload.baseSnapshotId() != null
                 && upload.baseSnapshotId().equals(baselineSnapshotId)
@@ -643,7 +682,7 @@ public final class WorldSyncCoordinator {
         }
 
         Path deltaBody = Files.createTempFile("sharedworld-pack-delta-", ".bin");
-        ArtifactDeltaEngine.DeltaStats deltaStats = ArtifactDeltaEngine.writeDelta(baselineFile, artifactFile, deltaBody, deltaBlockSize);
+        ArtifactDeltaEngine.DeltaStats deltaStats = ArtifactDeltaEngine.writeDeltaV2(baselineFile, artifactFile, deltaBody);
         long deltaSize = deltaStats.artifactSize();
         boolean useDelta = deltaSize <= Math.floor(fullSize * (1.0D - minSavingsRatio));
         if (!useDelta) {
@@ -660,6 +699,9 @@ public final class WorldSyncCoordinator {
 
         int nextChainDepth = upload.baseChainDepth() == null ? 1 : upload.baseChainDepth() + 1;
         if (upload.deltaUpload() == null) {
+            // The delta2 key already exists server-side (another host wrote
+            // this exact base→target transition); the recorded blob size must
+            // still reflect the delta blob so the accumulator stays honest.
             Files.deleteIfExists(deltaBody);
             return new PreparedUpload(
                     upload.pack().packId(),
@@ -667,7 +709,7 @@ public final class WorldSyncCoordinator {
                     null,
                     0L,
                     null,
-                    new SnapshotPackDto(localPack.packId(), localPack.hash(), localPack.size(), upload.deltaStorageKey(), deltaTransferMode, upload.baseSnapshotId(), upload.baseHash(), nextChainDepth, localPack.files())
+                    new SnapshotPackDto(localPack.packId(), localPack.hash(), localPack.size(), upload.deltaStorageKey(), deltaTransferMode, upload.baseSnapshotId(), upload.baseHash(), nextChainDepth, 2, deltaSize, localPack.files())
             );
         }
         return new PreparedUpload(
@@ -676,7 +718,7 @@ public final class WorldSyncCoordinator {
                 deltaBody,
                 deltaSize,
                 null,
-                new SnapshotPackDto(localPack.packId(), localPack.hash(), localPack.size(), upload.deltaStorageKey(), deltaTransferMode, upload.baseSnapshotId(), upload.baseHash(), nextChainDepth, localPack.files())
+                new SnapshotPackDto(localPack.packId(), localPack.hash(), localPack.size(), upload.deltaStorageKey(), deltaTransferMode, upload.baseSnapshotId(), upload.baseHash(), nextChainDepth, 2, deltaSize, localPack.files())
         );
     }
 

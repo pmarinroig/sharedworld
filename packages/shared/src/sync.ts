@@ -16,6 +16,17 @@ export const MAX_REGION_DELTA_CHAIN_DEPTH = 12;
 export const MAX_PACK_DELTA_CHAIN_DEPTH = 16;
 export const NON_REGION_PACK_ID = "non-region";
 
+/**
+ * Delta v2 (0.4.0+): the fixed-count chain caps above are replaced by a
+ * byte-budget policy — a delta slot is offered while the chain's cumulative
+ * delta bytes stay under DELTA_CHAIN_BUDGET_FRACTION × the full artifact
+ * size, with the depth ceiling as a generous backstop. v1 clients keep the
+ * old caps.
+ */
+export const DELTA_V2_FORMAT_VERSION = 2;
+export const DELTA_V2_MAX_CHAIN_DEPTH = 64;
+export const DELTA_CHAIN_BUDGET_FRACTION = 1.0;
+
 export function isRegionBundleId(id: string): boolean {
   return id.startsWith("region-bundle:");
 }
@@ -34,4 +45,19 @@ export function storageKeyForPackFull(hash: string): string {
 
 export function storageKeyForPackDelta(baseHash: string, hash: string): string {
   return `packs/delta/${baseHash.slice(0, 2)}/${baseHash}-${hash}.bin`;
+}
+
+/**
+ * v2 deltas live in their own key namespace: the (baseHash, hash) pair alone
+ * also names the v1 blob for the same transition, and the content-addressed
+ * dedupe path ("key exists → record without uploading") would otherwise let
+ * a v1 blob masquerade as v2 — a silent corruption trap, not a collision
+ * you'd notice.
+ */
+export function storageKeyForRegionBundleDeltaV2(baseHash: string, hash: string): string {
+  return `region-bundles/delta2/${baseHash.slice(0, 2)}/${baseHash}-${hash}.bin`;
+}
+
+export function storageKeyForPackDeltaV2(baseHash: string, hash: string): string {
+  return `packs/delta2/${baseHash.slice(0, 2)}/${baseHash}-${hash}.bin`;
 }

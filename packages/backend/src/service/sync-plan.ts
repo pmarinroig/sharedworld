@@ -8,9 +8,14 @@ import {
   REGION_FULL_TRANSFER_MODE,
   isRegionBundleId,
   storageKeyForPackDelta,
+  storageKeyForPackDeltaV2,
   storageKeyForPackFull,
   storageKeyForRegionBundleDelta,
+  storageKeyForRegionBundleDeltaV2,
   storageKeyForRegionBundleFull,
+  DELTA_V2_FORMAT_VERSION,
+  DELTA_V2_MAX_CHAIN_DEPTH,
+  DELTA_CHAIN_BUDGET_FRACTION,
   type DownloadPackPlan,
   type DownloadPlan,
   type DownloadPlanStep,
@@ -19,11 +24,17 @@ import {
   type SnapshotPack,
   type SyncPolicy,
   type UploadPlan,
-  type UploadPlanRequest
+  type UploadPlanRequest,
+  type CreateBlobSessionRequest,
+  type CreateBlobSessionResponse,
+  type CommitBlobSessionRequest,
+  type CommitBlobSessionResponse
 } from "../../../shared/src/index.ts";
 
-import { HttpError } from "../http.ts";
-import type { RequestContext } from "../repository.ts";
+import { clientVersionAtLeast, HttpError } from "../http.ts";
+import { parseSingleByteRange, resumableCapable, type ResumableUploadCapable } from "../storage.ts";
+import { randomId } from "../ids.ts";
+import type { RequestContext, WorldStorageBinding } from "../repository.ts";
 import type { WorldRuntimeRecord } from "../runtime-protocol.ts";
 import {
   HOST_TOKEN_HEADER,
@@ -80,15 +91,17 @@ export async function prepareUploads(
   // worlds carry hundreds of packs, and a per-pack query here put upload
   // prepare past the client's request timeout (same shape as the manifest
   // load fix in loadSnapshotPacks).
+  const supportsDeltaV2 = clientVersionAtLeast(ctx.clientVersion, 0, 4, 0);
   const regionBundleKeys = (request.regionBundles ?? []).map((bundle) =>
     groupedArtifactCandidateKeys(
       bundle,
       latestRegionBundleById.get(bundle.packId) ?? null,
       MAX_REGION_DELTA_CHAIN_DEPTH,
       storageKeyForRegionBundleFull,
-      storageKeyForRegionBundleDelta,
+      supportsDeltaV2 ? storageKeyForRegionBundleDeltaV2 : storageKeyForRegionBundleDelta,
       REGION_FULL_TRANSFER_MODE,
-      REGION_DELTA_TRANSFER_MODE
+      REGION_DELTA_TRANSFER_MODE,
+      supportsDeltaV2
     )
   );
   const nonRegionPackKeys = groupedArtifactCandidateKeys(
@@ -96,9 +109,10 @@ export async function prepareUploads(
     latestPack,
     MAX_PACK_DELTA_CHAIN_DEPTH,
     storageKeyForPackFull,
-    storageKeyForPackDelta,
+    supportsDeltaV2 ? storageKeyForPackDeltaV2 : storageKeyForPackDelta,
     PACK_FULL_TRANSFER_MODE,
-    PACK_DELTA_TRANSFER_MODE
+    PACK_DELTA_TRANSFER_MODE,
+    supportsDeltaV2
   );
   const existingStorageKeys = await storageKeysExist(
     svc,
@@ -136,7 +150,8 @@ export async function prepareUploads(
     nonRegionPackKeys,
     existingStorageKeys
   );
-  failOnOversizedFullUpload(svc, [nonRegionPackUpload, ...regionBundleUploads]);
+  const directUploadAvailable = resumableCapable(svc.storageProvider) != null && binding.storageAccountId != null;
+  failOnOversizedFullUpload(svc, ctx, [nonRegionPackUpload, ...regionBundleUploads], directUploadAvailable);
   return {
     worldId,
     snapshotBaseId: latest?.snapshotId ?? null,
@@ -144,7 +159,10 @@ export async function prepareUploads(
     nonRegionPackUpload,
     regionBundleUploads,
     syncPolicy: syncPolicyForProvider(svc),
-    latestPackIds: latest?.packs.map((pack) => pack.packId) ?? []
+    latestPackIds: latest?.packs.map((pack) => pack.packId) ?? [],
+    directUpload: directUploadAvailable
+      ? { chunkSizeBytes: DIRECT_UPLOAD_CHUNK_BYTES, maxUploadBytes: null }
+      : null
   };
 }
 
@@ -158,8 +176,15 @@ export async function prepareUploads(
  */
 function failOnOversizedFullUpload(
   svc: ServiceContext,
-  plans: (Awaited<ReturnType<typeof prepareGroupedArtifactUpload>> | null)[]
+  ctx: RequestContext,
+  plans: (Awaited<ReturnType<typeof prepareGroupedArtifactUpload>> | null)[],
+  directUploadAvailable: boolean
 ): void {
+  if (directUploadAvailable && clientVersionAtLeast(ctx.clientVersion, 0, 4, 0)) {
+    // 0.4.0+ clients on a direct-capable world upload any size via resumable
+    // sessions; the relay ceiling does not apply to them.
+    return;
+  }
   const limitBytes = maxUploadBodyBytes(svc);
   for (const plan of plans) {
     if (plan == null || plan.alreadyPresent || plan.deltaStorageKey != null || plan.pack.size <= limitBytes) {
@@ -167,11 +192,15 @@ function failOnOversizedFullUpload(
     }
     const sizeMb = Math.max(1, Math.round(plan.pack.size / 1_000_000));
     const limitMb = Math.max(1, Math.round(limitBytes / 1_000_000));
+    // "Update the mod" is only honest advice for clients that predate direct
+    // uploads; a current client landing here is on a relay-only world.
+    const advice = clientVersionAtLeast(ctx.clientVersion, 0, 4, 0)
+      ? "This world's storage only supports relayed transfers; shrink the world or re-link its storage."
+      : "Update the SharedWorld mod to the latest version (it uploads large files directly), or shrink the world.";
     throw new HttpError(
       413,
       "blob_too_large",
-      `This world's "${plan.pack.packId}" data is ${sizeMb} MB, but SharedWorld uploads are limited to ${limitMb} MB per blob. ` +
-        `Update the SharedWorld mod to the latest version (it splits large worlds automatically), or shrink the world.`
+      `This world's "${plan.pack.packId}" data is ${sizeMb} MB, but relayed SharedWorld uploads are limited to ${limitMb} MB per blob. ${advice}`
     );
   }
 }
@@ -204,6 +233,7 @@ export async function downloadPlan(
   const localByPath = new Map(request.files.map((file) => [file.path, file]));
   const retainedPaths: string[] = [];
   const snapshotCache = new Map<string, SnapshotManifest>();
+  const supportsDeltaV2 = clientVersionAtLeast(ctx.clientVersion, 0, 4, 0);
 
   let nonRegionPackDownload: DownloadPackPlan | null = null;
   const regionBundleDownloads: DownloadPackPlan[] = [];
@@ -223,7 +253,8 @@ export async function downloadPlan(
           request.nonRegionPack?.hash ?? null,
           ctx.requestOrigin,
           snapshotCache,
-          PACK_DELTA_TRANSFER_MODE
+          PACK_DELTA_TRANSFER_MODE,
+          supportsDeltaV2
         )
       };
     } else {
@@ -245,7 +276,8 @@ export async function downloadPlan(
           request.regionBundles?.find((entry) => entry.packId === bundle.packId)?.hash ?? null,
           ctx.requestOrigin,
           snapshotCache,
-          REGION_DELTA_TRANSFER_MODE
+          REGION_DELTA_TRANSFER_MODE,
+          supportsDeltaV2
         )
       });
     } else {
@@ -289,22 +321,172 @@ export async function uploadStorageBlob(
   await svc.storageProvider.put(await requireWorldStorageBinding(svc, worldId), storageKey, request.body ?? "", contentType);
 }
 
+const DIRECT_UPLOAD_CHUNK_BYTES = 16 * 1024 * 1024;
+const UPLOAD_SESSION_TTL_MS = 7 * 24 * 60 * 60_000;
+const UPLOAD_SESSION_SWEEP_AFTER_MS = 8 * 24 * 60 * 60_000;
+const UPLOAD_SESSION_SWEEP_LIMIT = 3;
+
+/**
+ * Starts a direct-to-provider resumable upload for one storage key. Same
+ * authority gate as the relay blob PUT; the returned session URL is the
+ * provider's own resumable URI, which the client feeds bytes without any
+ * SharedWorld credential.
+ */
+export async function createBlobUploadSession(
+  svc: ServiceContext,
+  ctx: RequestContext,
+  worldId: string,
+  request: CreateBlobSessionRequest
+): Promise<CreateBlobSessionResponse> {
+  await requireHostAuthority(svc, ctx, worldId, request.runtimeEpoch, request.hostToken, ["host-starting", "host-live", "host-finalizing"], new Date());
+  const binding = await requireWorldStorageBinding(svc, worldId);
+  const capable = resumableCapable(svc.storageProvider);
+  if (!capable || binding.storageAccountId == null) {
+    throw new HttpError(409, "direct_upload_unsupported", "This world's storage does not support direct uploads.");
+  }
+  if (!request.storageKey || request.storageKey.trim().length === 0) {
+    throw new HttpError(400, "invalid_storage_key", "Storage key is required.");
+  }
+  if (!Number.isFinite(request.contentLength) || request.contentLength <= 0) {
+    throw new HttpError(400, "invalid_upload_size", "Upload size must be a positive byte count.");
+  }
+  const now = new Date();
+  await sweepExpiredUploadSessions(svc, capable, binding, now);
+  const sessionUrl = await capable.createResumableSession(
+    binding,
+    request.storageKey,
+    request.contentType || "application/octet-stream",
+    request.contentLength
+  );
+  const uploadId = randomId("upl");
+  await svc.repository.createUploadSession({
+    uploadId,
+    provider: binding.provider,
+    storageAccountId: binding.storageAccountId,
+    worldId,
+    storageKey: request.storageKey,
+    sessionUrl,
+    contentType: request.contentType || "application/octet-stream",
+    expectedSize: request.contentLength,
+    createdAt: now.toISOString(),
+    confirmedAt: null
+  });
+  return {
+    uploadId,
+    sessionUrl,
+    chunkSizeBytes: DIRECT_UPLOAD_CHUNK_BYTES,
+    expiresAt: new Date(now.getTime() + UPLOAD_SESSION_TTL_MS).toISOString()
+  };
+}
+
+/**
+ * Confirms a finished direct upload. The worker never trusts the client's
+ * word: it probes the provider session itself and records the provider's
+ * reported file id and size. Idempotent — a lost response is safely retried.
+ */
+export async function commitBlobUploadSession(
+  svc: ServiceContext,
+  ctx: RequestContext,
+  worldId: string,
+  request: CommitBlobSessionRequest
+): Promise<CommitBlobSessionResponse> {
+  await requireHostAuthority(svc, ctx, worldId, request.runtimeEpoch, request.hostToken, ["host-starting", "host-live", "host-finalizing"], new Date());
+  const binding = await requireWorldStorageBinding(svc, worldId);
+  const capable = resumableCapable(svc.storageProvider);
+  if (!capable || binding.storageAccountId == null) {
+    throw new HttpError(409, "direct_upload_unsupported", "This world's storage does not support direct uploads.");
+  }
+  const session = await svc.repository.getUploadSession(request.uploadId ?? "");
+  if (!session || session.worldId !== worldId) {
+    throw new HttpError(410, "upload_session_expired", "This upload session is no longer active. Start the upload again.");
+  }
+  if (session.confirmedAt != null) {
+    const object = await svc.repository.getStorageObject(session.provider, session.storageAccountId, session.storageKey);
+    return { storageKey: session.storageKey, size: object?.size ?? session.expectedSize };
+  }
+  const probe = await capable.probeResumableSession(binding, session.sessionUrl, session.expectedSize);
+  if (probe.status === "incomplete") {
+    throw new HttpError(409, "upload_incomplete", `The upload has only ${probe.receivedUpTo} of ${session.expectedSize} bytes. Finish uploading, then commit again.`);
+  }
+  if (probe.status === "expired") {
+    await svc.repository.deleteUploadSession(session.uploadId);
+    throw new HttpError(410, "upload_session_expired", "This upload session expired. Start the upload again.");
+  }
+  if (probe.size !== session.expectedSize) {
+    await capable.deleteObjectById(binding, probe.fileId);
+    await svc.repository.deleteUploadSession(session.uploadId);
+    throw new HttpError(409, "upload_size_mismatch", `The stored upload is ${probe.size} bytes but ${session.expectedSize} were expected. Start the upload again.`);
+  }
+  await capable.registerUploadedObject(binding, session.storageKey, probe.fileId, probe.size, session.contentType);
+  await svc.repository.markUploadSessionConfirmed(session.uploadId, new Date().toISOString());
+  return { storageKey: session.storageKey, size: probe.size };
+}
+
+/**
+ * Bounded, opportunistic reclaim of stale unconfirmed sessions for this
+ * account. Never-completed resumable sessions leave no Drive file behind;
+ * completed-but-unconfirmed ones do, so those get deleted unless the object
+ * row already adopted the file. No cron exists — session init is the natural
+ * moment because it proves the account is active.
+ */
+async function sweepExpiredUploadSessions(
+  svc: ServiceContext,
+  capable: ResumableUploadCapable,
+  binding: WorldStorageBinding,
+  now: Date
+): Promise<void> {
+  if (binding.storageAccountId == null) {
+    return;
+  }
+  const cutoff = new Date(now.getTime() - UPLOAD_SESSION_SWEEP_AFTER_MS).toISOString();
+  const stale = await svc.repository.listUnconfirmedUploadSessionsBefore(binding.provider, binding.storageAccountId, cutoff, UPLOAD_SESSION_SWEEP_LIMIT);
+  for (const session of stale) {
+    try {
+      const probe = await capable.probeResumableSession(binding, session.sessionUrl, session.expectedSize);
+      if (probe.status === "complete") {
+        const object = await svc.repository.getStorageObject(session.provider, session.storageAccountId, session.storageKey);
+        if (object?.objectId !== probe.fileId) {
+          await capable.deleteObjectById(binding, probe.fileId);
+        }
+      }
+    } catch (error) {
+      console.warn("SharedWorld upload-session sweep probe failed", { uploadId: session.uploadId, cause: String(error) });
+    }
+    await svc.repository.deleteUploadSession(session.uploadId);
+  }
+}
+
 export async function downloadStorageBlob(
   svc: ServiceContext,
   ctx: RequestContext,
   worldId: string,
-  storageKey: string
+  storageKey: string,
+  request?: Request
 ): Promise<Response> {
   await requireSessionAccessAllowingRevokedHost(svc, ctx, worldId);
-  const blob = await svc.storageProvider.get(await requireWorldStorageBinding(svc, worldId), storageKey);
+  const range = parseSingleByteRange(request?.headers.get("range"));
+  const blob = await svc.storageProvider.get(await requireWorldStorageBinding(svc, worldId), storageKey, range);
   if (!blob) {
     throw new HttpError(404, "blob_not_found", "Blob not found.");
   }
+  // A provider that ignored the range (test doubles, future providers) still
+  // answers a correct 200 with the whole blob; clients treat 200-after-Range
+  // as "restart from scratch". No ETags needed: storage keys are content
+  // addressed, so the bytes behind a key can never change between attempts.
+  const ranged = blob.status === 206 && blob.contentRange != null;
+  const headers = new Headers({
+    "content-type": blob.contentType,
+    "accept-ranges": "bytes"
+  });
+  if (blob.size != null) {
+    headers.set("content-length", String(blob.size));
+  }
+  if (ranged) {
+    headers.set("content-range", blob.contentRange as string);
+  }
   return new Response(blob.body, {
-    status: 200,
-    headers: {
-      "content-type": blob.contentType
-    }
+    status: ranged ? 206 : 200,
+    headers
   });
 }
 
@@ -345,6 +527,7 @@ type GroupedArtifactCandidateKeys = {
   deltaStorageKey: string | null;
   baseChainDepth: number;
   fullTransferMode: typeof PACK_FULL_TRANSFER_MODE | typeof REGION_FULL_TRANSFER_MODE;
+  deltaFormatVersion: number | null;
 };
 
 /**
@@ -359,7 +542,8 @@ function groupedArtifactCandidateKeys(
   fullStorageKeyForHash: (hash: string) => string,
   deltaStorageKeyForHashes: (baseHash: string, hash: string) => string,
   fullTransferMode: typeof PACK_FULL_TRANSFER_MODE | typeof REGION_FULL_TRANSFER_MODE,
-  deltaTransferMode: typeof PACK_DELTA_TRANSFER_MODE | typeof REGION_DELTA_TRANSFER_MODE
+  deltaTransferMode: typeof PACK_DELTA_TRANSFER_MODE | typeof REGION_DELTA_TRANSFER_MODE,
+  supportsDeltaV2: boolean
 ): GroupedArtifactCandidateKeys | null {
   if (!pack || latestPack?.hash === pack.hash) {
     return null;
@@ -367,14 +551,31 @@ function groupedArtifactCandidateKeys(
   const baseChainDepth = latestPack?.transferMode === deltaTransferMode
     ? (latestPack.chainDepth ?? 0)
     : 0;
-  const deltaAvailable = latestPack != null
-    && (latestPack.transferMode === fullTransferMode || latestPack.transferMode === deltaTransferMode)
-    && baseChainDepth < maxChainDepth;
+  const chainableBase = latestPack != null
+    && (latestPack.transferMode === fullTransferMode || latestPack.transferMode === deltaTransferMode);
+  let deltaAvailable: boolean;
+  if (supportsDeltaV2) {
+    // Byte-budget policy (O(1), no chain walk): keep offering deltas while
+    // the chain's cumulative delta bytes stay under the budget fraction of
+    // the full artifact. A NULL accumulator (legacy/v1 base) forces one full
+    // upload, which restarts accounting and keeps v2 deltas off unaccounted
+    // chains. Base full artifacts have accumulator 0 (set at finalize).
+    const chainDeltaBytes = latestPack?.transferMode === deltaTransferMode
+      ? (latestPack.chainDeltaBytes ?? null)
+      : 0;
+    deltaAvailable = chainableBase
+      && baseChainDepth < DELTA_V2_MAX_CHAIN_DEPTH
+      && chainDeltaBytes != null
+      && chainDeltaBytes <= DELTA_CHAIN_BUDGET_FRACTION * latestPack.size;
+  } else {
+    deltaAvailable = chainableBase && baseChainDepth < maxChainDepth;
+  }
   return {
     fullStorageKey: fullStorageKeyForHash(pack.hash),
-    deltaStorageKey: deltaAvailable ? deltaStorageKeyForHashes(latestPack.hash, pack.hash) : null,
+    deltaStorageKey: deltaAvailable ? deltaStorageKeyForHashes((latestPack as SnapshotPack).hash, pack.hash) : null,
     baseChainDepth,
-    fullTransferMode
+    fullTransferMode,
+    deltaFormatVersion: deltaAvailable && supportsDeltaV2 ? DELTA_V2_FORMAT_VERSION : null
   };
 }
 
@@ -407,7 +608,7 @@ async function prepareGroupedArtifactUpload(
     return null;
   }
 
-  const { fullStorageKey, deltaStorageKey, baseChainDepth, fullTransferMode } = candidateKeys;
+  const { fullStorageKey, deltaStorageKey, baseChainDepth, fullTransferMode, deltaFormatVersion } = candidateKeys;
   const fullExists = existingStorageKeys.has(fullStorageKey);
   const deltaExists = deltaStorageKey != null && existingStorageKeys.has(deltaStorageKey);
 
@@ -423,7 +624,8 @@ async function prepareGroupedArtifactUpload(
     deltaUpload: deltaStorageKey == null || deltaExists ? undefined : await signUploadForWorld(svc, worldId, deltaStorageKey, runtime, ctx.requestOrigin),
     baseSnapshotId: latestSnapshotId,
     baseHash: latestPack?.hash ?? null,
-    baseChainDepth
+    baseChainDepth,
+    deltaFormatVersion
   };
 }
 
@@ -434,7 +636,8 @@ async function buildPackDownloadSteps(
   localPackHash: string | null,
   requestOrigin: string | undefined,
   snapshotCache: Map<string, SnapshotManifest>,
-  deltaTransferMode: typeof PACK_DELTA_TRANSFER_MODE | typeof REGION_DELTA_TRANSFER_MODE
+  deltaTransferMode: typeof PACK_DELTA_TRANSFER_MODE | typeof REGION_DELTA_TRANSFER_MODE,
+  supportsDeltaV2: boolean
 ): Promise<DownloadPlanStep[]> {
   const steps: DownloadPlanStep[] = [];
   let cursor: SnapshotPack | null = latestPack;
@@ -442,12 +645,24 @@ async function buildPackDownloadSteps(
     if (localPackHash != null && localPackHash === cursor.hash) {
       break;
     }
+    if ((cursor.deltaFormatVersion ?? null) != null && !supportsDeltaV2) {
+      // No full-root fallback exists: the latest full blob was never uploaded
+      // once a delta chain started, and serving the retained chain root alone
+      // would reconstruct STALE content whose hash cannot match the manifest.
+      // An explicit refusal is the only honest answer for a pre-v2 client.
+      throw new HttpError(
+        409,
+        "client_update_required",
+        "This world was uploaded by a newer SharedWorld version. Update the SharedWorld mod to download it."
+      );
+    }
     steps.push({
       transferMode: cursor.transferMode,
       storageKey: cursor.storageKey,
       artifactSize: cursor.size,
       baseSnapshotId: cursor.baseSnapshotId ?? null,
       baseHash: cursor.baseHash ?? null,
+      deltaFormatVersion: cursor.deltaFormatVersion ?? null,
       download: await signDownloadForWorld(svc, worldId, cursor.storageKey, requestOrigin)
     });
     if (cursor.transferMode !== deltaTransferMode || !cursor.baseSnapshotId) {

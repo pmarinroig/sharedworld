@@ -68,6 +68,19 @@ export interface StorageObjectRecord {
   updatedAt: string;
 }
 
+export interface StorageUploadSessionRecord {
+  uploadId: string;
+  provider: StorageProviderType;
+  storageAccountId: string;
+  worldId: string;
+  storageKey: string;
+  sessionUrl: string;
+  contentType: string;
+  expectedSize: number;
+  createdAt: string;
+  confirmedAt: string | null;
+}
+
 export interface SnapshotDeletionResult {
   deletedSnapshotIds: string[];
   unreferencedStorageKeys: string[];
@@ -156,6 +169,12 @@ export interface StorageRepository {
   /** Which of the given storage keys have object rows — one batched query, not one per key. */
   listExistingStorageKeys(provider: StorageProviderType, storageAccountId: string, storageKeys: readonly string[]): Promise<Set<string>>;
   deleteStorageObject(provider: StorageProviderType, storageAccountId: string, storageKey: string): Promise<void>;
+  createUploadSession(record: StorageUploadSessionRecord): Promise<void>;
+  getUploadSession(uploadId: string): Promise<StorageUploadSessionRecord | null>;
+  markUploadSessionConfirmed(uploadId: string, confirmedAt: string): Promise<void>;
+  deleteUploadSession(uploadId: string): Promise<void>;
+  /** Oldest unconfirmed sessions created before the cutoff, for the orphan sweep. */
+  listUnconfirmedUploadSessionsBefore(provider: StorageProviderType, storageAccountId: string, createdBefore: string, limit: number): Promise<StorageUploadSessionRecord[]>;
 }
 
 export interface MembershipRepository {

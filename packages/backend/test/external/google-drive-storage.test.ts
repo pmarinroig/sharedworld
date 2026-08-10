@@ -15,9 +15,10 @@ import { createSqliteRepository } from "../support/sqlite-d1.ts";
 type ScriptedReply = {
   status: number;
   body?: string;
+  headers?: Record<string, string>;
 };
 
-const requests: Array<{ method: string; path: string; auth: string | null; contentType: string | null }> = [];
+const requests: Array<{ method: string; path: string; auth: string | null; contentType: string | null; range: string | null }> = [];
 let script: ScriptedReply[] = [];
 let defaultReply: () => Response = () => new Response(JSON.stringify({ id: "drive-object-1" }), { status: 200 });
 
@@ -29,11 +30,12 @@ const server = Bun.serve({
       method: request.method,
       path: url.pathname + url.search,
       auth: request.headers.get("authorization"),
-      contentType: request.headers.get("content-type")
+      contentType: request.headers.get("content-type"),
+      range: request.headers.get("range")
     });
     const scripted = script.shift();
     if (scripted) {
-      return new Response(scripted.body ?? null, { status: scripted.status });
+      return new Response(scripted.body ?? null, { status: scripted.status, headers: scripted.headers });
     }
     return defaultReply();
   }
@@ -246,6 +248,67 @@ describe("GoogleDriveStorageProvider", () => {
     expect(requests[0].path).toBe("/drive/v3/files/drive-object-1?alt=media");
   });
 
+  test("a ranged get forwards Range and streams Drive's 206 through", async () => {
+    const fixture = freshProviderFixture();
+    await fixture.seedAccount();
+    await fixture.provider.put(fixture.binding, "worlds/w1/a.bin", "stored-bytes", "application/octet-stream");
+    requests.length = 0;
+    script = [{ status: 206, body: "red-bytes", headers: { "content-range": "bytes 3-11/12", "content-length": "9" } }];
+
+    const blob = await fixture.provider.get(fixture.binding, "worlds/w1/a.bin", { offset: 3, endInclusive: null });
+
+    expect(blob).not.toBeNull();
+    expect(blob!.status).toBe(206);
+    expect(blob!.contentRange).toBe("bytes 3-11/12");
+    expect(blob!.size).toBe(9);
+    expect(requests[0].range).toBe("bytes=3-");
+    expect(new TextDecoder().decode(await blob!.arrayBuffer())).toBe("red-bytes");
+  });
+
+  test("a range past the end maps Drive's 416 to range_not_satisfiable", async () => {
+    const fixture = freshProviderFixture();
+    await fixture.seedAccount();
+    await fixture.provider.put(fixture.binding, "worlds/w1/a.bin", "data", "application/octet-stream");
+    script = [{ status: 416 }];
+
+    let caught: unknown = null;
+    try {
+      await fixture.provider.get(fixture.binding, "worlds/w1/a.bin", { offset: 9999, endInclusive: null });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(HttpError);
+    expect((caught as HttpError).status).toBe(416);
+    expect((caught as HttpError).code).toBe("range_not_satisfiable");
+  });
+
+  test("get resolves before the body finishes streaming (no full buffering)", async () => {
+    const fixture = freshProviderFixture();
+    await fixture.seedAccount();
+    await fixture.provider.put(fixture.binding, "worlds/w1/a.bin", "seed", "application/octet-stream");
+    requests.length = 0;
+    let releaseTail: () => void = () => {};
+    const tailGate = new Promise<void>((resolve) => {
+      releaseTail = resolve;
+    });
+    defaultReply = () => new Response(new ReadableStream({
+      async start(controller) {
+        controller.enqueue(new TextEncoder().encode("head-"));
+        await tailGate;
+        controller.enqueue(new TextEncoder().encode("tail"));
+        controller.close();
+      }
+    }), { status: 200 });
+
+    // The old implementation awaited the whole body before returning; with the
+    // tail gated on a promise released only after get() resolves, buffering
+    // would deadlock this test instead of passing.
+    const blob = await fixture.provider.get(fixture.binding, "worlds/w1/a.bin");
+    expect(blob).not.toBeNull();
+    releaseTail();
+    expect(new TextDecoder().decode(await blob!.arrayBuffer())).toBe("head-tail");
+  });
+
   test("get drops the local object record when Drive reports 404", async () => {
     const fixture = freshProviderFixture();
     await fixture.seedAccount();
@@ -254,6 +317,72 @@ describe("GoogleDriveStorageProvider", () => {
 
     expect(await fixture.provider.get(fixture.binding, "worlds/w1/a.bin")).toBeNull();
     expect(await fixture.repository.getStorageObject("google-drive", fixture.accountId, "worlds/w1/a.bin")).toBeNull();
+  });
+
+  test("createResumableSession POSTs for a new key and returns the Location verbatim", async () => {
+    const fixture = freshProviderFixture();
+    await fixture.seedAccount();
+    requests.length = 0;
+    script = [{ status: 200, headers: { location: `http://127.0.0.1:${server.port}/resumable/abc` } }];
+
+    const sessionUrl = await (fixture.provider as unknown as {
+      createResumableSession(binding: unknown, key: string, type: string, size: number): Promise<string>;
+    }).createResumableSession(fixture.binding, "worlds/w1/new.bin", "application/octet-stream", 12345);
+
+    expect(sessionUrl).toBe(`http://127.0.0.1:${server.port}/resumable/abc`);
+    expect(requests[0].method).toBe("POST");
+    expect(requests[0].path).toBe("/upload/drive/v3/files?uploadType=resumable");
+  });
+
+  test("createResumableSession PATCHes the existing Drive file id for a known key", async () => {
+    const fixture = freshProviderFixture();
+    await fixture.seedAccount();
+    await fixture.provider.put(fixture.binding, "worlds/w1/a.bin", "old-bytes", "application/octet-stream");
+    requests.length = 0;
+    script = [{ status: 200, headers: { location: `http://127.0.0.1:${server.port}/resumable/upd` } }];
+
+    const sessionUrl = await (fixture.provider as unknown as {
+      createResumableSession(binding: unknown, key: string, type: string, size: number): Promise<string>;
+    }).createResumableSession(fixture.binding, "worlds/w1/a.bin", "application/octet-stream", 999);
+
+    expect(sessionUrl).toContain("/resumable/upd");
+    expect(requests[0].method).toBe("PATCH");
+    expect(requests[0].path).toBe("/upload/drive/v3/files/drive-object-1?uploadType=resumable");
+  });
+
+  test("probeResumableSession maps 308/complete/expired states", async () => {
+    const fixture = freshProviderFixture();
+    await fixture.seedAccount();
+    const probe = (sessionPath: string) => (fixture.provider as unknown as {
+      probeResumableSession(binding: unknown, url: string, size: number): Promise<unknown>;
+    }).probeResumableSession(fixture.binding, `http://127.0.0.1:${server.port}${sessionPath}`, 1000);
+
+    script = [{ status: 308, headers: { range: "bytes=0-499" } }];
+    expect(await probe("/resumable/x")).toEqual({ status: "incomplete", receivedUpTo: 500 });
+
+    script = [{ status: 200, body: JSON.stringify({ id: "file-1", size: "1000" }) }];
+    expect(await probe("/resumable/x")).toEqual({ status: "complete", fileId: "file-1", size: 1000 });
+
+    script = [{ status: 404 }];
+    expect(await probe("/resumable/x")).toEqual({ status: "expired" });
+  });
+
+  test("registerUploadedObject supersedes a stale object id and deletes the old Drive file", async () => {
+    const fixture = freshProviderFixture();
+    await fixture.seedAccount();
+    await fixture.provider.put(fixture.binding, "worlds/w1/a.bin", "old", "application/octet-stream");
+    requests.length = 0;
+    script = [{ status: 204 }];
+
+    await (fixture.provider as unknown as {
+      registerUploadedObject(binding: unknown, key: string, fileId: string, size: number, type: string): Promise<void>;
+    }).registerUploadedObject(fixture.binding, "worlds/w1/a.bin", "drive-object-2", 42, "application/octet-stream");
+
+    expect(requests[0].method).toBe("DELETE");
+    expect(requests[0].path).toBe("/drive/v3/files/drive-object-1");
+    const row = await fixture.repository.getStorageObject("google-drive", fixture.accountId, "worlds/w1/a.bin");
+    expect(row?.objectId).toBe("drive-object-2");
+    expect(row?.size).toBe(42);
   });
 
   test("delete removes the Drive file and the local record", async () => {

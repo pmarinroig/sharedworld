@@ -67,7 +67,7 @@ export interface D1Database {
 
 export interface R2Bucket {
   head(key: string): Promise<R2Object | null>;
-  get(key: string): Promise<R2ObjectBody | null>;
+  get(key: string, options?: { range?: { offset: number; length?: number } }): Promise<R2ObjectBody | null>;
   delete(key: string): Promise<void>;
   put(
     key: string,

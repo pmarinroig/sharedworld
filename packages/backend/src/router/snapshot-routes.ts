@@ -1,4 +1,4 @@
-import type { FinalizeSnapshotRequest, UploadPlanRequest } from "../../../shared/src/index.ts";
+import type { CommitBlobSessionRequest, CreateBlobSessionRequest, FinalizeSnapshotRequest, UploadPlanRequest } from "../../../shared/src/index.ts";
 
 import { json, ok, readJson } from "../http.ts";
 import type { RouterService } from "./shared.ts";
@@ -16,6 +16,8 @@ export function snapshotRoutes(
     | "prepareUploads"
     | "restoreSnapshot"
     | "uploadStorageBlob"
+    | "createBlobUploadSession"
+    | "commitBlobUploadSession"
   >
 ): RouteDefinition[] {
   return [
@@ -75,6 +77,20 @@ export function snapshotRoutes(
         json(await service.downloadPlan(ctx, requireParam(params.worldId, "worldId"), await readJson<UploadPlanRequest>(request)))
     },
     {
+      method: "POST",
+      pattern: new UrlPattern({ pathname: "/worlds/:worldId/uploads/blob-session" }),
+      auth: true,
+      handler: async (request, params, ctx) =>
+        json(await service.createBlobUploadSession(ctx, requireParam(params.worldId, "worldId"), await readJson<CreateBlobSessionRequest>(request)))
+    },
+    {
+      method: "POST",
+      pattern: new UrlPattern({ pathname: "/worlds/:worldId/uploads/blob-commit" }),
+      auth: true,
+      handler: async (request, params, ctx) =>
+        json(await service.commitBlobUploadSession(ctx, requireParam(params.worldId, "worldId"), await readJson<CommitBlobSessionRequest>(request)))
+    },
+    {
       method: "PUT",
       pattern: new UrlPattern({ pathname: "/worlds/:worldId/storage/blob/:storageKey*" }),
       auth: true,
@@ -87,7 +103,7 @@ export function snapshotRoutes(
       method: "GET",
       pattern: new UrlPattern({ pathname: "/worlds/:worldId/storage/blob/:storageKey*" }),
       auth: true,
-      handler: async (_request, params, ctx) => service.downloadStorageBlob(ctx, requireParam(params.worldId, "worldId"), decodeStorageKey(requireParam(params.storageKey, "storageKey")))
+      handler: async (request, params, ctx) => service.downloadStorageBlob(ctx, requireParam(params.worldId, "worldId"), decodeStorageKey(requireParam(params.storageKey, "storageKey")), request)
     }
   ];
 }

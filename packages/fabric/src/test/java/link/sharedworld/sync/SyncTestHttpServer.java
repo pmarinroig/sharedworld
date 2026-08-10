@@ -33,6 +33,10 @@ final class SyncTestHttpServer implements AutoCloseable {
     private final Map<String, int[]> scriptedBlobFailures = new java.util.concurrent.ConcurrentHashMap<>();
     private final Map<String, Integer> blobRequestCounts = new java.util.concurrent.ConcurrentHashMap<>();
     private final Map<String, RecordedBlobUpload> uploadedBlobs = new LinkedHashMap<>();
+    private final Map<String, List<String>> blobRangeHeaders = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<String, Integer> truncateBlobAfterBytes = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Set<String> stallBlobsOnce = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final java.util.Set<String> ignoreRangeOnce = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     private UploadPlanDto uploadPlan;
     private DownloadPlanDto downloadPlan;
@@ -84,6 +88,26 @@ final class SyncTestHttpServer implements AutoCloseable {
     /** The next {@code count} requests for this blob answer with {@code status}. */
     void failBlob(String blobId, int status, int count) {
         this.scriptedBlobFailures.put(blobId, new int[]{status, count});
+    }
+
+    /** The next GET of this blob declares the full length but writes only {@code bytes} before dropping the connection. */
+    void truncateBlobOnce(String blobId, int bytes) {
+        this.truncateBlobAfterBytes.put(blobId, bytes);
+    }
+
+    /** The next GET of this blob writes 2 bytes then holds the connection open (stall). */
+    void stallBlobOnce(String blobId) {
+        this.stallBlobsOnce.add(blobId);
+    }
+
+    /** The next GET of this blob ignores any Range header (old-backend behavior). */
+    void ignoreRangeOnce(String blobId) {
+        this.ignoreRangeOnce.add(blobId);
+    }
+
+    /** Range headers observed per GET of this blob, null entries for range-less requests. */
+    List<String> blobRangeHeaders(String blobId) {
+        return this.blobRangeHeaders.getOrDefault(blobId, List.of());
     }
 
     int blobRequestCount(String blobId) {
@@ -198,9 +222,41 @@ final class SyncTestHttpServer implements AutoCloseable {
             writeError(exchange, "blob_not_found", "Blob " + blobId + " was not configured.", 404);
             return;
         }
+        String rangeHeader = exchange.getRequestHeaders().getFirst("Range");
+        this.blobRangeHeaders.computeIfAbsent(blobId, ignored -> java.util.Collections.synchronizedList(new java.util.ArrayList<>())).add(rangeHeader);
+        int offset = 0;
+        if (rangeHeader != null && !this.ignoreRangeOnce.remove(blobId)
+                && rangeHeader.startsWith("bytes=") && rangeHeader.endsWith("-")) {
+            offset = Integer.parseInt(rangeHeader.substring("bytes=".length(), rangeHeader.length() - 1));
+        }
+        byte[] slice = offset > 0 ? java.util.Arrays.copyOfRange(body, offset, body.length) : body;
         exchange.getResponseHeaders().add("content-type", "application/octet-stream");
-        exchange.sendResponseHeaders(200, body.length);
-        exchange.getResponseBody().write(body);
+        if (offset > 0) {
+            exchange.getResponseHeaders().add("content-range", "bytes " + offset + "-" + (body.length - 1) + "/" + body.length);
+            exchange.sendResponseHeaders(206, slice.length);
+        } else {
+            exchange.sendResponseHeaders(200, slice.length);
+        }
+        java.io.OutputStream output = exchange.getResponseBody();
+        Integer truncateAt = this.truncateBlobAfterBytes.remove(blobId);
+        if (truncateAt != null) {
+            // Write fewer bytes than declared, then let the caller's close
+            // drop the connection: the client sees an early EOF mid-body.
+            output.write(slice, 0, Math.min(truncateAt, slice.length));
+            output.flush();
+            return;
+        }
+        if (this.stallBlobsOnce.remove(blobId)) {
+            output.write(slice, 0, Math.min(2, slice.length));
+            output.flush();
+            try {
+                Thread.sleep(3_000L);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            }
+            return;
+        }
+        output.write(slice);
     }
 
     private void writeJson(HttpExchange exchange, int status, Object body) throws IOException {

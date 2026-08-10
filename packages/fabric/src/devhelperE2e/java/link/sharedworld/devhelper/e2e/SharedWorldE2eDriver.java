@@ -63,6 +63,7 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
         WHITELIST_DRILL_AWAIT_COMMAND,
         WHITELIST_DRILL_AWAIT_BLOCKED,
         AWAIT_SHUTDOWN_COMMAND,
+        BIGWORLD_SESSION,
         AWAIT_RELEASE_COMPLETE,
         AWAIT_EXIT
     }
@@ -77,6 +78,12 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
         AWAIT_COMMAND_DRILL,
         AWAIT_GAMERULE_DRILL,
         AWAIT_HOST_DEPARTURE,
+        BIGWORLD_AWAIT_REHOST_GO,
+        BIGWORLD_REHOST_BEGIN,
+        BIGWORLD_REHOST_AWAIT_PUBLISH,
+        BIGWORLD_REHOST_AWAIT_LIVE,
+        BIGWORLD_SESSION,
+        BIGWORLD_AWAIT_RELEASE_COMPLETE,
         AWAIT_EXIT
     }
 
@@ -122,6 +129,14 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
     private E2eCommands commands;
     private String role;
     private String worldName;
+    /**
+     * The bigworld scenario (big-world-e2e.ts) trades the standard drills for
+     * a command-driven session: hash-artifacts / mutate-big-file on the live
+     * server's world, and a guest that re-hosts after the host departs.
+     */
+    private boolean bigWorld;
+    private String bigFileRelative;
+    private final AtomicBoolean bigWorldOpInFlight = new AtomicBoolean(false);
 
     private HostStep hostStep = HostStep.WAIT_TITLE;
     private GuestStep guestStep = GuestStep.WAIT_GO;
@@ -154,6 +169,13 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
         String commandFile = System.getProperty("sharedworld.e2e.commandFile");
         this.commands = new E2eCommands(commandFile == null || commandFile.isBlank() ? null : Path.of(commandFile));
         this.worldName = System.getProperty("sharedworld.e2e.worldName", "E2E Fixture");
+        this.bigWorld = "bigworld".equals(System.getProperty("sharedworld.e2e.scenario"));
+        this.bigFileRelative = System.getProperty("sharedworld.e2e.bigFile", "");
+        if (this.bigWorld) {
+            // No cancel drill in the bigworld scenario: the interesting startup
+            // is the multi-GB initial upload, which must run uninterrupted.
+            this.cancelDrillDone = true;
+        }
         this.markers.emit("driver-armed", this.role);
         // 0.3.0: surface the realtime channel's lifecycle as markers so the
         // orchestrator can assert real clients actually connect and push.
@@ -346,7 +368,15 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
             case AWAIT_HOST_LIVE -> {
                 if (SharedWorldClient.hostingManager().phase() == SharedWorldHostingManager.Phase.RUNNING) {
                     this.markers.emit("host-live", this.targetWorld.get().id());
-                    this.hostStep = HostStep.OP_DRILL_AWAIT_COMMAND;
+                    this.hostStep = this.bigWorld ? HostStep.BIGWORLD_SESSION : HostStep.OP_DRILL_AWAIT_COMMAND;
+                }
+            }
+            case BIGWORLD_SESSION -> {
+                if (this.bigWorldSessionTick(minecraft)) {
+                    if (minecraft.screen == null) {
+                        minecraft.setScreen(new PauseScreen(true));
+                    }
+                    this.hostStep = HostStep.AWAIT_RELEASE_COMPLETE;
                 }
             }
             case OP_DRILL_AWAIT_COMMAND -> {
@@ -589,7 +619,7 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
                 if (minecraft.level != null && session != null
                         && session.role() == SharedWorldPlaySessionTracker.SessionRole.GUEST) {
                     this.markers.emit("guest-ingame", session.worldId());
-                    this.guestStep = GuestStep.AWAIT_COMMAND_DRILL;
+                    this.guestStep = this.bigWorld ? GuestStep.AWAIT_HOST_DEPARTURE : GuestStep.AWAIT_COMMAND_DRILL;
                 }
             }
             case AWAIT_COMMAND_DRILL -> {
@@ -621,6 +651,65 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
                 if (minecraft.level == null || SharedWorldClient.playSessionTracker().currentSession() == null) {
                     String screenName = minecraft.screen == null ? "none" : minecraft.screen.getClass().getSimpleName();
                     this.markers.emit("guest-observed-host-departure", screenName);
+                    this.guestStep = this.bigWorld ? GuestStep.BIGWORLD_AWAIT_REHOST_GO : GuestStep.AWAIT_EXIT;
+                }
+            }
+            case BIGWORLD_AWAIT_REHOST_GO -> {
+                if ("rehost-go".equals(this.commands.poll())) {
+                    this.markers.emit("rehost-go-received", null);
+                    this.guestStep = GuestStep.BIGWORLD_REHOST_BEGIN;
+                }
+            }
+            case BIGWORLD_REHOST_BEGIN -> {
+                // The departure rejoin flow may have auto-claimed the handoff and
+                // started hosting already; only press buttons when it hasn't.
+                if (SharedWorldClient.hostingManager().phase() != SharedWorldHostingManager.Phase.IDLE) {
+                    this.markers.emit("rehost-requested", "auto-handoff");
+                    this.guestStep = GuestStep.BIGWORLD_REHOST_AWAIT_PUBLISH;
+                    return;
+                }
+                WorldSummaryDto world = this.targetWorld.get();
+                if (minecraft.screen instanceof SharedWorldScreen screen && world != null) {
+                    SharedWorldClient.sessionCoordinator().beginJoin(screen, world);
+                    this.markers.emit("rehost-requested", world.id());
+                    this.guestStep = GuestStep.BIGWORLD_REHOST_AWAIT_PUBLISH;
+                    return;
+                }
+                if (minecraft.level == null && this.ticksInStep % 40 == 0) {
+                    SharedWorldClient.openMainScreen(minecraft.screen);
+                }
+            }
+            case BIGWORLD_REHOST_AWAIT_PUBLISH -> {
+                IntegratedServer server = minecraft.getSingleplayerServer();
+                if (!this.joinTargetInjected && server != null && server.isPublished()) {
+                    String joinTarget = "127.0.0.1:" + server.getPort();
+                    E4mcDomainTracker.captureAssignedDomain(joinTarget);
+                    this.joinTargetInjected = true;
+                    this.markers.emit("published", joinTarget);
+                    this.guestStep = GuestStep.BIGWORLD_REHOST_AWAIT_LIVE;
+                }
+            }
+            case BIGWORLD_REHOST_AWAIT_LIVE -> {
+                if (SharedWorldClient.hostingManager().phase() == SharedWorldHostingManager.Phase.RUNNING) {
+                    this.markers.emit("rehost-live", null);
+                    this.guestStep = GuestStep.BIGWORLD_SESSION;
+                }
+            }
+            case BIGWORLD_SESSION -> {
+                if (this.bigWorldSessionTick(minecraft)) {
+                    if (minecraft.screen == null) {
+                        minecraft.setScreen(new PauseScreen(true));
+                    }
+                    this.guestStep = GuestStep.BIGWORLD_AWAIT_RELEASE_COMPLETE;
+                }
+            }
+            case BIGWORLD_AWAIT_RELEASE_COMPLETE -> {
+                if (minecraft.screen instanceof PauseScreen pauseScreen) {
+                    WidgetAutomation.pressButton(pauseScreen, "menu.returnToMenu");
+                    return;
+                }
+                if (SharedWorldClient.hostingManager().isReleaseComplete()) {
+                    this.markers.emit("release-complete", null);
                     this.guestStep = GuestStep.AWAIT_EXIT;
                 }
             }
@@ -635,6 +724,58 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
     }
 
     // ---------------------------------------------------------------- shared
+
+    /**
+     * The bigworld command loop, shared by the hosting host and the re-hosting
+     * guest: hash-artifacts and mutate-big-file run async against the live
+     * server's world dir (results arrive as markers); returns true when the
+     * orchestrator asked for shutdown. Commands are never polled while an op
+     * is in flight, so ops observe a quiescent file.
+     */
+    private boolean bigWorldSessionTick(Minecraft minecraft) {
+        if (this.bigWorldOpInFlight.get()) {
+            return false;
+        }
+        String command = this.commands.poll();
+        if (command == null) {
+            return false;
+        }
+        switch (command) {
+            case "hash-artifacts" -> this.runBigWorldOp(minecraft, "artifacts-hashed",
+                    worldRoot -> BigWorldOps.hashArtifacts(worldRoot, this.bigFileRelative));
+            case "mutate-big-file" -> this.runBigWorldOp(minecraft, "big-file-mutated",
+                    worldRoot -> String.valueOf(BigWorldOps.mutateBigFile(worldRoot, this.bigFileRelative)));
+            case "shutdown" -> {
+                this.markers.emit("shutdown-received", null);
+                return true;
+            }
+            default -> this.markers.emit("bigworld-unknown-command", command);
+        }
+        return false;
+    }
+
+    private interface BigWorldOp {
+        String run(java.nio.file.Path worldRoot) throws Exception;
+    }
+
+    private void runBigWorldOp(Minecraft minecraft, String markerEvent, BigWorldOp op) {
+        IntegratedServer server = minecraft.getSingleplayerServer();
+        if (server == null) {
+            this.markers.emit("bigworld-op-failed", markerEvent + ": no integrated server");
+            return;
+        }
+        java.nio.file.Path worldRoot = server.getWorldPath(net.minecraft.world.level.storage.LevelResource.ROOT).normalize();
+        this.bigWorldOpInFlight.set(true);
+        CompletableFuture.runAsync(() -> {
+            try {
+                this.markers.emit(markerEvent, op.run(worldRoot));
+            } catch (Exception exception) {
+                this.markers.emit("bigworld-op-failed", markerEvent + ": " + exception);
+            } finally {
+                this.bigWorldOpInFlight.set(false);
+            }
+        }, SharedWorldClient.ioExecutor());
+    }
 
     private static String firstNonOwnerMemberName() {
         String ownerUuid = SharedWorldDevSessionBridge.hostingSharedWorldOwnerUuid();

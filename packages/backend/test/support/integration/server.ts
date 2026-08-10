@@ -13,7 +13,8 @@ const port = Number.parseInt(process.env.SHAREDWORLD_INTEGRATION_PORT ?? "18787"
 const baseUrl = `http://127.0.0.1:${port}`;
 const app = createIntegrationTestApp(baseUrl, {
   dbPath: process.env.SHAREDWORLD_INTEGRATION_DB_FILE || undefined,
-  realtimeStateDir: process.env.SHAREDWORLD_INTEGRATION_STATE_DIR || undefined
+  realtimeStateDir: process.env.SHAREDWORLD_INTEGRATION_STATE_DIR || undefined,
+  blobDir: process.env.SHAREDWORLD_INTEGRATION_BLOB_DIR || undefined
 });
 
 /**

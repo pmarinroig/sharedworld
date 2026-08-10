@@ -119,6 +119,12 @@ CREATE TABLE IF NOT EXISTS snapshot_packs (
   -- of being re-inserted. NULL = members live under my own snapshot_id.
   -- Always flattened to the physical holder (one hop), never a chain.
   members_snapshot_id TEXT,
+  -- 0.4.0 delta v2: format version (NULL = v1), the delta blob's true byte
+  -- size, and the accumulated delta bytes since the chain's last full
+  -- artifact (NULL = unknown → the planner forces one full re-upload).
+  delta_format_version INTEGER,
+  delta_blob_size INTEGER,
+  chain_delta_bytes INTEGER,
   -- No snapshots(id) foreign key: the migration that created this table never
   -- declared one, so production does not enforce it; schema.sql matches.
   PRIMARY KEY (snapshot_id, pack_id)
@@ -183,3 +189,22 @@ CREATE TABLE IF NOT EXISTS world_runtime_mirror (
   room_players_json TEXT,
   updated_at TEXT NOT NULL
 );
+
+-- 0.4.0 direct-to-Drive resumable uploads: one row per initiated session so
+-- commit can verify against the stored session URI and expired orphans can
+-- be swept opportunistically at session-init time.
+CREATE TABLE IF NOT EXISTS storage_upload_sessions (
+  upload_id TEXT PRIMARY KEY,
+  provider TEXT NOT NULL,
+  storage_account_id TEXT NOT NULL,
+  world_id TEXT NOT NULL,
+  storage_key TEXT NOT NULL,
+  session_url TEXT NOT NULL,
+  content_type TEXT NOT NULL,
+  expected_size INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  confirmed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_storage_upload_sessions_account_created
+  ON storage_upload_sessions (provider, storage_account_id, confirmed_at, created_at);

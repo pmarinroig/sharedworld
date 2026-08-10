@@ -31,6 +31,7 @@ import link.sharedworld.api.SharedWorldModels.WorldDetailsDto;
 import link.sharedworld.api.SharedWorldModels.WorldRuntimeStatusDto;
 import link.sharedworld.api.SharedWorldModels.WorldSnapshotSummaryDto;
 import link.sharedworld.api.SharedWorldModels.WorldSummaryDto;
+import link.sharedworld.util.TransferWatchdog;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.User;
 
@@ -444,6 +445,87 @@ public final class SharedWorldApiClient {
         return requestWithTransportRetry("POST", "/worlds/" + worldId + "/downloads/plan", body, DownloadPlanDto.class);
     }
 
+    public SharedWorldModels.CreateBlobSessionResponseDto createBlobSession(
+            String worldId, String storageKey, long runtimeEpoch, String hostToken, String contentType, long contentLength
+    ) throws IOException, InterruptedException {
+        ensureSession();
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("storageKey", storageKey);
+        body.put("runtimeEpoch", runtimeEpoch);
+        body.put("hostToken", hostToken);
+        body.put("contentType", contentType);
+        body.put("contentLength", contentLength);
+        return request("POST", "/worlds/" + worldId + "/uploads/blob-session", body, SharedWorldModels.CreateBlobSessionResponseDto.class, true);
+    }
+
+    public SharedWorldModels.CommitBlobSessionResponseDto commitBlobSession(
+            String worldId, String uploadId, long runtimeEpoch, String hostToken
+    ) throws IOException, InterruptedException {
+        ensureSession();
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("uploadId", uploadId);
+        body.put("runtimeEpoch", runtimeEpoch);
+        body.put("hostToken", hostToken);
+        return request("POST", "/worlds/" + worldId + "/uploads/blob-commit", body, SharedWorldModels.CommitBlobSessionResponseDto.class, true);
+    }
+
+    /**
+     * Direct-to-provider upload for one storage key: session init at the
+     * backend, chunked resumable PUTs straight to the provider, then an
+     * idempotent commit that has the backend verify the provider's own
+     * account of the bytes. A dead session (provider forgot it) is recreated
+     * once and only this artifact restarts.
+     */
+    public void uploadBlobDirect(
+            String worldId,
+            String storageKey,
+            long runtimeEpoch,
+            String hostToken,
+            Path bodyFile,
+            String contentType,
+            long fallbackChunkSizeBytes,
+            UploadProgressListener progressListener
+    ) throws IOException, InterruptedException {
+        long contentLength = java.nio.file.Files.size(bodyFile);
+        for (int sessionAttempt = 0; ; sessionAttempt++) {
+            SharedWorldModels.CreateBlobSessionResponseDto session =
+                    createBlobSession(worldId, storageKey, runtimeEpoch, hostToken, contentType, contentLength);
+            long chunkSize = session.chunkSizeBytes() > 0 ? session.chunkSizeBytes() : fallbackChunkSizeBytes;
+            try {
+                new ResumableBlobUploader(this.httpClient, session.sessionUrl(), chunkSize)
+                        .upload(bodyFile, contentType, progressListener);
+                commitBlobSessionWithRetry(worldId, session.uploadId(), runtimeEpoch, hostToken);
+                return;
+            } catch (ResumableBlobUploader.SessionGoneException gone) {
+                if (sessionAttempt >= 1) {
+                    throw gone;
+                }
+                // Fresh session (same storage key reuses the provider file id
+                // server-side), restart this artifact only.
+            }
+        }
+    }
+
+    private void commitBlobSessionWithRetry(String worldId, String uploadId, long runtimeEpoch, String hostToken)
+            throws IOException, InterruptedException {
+        IOException lastFailure = null;
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            try {
+                commitBlobSession(worldId, uploadId, runtimeEpoch, hostToken);
+                return;
+            } catch (IOException exception) {
+                // Commit is idempotent server-side; only transport-level
+                // failures are worth replaying.
+                if (!isRetryableTransportError(exception) || attempt == 3) {
+                    throw exception;
+                }
+                lastFailure = exception;
+                Thread.sleep(500L * attempt);
+            }
+        }
+        throw lastFailure;
+    }
+
     public void uploadBlob(SignedBlobUrlDto signedUrl, Path bodyFile, String contentType) throws IOException, InterruptedException {
         this.uploadBlob(signedUrl, bodyFile, contentType, null);
     }
@@ -467,7 +549,7 @@ public final class SharedWorldApiClient {
                 // to the progress listener, not this deadline.
                 .timeout(Duration.ofMinutes(10))
                 .method(signedUrl.method(), bodyPublisher);
-        builder.header("authorization", "Bearer " + ensureSession().token());
+        applyBlobAuth(builder, signedUrl);
 
         if (contentType != null && !contentType.isBlank()) {
             builder.header("content-type", contentType);
@@ -481,7 +563,7 @@ public final class SharedWorldApiClient {
             // Signed blob URLs may point at a non-backend store whose error
             // body is not our JSON shape; tryParseError falls back to a
             // generic http_error code with the real status either way.
-            throw blobTransferError("upload", response.body(), response.statusCode());
+            throw blobTransferError("upload", response.body(), response.statusCode(), response.headers());
         }
     }
 
@@ -490,29 +572,7 @@ public final class SharedWorldApiClient {
     }
 
     public void downloadBlobToFile(SignedBlobUrlDto signedUrl, Path target, DownloadProgressListener progressListener) throws IOException, InterruptedException {
-        HttpRequest.Builder builder = HttpRequest.newBuilder()
-                .uri(URI.create(signedUrl.url()))
-                .timeout(Duration.ofSeconds(60))
-                .method(signedUrl.method(), HttpRequest.BodyPublishers.noBody());
-        builder.header("authorization", "Bearer " + ensureSession().token());
-
-        if (signedUrl.headers() != null) {
-            signedUrl.headers().forEach(builder::header);
-        }
-
-        HttpResponse<InputStream> response = this.httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofInputStream());
-        if (response.statusCode() >= 400) {
-            throw blobTransferError("download", readErrorBody(response.body()), response.statusCode());
-        }
-
-        long compressedLength = response.headers().firstValueAsLong("content-length").orElse(-1L);
-        InputStream body = progressListener == null
-                ? response.body()
-                : new ProgressInputStream(response.body(), compressedLength, progressListener::onBytesTransferred);
-        try (InputStream input = new GZIPInputStream(body);
-             OutputStream output = Files.newOutputStream(target)) {
-            input.transferTo(output);
-        }
+        downloadToFileResumable(signedUrl, target, progressListener, true);
     }
 
     public void downloadRawBlobToFile(SignedBlobUrlDto signedUrl, Path target) throws IOException, InterruptedException {
@@ -520,46 +580,196 @@ public final class SharedWorldApiClient {
     }
 
     public void downloadRawBlobToFile(SignedBlobUrlDto signedUrl, Path target, DownloadProgressListener progressListener) throws IOException, InterruptedException {
+        downloadToFileResumable(signedUrl, target, progressListener, false);
+    }
+
+    /**
+     * Resumable download core. Raw bytes land in a sibling {@code .swpart}
+     * file that survives failed attempts: a retry asks the backend to resume
+     * with {@code Range: bytes=N-} (206 appends, a 200 from an older backend
+     * truncates and restarts), so a flaky link pays for the bytes it lost,
+     * not the whole blob. Progress is bounded by the stall watchdog instead
+     * of a whole-exchange deadline — a healthy multi-GB transfer has no
+     * upper duration, a stalled one is aborted and retried. The gunzip
+     * variant decompresses only after the raw part completes, keeping resume
+     * arithmetic in compressed bytes.
+     */
+    private void downloadToFileResumable(
+            SignedBlobUrlDto signedUrl,
+            Path target,
+            DownloadProgressListener progressListener,
+            boolean gunzip
+    ) throws IOException, InterruptedException {
+        Path partial = target.resolveSibling(target.getFileName() + ".swpart");
+        long resumeOffset = Files.exists(partial) ? Files.size(partial) : 0L;
+
         HttpRequest.Builder builder = HttpRequest.newBuilder()
                 .uri(URI.create(signedUrl.url()))
-                .timeout(Duration.ofSeconds(60))
+                // Bounds time-to-response-headers only; body streaming is
+                // governed by the stall watchdog (java.net.http has no read
+                // timeout, and a fixed whole-exchange deadline is wrong for
+                // transfers whose healthy duration is unbounded).
+                .timeout(Duration.ofSeconds(30))
                 .method(signedUrl.method(), HttpRequest.BodyPublishers.noBody());
-        builder.header("authorization", "Bearer " + ensureSession().token());
-
+        applyBlobAuth(builder, signedUrl);
+        if (resumeOffset > 0L) {
+            builder.header("range", "bytes=" + resumeOffset + "-");
+        }
         if (signedUrl.headers() != null) {
             signedUrl.headers().forEach(builder::header);
         }
 
         HttpResponse<InputStream> response = this.httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofInputStream());
         if (response.statusCode() >= 400) {
-            throw blobTransferError("download", readErrorBody(response.body()), response.statusCode());
+            throw blobTransferError("download", readErrorBody(response.body()), response.statusCode(), response.headers());
+        }
+        boolean resumed = response.statusCode() == 206 && resumeOffset > 0L;
+        long baseOffset = resumed ? resumeOffset : 0L;
+        long remaining = response.headers().firstValueAsLong("content-length").orElse(-1L);
+        long totalBytes = totalFromContentRange(response.headers().firstValue("content-range").orElse(null));
+        if (totalBytes < 0L) {
+            totalBytes = remaining < 0L ? -1L : baseOffset + remaining;
         }
 
-        long length = response.headers().firstValueAsLong("content-length").orElse(-1L);
-        InputStream body = progressListener == null
-                ? response.body()
-                : new ProgressInputStream(response.body(), length, progressListener::onBytesTransferred);
-        try (InputStream input = body;
-             OutputStream output = Files.newOutputStream(target)) {
-            input.transferTo(output);
+        InputStream rawBody = response.body();
+        long reportedTotal = totalBytes;
+        try (TransferWatchdog watchdog = TransferWatchdog.watching(rawBody)) {
+            UploadProgressListener pulse = (transferred, ignoredTotal) -> {
+                watchdog.pulse();
+                if (progressListener != null) {
+                    progressListener.onBytesTransferred(baseOffset + transferred, reportedTotal);
+                }
+            };
+            try (InputStream body = new ProgressInputStream(rawBody, remaining, pulse);
+                 OutputStream output = Files.newOutputStream(partial,
+                         java.nio.file.StandardOpenOption.CREATE,
+                         java.nio.file.StandardOpenOption.WRITE,
+                         resumed ? java.nio.file.StandardOpenOption.APPEND : java.nio.file.StandardOpenOption.TRUNCATE_EXISTING)) {
+                body.transferTo(output);
+            } catch (IOException exception) {
+                // The partial keeps the bytes it has; surface the break as
+                // retryable so the next attempt resumes instead of failing
+                // the sync closed.
+                if (watchdog.stalled()) {
+                    throw new BlobStreamInterruptedException(
+                            "SharedWorld transfer stalled: no data received for " + TransferWatchdog.stallTimeoutMillis() / 1000 + "s.", exception);
+                }
+                throw new BlobStreamInterruptedException("SharedWorld transfer was interrupted mid-stream.", exception);
+            }
+        }
+        if (totalBytes >= 0L && Files.size(partial) != totalBytes) {
+            // The stream ended early without an error (server closed the
+            // connection cleanly); treat like any other mid-stream break.
+            throw new BlobStreamInterruptedException(
+                    "SharedWorld transfer ended early (" + Files.size(partial) + " of " + totalBytes + " bytes).", null);
+        }
+
+        if (gunzip) {
+            try (InputStream input = new GZIPInputStream(Files.newInputStream(partial));
+                 OutputStream output = Files.newOutputStream(target)) {
+                input.transferTo(output);
+            }
+            Files.deleteIfExists(partial);
+        } else {
+            Files.move(partial, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
         }
     }
 
+    private static long totalFromContentRange(String contentRange) {
+        if (contentRange == null) {
+            return -1L;
+        }
+        // "bytes <start>-<end>/<total>"; "*" totals stay unknown.
+        int slash = contentRange.lastIndexOf('/');
+        if (slash < 0) {
+            return -1L;
+        }
+        String total = contentRange.substring(slash + 1).trim();
+        if (total.isEmpty() || "*".equals(total)) {
+            return -1L;
+        }
+        try {
+            return Long.parseLong(total);
+        } catch (NumberFormatException exception) {
+            return -1L;
+        }
+    }
 
-    private SharedWorldApiException blobTransferError(String operation, String errorBody, int statusCode) {
+    /**
+     * The session bearer belongs to the SharedWorld backend only: signed blob
+     * URLs may point at third-party stores (a Google Drive resumable session
+     * URI), and sending the token there both leaks it and can break the
+     * store's own auth handling.
+     */
+    private void applyBlobAuth(HttpRequest.Builder builder, SignedBlobUrlDto signedUrl) throws IOException, InterruptedException {
+        if (isBackendOrigin(signedUrl.url())) {
+            builder.header("authorization", "Bearer " + ensureSession().token());
+        }
+    }
+
+    private boolean isBackendOrigin(String url) {
+        try {
+            URI target = URI.create(url);
+            URI base = URI.create(this.baseUrl);
+            return java.util.Objects.equals(target.getScheme(), base.getScheme())
+                    && java.util.Objects.equals(target.getHost(), base.getHost())
+                    && target.getPort() == base.getPort();
+        } catch (IllegalArgumentException exception) {
+            // Unparseable URL: keep the pre-0.4.0 behavior of attaching auth.
+            return true;
+        }
+    }
+
+    private SharedWorldApiException blobTransferError(String operation, String errorBody, int statusCode, java.net.http.HttpHeaders headers) {
+        Integer retryAfterSeconds = headers == null
+                ? null
+                : parseRetryAfterSeconds(headers.firstValue("retry-after").orElse(null));
         ErrorDto error = tryParseError(errorBody, statusCode);
         String message;
+        String googleMessage = googleErrorMessage(errorBody);
         if (!"http_error".equals(error.error())) {
             message = error.message();
+        } else if (googleMessage != null) {
+            // A Drive-shaped {"error":{...}} body must not be branded as a
+            // SharedWorld backend failure.
+            message = "Google Drive rejected the blob " + operation + " (" + statusCode + "): " + googleMessage;
         } else if (statusCode == 413) {
-            // The storage relay rejects oversized bodies at its edge, before any
-            // SharedWorld code can attach an explanation.
-            message = "SharedWorld blob " + operation + " was rejected: the file is larger than the storage relay accepts. "
-                    + "Update SharedWorld to the latest version, which splits large worlds automatically.";
+            message = "SharedWorld blob " + operation + " was rejected: the file is larger than this transfer path accepts.";
         } else {
             message = "SharedWorld blob " + operation + " failed (" + statusCode + ").";
         }
-        return new SharedWorldApiException(error.error(), message, error.status());
+        return new SharedWorldApiException(error.error(), message, error.status(), retryAfterSeconds);
+    }
+
+    private static String googleErrorMessage(String errorBody) {
+        if (errorBody == null || errorBody.isBlank()) {
+            return null;
+        }
+        try {
+            com.google.gson.JsonElement parsed = com.google.gson.JsonParser.parseString(errorBody);
+            if (!parsed.isJsonObject()) {
+                return null;
+            }
+            com.google.gson.JsonElement error = parsed.getAsJsonObject().get("error");
+            if (error == null || !error.isJsonObject()) {
+                return null;
+            }
+            com.google.gson.JsonElement message = error.getAsJsonObject().get("message");
+            return message != null && message.isJsonPrimitive() ? message.getAsString() : null;
+        } catch (RuntimeException exception) {
+            return null;
+        }
+    }
+
+    /**
+     * A blob transfer that broke mid-stream (stall abort, connection reset,
+     * clean-but-early EOF). Always retryable: the .swpart partial keeps the
+     * received bytes and the next attempt resumes from its size.
+     */
+    public static final class BlobStreamInterruptedException extends IOException {
+        public BlobStreamInterruptedException(String message, Throwable cause) {
+            super(message, cause);
+        }
     }
 
     private static String readErrorBody(InputStream body) {
@@ -1096,7 +1306,10 @@ public final class SharedWorldApiClient {
                     // long-lived transfer is a transient link fault, not a
                     // protocol outcome; without a retry it killed multi-minute
                     // release uploads on their first blip.
-                    || cause instanceof javax.net.ssl.SSLException) {
+                    || cause instanceof javax.net.ssl.SSLException
+                    // Mid-stream breaks (stall abort, reset, early EOF) leave
+                    // a resumable .swpart behind — the retry picks it up.
+                    || cause instanceof BlobStreamInterruptedException) {
                 return true;
             }
         }
@@ -1204,13 +1417,13 @@ public final class SharedWorldApiClient {
         void onBytesTransferred(long bytesTransferred, long totalBytes);
     }
 
-    private static final class ProgressInputStream extends InputStream {
+    static final class ProgressInputStream extends InputStream {
         private final InputStream delegate;
         private final long totalBytes;
         private final UploadProgressListener listener;
         private long transferredBytes;
 
-        private ProgressInputStream(InputStream delegate, long totalBytes, UploadProgressListener listener) {
+        ProgressInputStream(InputStream delegate, long totalBytes, UploadProgressListener listener) {
             this.delegate = delegate;
             this.totalBytes = totalBytes;
             this.listener = listener;

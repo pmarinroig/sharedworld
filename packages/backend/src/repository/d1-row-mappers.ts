@@ -8,7 +8,8 @@ import type {
 import type {
   StorageAccountRecord,
   StorageLinkSessionRecord,
-  StorageObjectRecord
+  StorageObjectRecord,
+  StorageUploadSessionRecord
 } from "../repository.ts";
 import type { WorldRuntimeRecord } from "../runtime-protocol.ts";
 import { asNullableString, clampFraction, type Row } from "./d1-support.ts";
@@ -108,6 +109,21 @@ export function mapStorageLinkSession(row: Row): StorageLinkSessionRecord {
     createdAt: String(row.created_at),
     expiresAt: String(row.expires_at),
     completedAt: asNullableString(row.completed_at)
+  };
+}
+
+export function mapUploadSession(row: Row): StorageUploadSessionRecord {
+  return {
+    uploadId: String(row.upload_id),
+    provider: String(row.provider) as StorageProviderType,
+    storageAccountId: String(row.storage_account_id),
+    worldId: String(row.world_id),
+    storageKey: String(row.storage_key),
+    sessionUrl: String(row.session_url),
+    contentType: String(row.content_type),
+    expectedSize: Number(row.expected_size),
+    createdAt: String(row.created_at),
+    confirmedAt: row.confirmed_at == null ? null : String(row.confirmed_at)
   };
 }
 

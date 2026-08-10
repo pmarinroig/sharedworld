@@ -453,6 +453,12 @@ export interface SnapshotPack {
   baseSnapshotId?: string | null;
   baseHash?: string | null;
   chainDepth?: number | null;
+  /** Delta artifact format version; null/absent = v1 (0.3.x). */
+  deltaFormatVersion?: number | null;
+  /** True byte size of the delta blob (client-reported, finalize-validated). */
+  deltaBlobSize?: number | null;
+  /** Server-accumulated delta bytes since the chain's last full artifact. */
+  chainDeltaBytes?: number | null;
   files: PackedManifestFile[];
 }
 
@@ -535,6 +541,11 @@ export interface UploadPackPlan {
   baseSnapshotId?: string | null;
   baseHash?: string | null;
   baseChainDepth?: number | null;
+  /**
+   * 2 when the offered deltaStorageKey is a delta2 slot the client must fill
+   * with a v2 artifact; absent for legacy v1 slots (old clients).
+   */
+  deltaFormatVersion?: number | null;
 }
 
 export interface UploadPlan {
@@ -551,6 +562,48 @@ export interface UploadPlan {
    * indistinguishable from no change. Additive — old clients ignore it.
    */
   latestPackIds?: string[];
+  /**
+   * Present when the backend supports direct-to-provider resumable uploads
+   * (0.4.0+, Google Drive worlds). Clients that see it upload blob bodies via
+   * blob-session/blob-commit instead of the relay PUT; the relay slots stay
+   * valid as the fallback. Additive — old clients ignore it.
+   */
+  directUpload?: DirectUploadPolicy | null;
+}
+
+export interface DirectUploadPolicy {
+  /** Chunk size for resumable PUTs; always a multiple of 256 KiB. */
+  chunkSizeBytes: number;
+  /** Per-blob byte ceiling, null = bounded only by provider quota. */
+  maxUploadBytes: number | null;
+}
+
+export interface CreateBlobSessionRequest {
+  storageKey: string;
+  runtimeEpoch?: number | null;
+  hostToken?: string | null;
+  contentType: string;
+  contentLength: number;
+}
+
+export interface CreateBlobSessionResponse {
+  uploadId: string;
+  /** Provider resumable session URI; its own credential, no auth header. */
+  sessionUrl: string;
+  chunkSizeBytes: number;
+  expiresAt: string;
+}
+
+export interface CommitBlobSessionRequest {
+  uploadId: string;
+  runtimeEpoch?: number | null;
+  hostToken?: string | null;
+}
+
+export interface CommitBlobSessionResponse {
+  storageKey: string;
+  /** Byte size the provider reported for the stored object. */
+  size: number;
 }
 
 export interface FinalizeSnapshotRequest {
@@ -569,6 +622,8 @@ export interface DownloadPlanStep {
   artifactSize: number;
   baseSnapshotId?: string | null;
   baseHash?: string | null;
+  /** Delta artifact format version of this step; null/absent = v1. */
+  deltaFormatVersion?: number | null;
   download: SignedBlobUrl;
 }
 

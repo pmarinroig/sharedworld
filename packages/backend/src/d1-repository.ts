@@ -25,6 +25,7 @@ import type {
   StorageAccountRecord,
   StorageLinkSessionRecord,
   StorageObjectRecord,
+  StorageUploadSessionRecord,
   UserRecord,
   WorldUpdateRecord
 } from "./repository.ts";
@@ -33,7 +34,8 @@ import {
   mapInvite,
   mapStorageAccount,
   mapStorageLinkSession,
-  mapStorageObject
+  mapStorageObject,
+  mapUploadSession
 } from "./repository/d1-row-mappers.ts";
 import {
   asNullableString,
@@ -632,6 +634,63 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     );
   }
 
+  async createUploadSession(record: StorageUploadSessionRecord): Promise<void> {
+    await this.run(
+      `INSERT INTO storage_upload_sessions (
+         upload_id, provider, storage_account_id, world_id, storage_key, session_url, content_type, expected_size, created_at, confirmed_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      record.uploadId,
+      record.provider,
+      record.storageAccountId,
+      record.worldId,
+      record.storageKey,
+      record.sessionUrl,
+      record.contentType,
+      record.expectedSize,
+      record.createdAt,
+      record.confirmedAt
+    );
+  }
+
+  async getUploadSession(uploadId: string): Promise<StorageUploadSessionRecord | null> {
+    const row = await this.first<Row>(
+      "SELECT * FROM storage_upload_sessions WHERE upload_id = ?",
+      uploadId
+    );
+    return row ? mapUploadSession(row) : null;
+  }
+
+  async markUploadSessionConfirmed(uploadId: string, confirmedAt: string): Promise<void> {
+    await this.run(
+      "UPDATE storage_upload_sessions SET confirmed_at = ? WHERE upload_id = ?",
+      confirmedAt,
+      uploadId
+    );
+  }
+
+  async deleteUploadSession(uploadId: string): Promise<void> {
+    await this.run("DELETE FROM storage_upload_sessions WHERE upload_id = ?", uploadId);
+  }
+
+  async listUnconfirmedUploadSessionsBefore(
+    provider: StorageProviderType,
+    storageAccountId: string,
+    createdBefore: string,
+    limit: number
+  ): Promise<StorageUploadSessionRecord[]> {
+    const rows = await this.all<Row>(
+      `SELECT * FROM storage_upload_sessions
+       WHERE provider = ? AND storage_account_id = ? AND confirmed_at IS NULL AND created_at < ?
+       ORDER BY created_at ASC
+       LIMIT ?`,
+      provider,
+      storageAccountId,
+      createdBefore,
+      limit
+    );
+    return rows.map(mapUploadSession);
+  }
+
   async createInvite(worldId: string, _ctx: RequestContext, invite: InviteCode): Promise<InviteCode> {
     await this.run(
       `INSERT INTO invite_codes (
@@ -999,10 +1058,14 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     baseHash: string | null;
     chainDepth: number | null;
     membersSnapshotId: string | null;
+    deltaFormatVersion: number | null;
+    deltaBlobSize: number | null;
+    chainDeltaBytes: number | null;
   }>> {
     const rows = await this.all<Row>(
       `SELECT sp.pack_id, sp.hash, sp.size, sp.storage_key, sp.transfer_mode,
-              sp.base_snapshot_id, sp.base_hash, sp.chain_depth, sp.members_snapshot_id
+              sp.base_snapshot_id, sp.base_hash, sp.chain_depth, sp.members_snapshot_id,
+              sp.delta_format_version, sp.delta_blob_size, sp.chain_delta_bytes
        FROM snapshot_packs sp
        JOIN snapshots s ON s.id = sp.snapshot_id
        WHERE sp.snapshot_id = ? AND s.world_id = ?`,
@@ -1017,7 +1080,10 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       baseSnapshotId: asNullableString(row.base_snapshot_id),
       baseHash: asNullableString(row.base_hash),
       chainDepth: row.chain_depth == null ? null : Number(row.chain_depth),
-      membersSnapshotId: asNullableString(row.members_snapshot_id)
+      membersSnapshotId: asNullableString(row.members_snapshot_id),
+      deltaFormatVersion: row.delta_format_version == null ? null : Number(row.delta_format_version),
+      deltaBlobSize: row.delta_blob_size == null ? null : Number(row.delta_blob_size),
+      chainDeltaBytes: row.chain_delta_bytes == null ? null : Number(row.chain_delta_bytes)
     }]));
   }
 
@@ -1077,12 +1143,16 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
         && (pack.baseSnapshotId ?? null) === base.baseSnapshotId
         && (pack.baseHash ?? null) === base.baseHash
         && (pack.chainDepth ?? null) === base.chainDepth
+        && (pack.deltaFormatVersion ?? null) === base.deltaFormatVersion
+        && (pack.deltaBlobSize ?? null) === base.deltaBlobSize
+        && (pack.chainDeltaBytes ?? null) === base.chainDeltaBytes
         ? (base.membersSnapshotId ?? request.baseSnapshotId ?? null)
         : null;
       statements.push(this.prepared(
         `INSERT INTO snapshot_packs (
-          snapshot_id, pack_id, hash, size, storage_key, transfer_mode, base_snapshot_id, base_hash, chain_depth, members_snapshot_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          snapshot_id, pack_id, hash, size, storage_key, transfer_mode, base_snapshot_id, base_hash, chain_depth, members_snapshot_id,
+          delta_format_version, delta_blob_size, chain_delta_bytes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         snapshotId,
         pack.packId,
         pack.hash,
@@ -1092,7 +1162,10 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
         pack.baseSnapshotId ?? null,
         pack.baseHash ?? null,
         pack.chainDepth ?? null,
-        inheritFrom
+        inheritFrom,
+        pack.deltaFormatVersion ?? null,
+        pack.deltaBlobSize ?? null,
+        pack.chainDeltaBytes ?? null
       ));
       if (inheritFrom != null) {
         continue;
@@ -1342,7 +1415,8 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       snapshotId
     );
     const packRows = await this.all<Row>(
-      `SELECT pack_id, hash, size, storage_key, transfer_mode, base_snapshot_id, base_hash, chain_depth, members_snapshot_id
+      `SELECT pack_id, hash, size, storage_key, transfer_mode, base_snapshot_id, base_hash, chain_depth, members_snapshot_id,
+              delta_format_version, delta_blob_size, chain_delta_bytes
        FROM snapshot_packs
        WHERE snapshot_id = ?
        ORDER BY pack_id ASC`,
@@ -1423,6 +1497,9 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
         baseSnapshotId: asNullableString(row.base_snapshot_id),
         baseHash: asNullableString(row.base_hash),
         chainDepth: row.chain_depth == null ? null : Number(row.chain_depth),
+        deltaFormatVersion: row.delta_format_version == null ? null : Number(row.delta_format_version),
+        deltaBlobSize: row.delta_blob_size == null ? null : Number(row.delta_blob_size),
+        chainDeltaBytes: row.chain_delta_bytes == null ? null : Number(row.chain_delta_bytes),
         files: members
       };
     });

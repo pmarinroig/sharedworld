@@ -288,6 +288,12 @@ const defaultRouterService = {
   async updateWorldSettings(_ctx, _worldId, _request) {
     return unexpectedRouteCall("updateWorldSettings");
   },
+  async createBlobUploadSession(_ctx, _worldId, _request) {
+    return unexpectedRouteCall("createBlobUploadSession");
+  },
+  async commitBlobUploadSession(_ctx, _worldId, _request) {
+    return unexpectedRouteCall("commitBlobUploadSession");
+  },
   async uploadStorageBlob(_ctx, _worldId, _storageKey, _request) {
     return unexpectedRouteCall("uploadStorageBlob");
   },

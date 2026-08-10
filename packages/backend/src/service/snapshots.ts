@@ -1,4 +1,6 @@
 import {
+  DELTA_V2_FORMAT_VERSION,
+  DELTA_V2_MAX_CHAIN_DEPTH,
   PACK_DELTA_TRANSFER_MODE,
   PACK_FULL_TRANSFER_MODE,
   REGION_DELTA_TRANSFER_MODE,
@@ -128,6 +130,7 @@ export async function finalizeSnapshot(
     now
   );
   await validateFinalizeSnapshotRequest(svc, worldId, request);
+  await computeChainDeltaBytes(svc, worldId, request);
   const manifest = await svc.repository.finalizeSnapshot(worldId, ctx, request, now);
   await applySnapshotRetention(svc, worldId, now);
   await publishWorldEvent(svc, worldId, "snapshot-changed");
@@ -374,6 +377,64 @@ async function validateSnapshotPackBase(
         : { hash: basePack.hash, expectedChainDepth: nextChainDepth(basePack.transferMode, basePack.chainDepth ?? null) };
     }
   }, snapshotCache);
+  validateSnapshotPackDeltaV2Fields(pack);
+}
+
+/**
+ * Server-side accumulator: for every pack in the request, stamp
+ * chainDeltaBytes before persisting. Full packs restart the chain at 0; v2
+ * delta packs extend their base's accumulator by their own blob size; v1
+ * delta packs stay NULL (unaccounted — the planner will force a re-full).
+ * Never trusts a client-sent accumulator.
+ */
+async function computeChainDeltaBytes(svc: ServiceContext, worldId: string, request: FinalizeSnapshotRequest): Promise<void> {
+  const snapshotCache = new Map<string, SnapshotManifest | null>();
+  for (const pack of request.packs ?? []) {
+    if (!isDeltaPackTransferMode(pack.transferMode)) {
+      pack.chainDeltaBytes = 0;
+      continue;
+    }
+    if ((pack.deltaFormatVersion ?? null) !== DELTA_V2_FORMAT_VERSION) {
+      pack.chainDeltaBytes = null;
+      continue;
+    }
+    const baseSnapshot = await requireSnapshotForValidation(svc, worldId, pack.baseSnapshotId as string, snapshotCache);
+    const basePack = baseSnapshot.packs.find((entry) => entry.packId === pack.packId);
+    const baseAccumulator = basePack == null || isDeltaPackTransferMode(basePack.transferMode)
+      ? (basePack?.chainDeltaBytes ?? null)
+      : 0;
+    if (baseAccumulator == null) {
+      // The planner never offers a v2 slot over an unaccounted chain; a
+      // client claiming one anyway is broken or hostile.
+      throw new HttpError(400, "invalid_snapshot_delta", `Snapshot pack '${pack.packId}' chains a v2 delta onto an unaccounted base.`);
+    }
+    pack.chainDeltaBytes = baseAccumulator + (pack.deltaBlobSize as number);
+  }
+}
+
+/**
+ * v2 delta bookkeeping rules: a v2 delta pack must report its true blob size
+ * (the accumulator's input) and stay under the depth ceiling; non-delta packs
+ * must not claim a delta format. chain_delta_bytes is never accepted from the
+ * client — finalize computes it from the base row.
+ */
+function validateSnapshotPackDeltaV2Fields(pack: SnapshotPack): void {
+  const version = pack.deltaFormatVersion ?? null;
+  if (version == null) {
+    return;
+  }
+  if (version !== DELTA_V2_FORMAT_VERSION) {
+    throw new HttpError(400, "invalid_snapshot_delta", `Snapshot pack '${pack.packId}' declares unsupported delta format ${version}.`);
+  }
+  if (!isDeltaPackTransferMode(pack.transferMode)) {
+    throw new HttpError(400, "invalid_snapshot_delta", `Snapshot pack '${pack.packId}' declares a delta format on a non-delta transfer mode.`);
+  }
+  if (pack.deltaBlobSize == null || !Number.isFinite(pack.deltaBlobSize) || pack.deltaBlobSize <= 0) {
+    throw new HttpError(400, "invalid_snapshot_delta", `Snapshot pack '${pack.packId}' is missing its delta blob size.`);
+  }
+  if ((pack.chainDepth ?? 0) > DELTA_V2_MAX_CHAIN_DEPTH) {
+    throw new HttpError(400, "snapshot_chain_depth_mismatch", `Snapshot pack '${pack.packId}' exceeds the delta chain ceiling.`);
+  }
 }
 
 
