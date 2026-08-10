@@ -8,9 +8,6 @@ import net.minecraft.client.gui.screens.multiplayer.JoinMultiplayerScreen;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.concurrent.Executor;
-import java.util.concurrent.atomic.AtomicBoolean;
-
 /**
  * Responsibility:
  * Watch the authoritative backend runtime while the player is connected as a guest, so the
@@ -34,49 +31,26 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * The backend runtime status for the connected world, compared against the joined runtime epoch.
  */
 public final class SharedWorldGuestRuntimeWatcher implements link.sharedworld.realtime.RealtimeEvents.Subscriber {
-    private static final long POLL_INTERVAL_MS = 5_000L;
-    /** Departure detection may lag by at most this much under server throttling. */
-    private static final long MAX_SUGGESTED_POLL_INTERVAL_MS = 60_000L;
-    /**
-     * While the realtime channel is connected, runtime changes arrive as
-     * pushed events and polling is only the safety net — so it slows to
-     * this cadence. Disconnection snaps it back to the default instantly.
-     */
-    private static final long PUSH_CONNECTED_POLL_INTERVAL_MS = 60_000L;
     private static final Logger LOGGER = LoggerFactory.getLogger(SharedWorldGuestRuntimeWatcher.class);
 
-    private final RuntimeStatusBackend backend;
-    private final Executor backgroundExecutor;
-    private final Executor mainThreadExecutor;
     private final DepartureHandler departureHandler;
-    private final AtomicBoolean inFlight = new AtomicBoolean();
     private volatile String activeWorldId;
-    private volatile long lastPollAt;
-    private volatile long pollIntervalMs = POLL_INTERVAL_MS;
     private volatile boolean departed;
-    private volatile boolean pushConnected;
 
     public SharedWorldGuestRuntimeWatcher(SharedWorldApiClient apiClient) {
-        this(
-                apiClient::runtimeStatus,
-                SharedWorldClient.ioExecutor(),
-                runnable -> Minecraft.getInstance().execute(runnable),
-                SharedWorldGuestRuntimeWatcher::handleHostDeparture
-        );
+        this(SharedWorldGuestRuntimeWatcher::handleHostDeparture);
     }
 
-    SharedWorldGuestRuntimeWatcher(
-            RuntimeStatusBackend backend,
-            Executor backgroundExecutor,
-            Executor mainThreadExecutor,
-            DepartureHandler departureHandler
-    ) {
-        this.backend = backend;
-        this.backgroundExecutor = backgroundExecutor;
-        this.mainThreadExecutor = mainThreadExecutor;
+    SharedWorldGuestRuntimeWatcher(DepartureHandler departureHandler) {
         this.departureHandler = departureHandler;
     }
 
+    /**
+     * Socket-native: the watcher no longer polls at all. Observations arrive
+     * as pushed runtime-changed payloads (connected) or as the runtime slice
+     * of the presence manager's 15s merged beat (disconnected fallback). The
+     * tick survives only for session bookkeeping.
+     */
     public void tick(Minecraft client) {
         SharedWorldPlaySessionTracker.ActiveWorldSession session = SharedWorldClient.playSessionTracker().currentSession();
         if (session == null || session.role() != SharedWorldPlaySessionTracker.SessionRole.GUEST) {
@@ -86,59 +60,56 @@ public final class SharedWorldGuestRuntimeWatcher implements link.sharedworld.re
         if (client.level == null || client.getConnection() == null) {
             return;
         }
+        adoptSessionWorld(session);
+    }
+
+    /**
+     * The session — never a poll — is the authority for "what am I
+     * watching". This is also the bootstrap fix: pre-0.4.1, activeWorldId
+     * was only assigned by the poll tick, so a session that had not polled
+     * yet silently ignored every pushed observation.
+     */
+    private void adoptSessionWorld(SharedWorldPlaySessionTracker.ActiveWorldSession session) {
+        if (!session.worldId().equals(this.activeWorldId)) {
+            this.activeWorldId = session.worldId();
+            this.departed = false;
+        }
+    }
+
+    /** Runtime slice of a merged beat (disconnected fallback lane); main thread. */
+    public void onMergedObservation(String worldId, WorldRuntimeStatusDto status) {
+        SharedWorldPlaySessionTracker.ActiveWorldSession session = SharedWorldClient.playSessionTracker().currentSession();
+        if (session == null || session.role() != SharedWorldPlaySessionTracker.SessionRole.GUEST) {
+            return;
+        }
         if (SharedWorldClient.hostingManager().phase() != link.sharedworld.host.SharedWorldHostingManager.Phase.IDLE) {
             return;
         }
         if (SharedWorldClient.releaseCoordinator().isActive()) {
             return;
         }
-        tickGuestSession(session, System.currentTimeMillis());
+        observeForSession(session, worldId, status);
     }
 
-    void tickGuestSession(SharedWorldPlaySessionTracker.ActiveWorldSession session, long now) {
-        boolean worldChanged = !session.worldId().equals(this.activeWorldId);
-        if (worldChanged) {
-            this.activeWorldId = session.worldId();
-            this.departed = false;
-            this.pollIntervalMs = POLL_INTERVAL_MS;
-        } else if (this.departed || now - this.lastPollAt < this.effectivePollIntervalMs()) {
-            return;
-        }
-        if (!this.inFlight.compareAndSet(false, true)) {
-            return;
-        }
-        this.lastPollAt = now;
-        this.backgroundExecutor.execute(() -> {
-            WorldRuntimeStatusDto status;
-            try {
-                status = this.backend.runtimeStatus(session.worldId());
-            } catch (Exception exception) {
-                LOGGER.debug("SharedWorld guest runtime watch poll failed", exception);
-                this.inFlight.set(false);
-                return;
-            }
-            this.inFlight.set(false);
-            if (status != null) {
-                this.pollIntervalMs = link.sharedworld.util.ServerPacing.clampSuggestedInterval(
-                        status.suggestedPollIntervalMs(), POLL_INTERVAL_MS, MAX_SUGGESTED_POLL_INTERVAL_MS);
-            }
-            this.mainThreadExecutor.execute(() -> handleObservation(session, status));
-        });
+    /**
+     * Testable seam: the caller vouches that {@code session} is the CURRENT
+     * guest session (the production wrappers re-read it under their gates).
+     */
+    void observeForSession(
+            SharedWorldPlaySessionTracker.ActiveWorldSession session,
+            String worldId,
+            WorldRuntimeStatusDto status
+    ) {
+        adoptSessionWorld(session);
+        handlePushedRuntime(session, worldId, status);
     }
 
     public void onDisconnect(SharedWorldPlaySessionTracker.ActiveWorldSession session) {
         clearActiveWorld(session == null ? null : session.worldId());
     }
 
-    long effectivePollIntervalMs() {
-        return this.pushConnected
-                ? Math.max(this.pollIntervalMs, PUSH_CONNECTED_POLL_INTERVAL_MS)
-                : this.pollIntervalMs;
-    }
-
     @Override
     public void onRealtimeConnectionChanged(boolean connected) {
-        this.pushConnected = connected;
     }
 
     /** Pushed runtime-changed events accelerate what a poll would observe. */
@@ -151,7 +122,7 @@ public final class SharedWorldGuestRuntimeWatcher implements link.sharedworld.re
         if (session == null || session.role() != SharedWorldPlaySessionTracker.SessionRole.GUEST) {
             return;
         }
-        handlePushedRuntime(session, event.worldId(), event.runtime());
+        observeForSession(session, event.worldId(), event.runtime());
     }
 
     /** Main-thread entry for a pushed status; same gating as a poll result. */
@@ -187,15 +158,13 @@ public final class SharedWorldGuestRuntimeWatcher implements link.sharedworld.re
         // fire again on a later poll instead of going silent forever.
         this.departed = this.departureHandler.onHostDeparture(session, outcome);
         if (!this.departed) {
-            LOGGER.info("SharedWorld host-departure rejoin was not accepted; the watcher will retry on a later poll.");
+            LOGGER.info("SharedWorld host-departure rejoin was not accepted; the watcher will retry on a later observation.");
         }
     }
 
     private void clearActiveWorld(String worldId) {
         if (worldId == null || worldId.equals(this.activeWorldId)) {
             this.activeWorldId = null;
-            this.lastPollAt = 0L;
-            this.pollIntervalMs = POLL_INTERVAL_MS;
             this.departed = false;
         }
     }
@@ -211,11 +180,6 @@ public final class SharedWorldGuestRuntimeWatcher implements link.sharedworld.re
                 session.worldName(),
                 session.joinTarget()
         );
-    }
-
-    @FunctionalInterface
-    interface RuntimeStatusBackend {
-        WorldRuntimeStatusDto runtimeStatus(String worldId) throws Exception;
     }
 
     @FunctionalInterface

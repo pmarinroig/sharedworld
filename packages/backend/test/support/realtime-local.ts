@@ -105,6 +105,20 @@ export class LocalRealtimeService implements RealtimeService {
     }
   }
 
+  /** Bridge for world-presence frames — mirrors the gateway's coordinator poke. */
+  async reportSocketPresence(worldId: string, playerUuid: string, present: boolean, now: Date): Promise<void> {
+    const entry = this.world(worldId);
+    await entry.coordinator.reportSocketPresence(playerUuid, present, now);
+    this.persistWorld(worldId, entry);
+  }
+
+  /** Bridge for a presence player's last socket closing. */
+  async presenceSocketClosed(worldId: string, playerUuid: string, now: Date): Promise<void> {
+    const entry = this.world(worldId);
+    await entry.coordinator.presenceSocketClosed(playerUuid, now);
+    this.persistWorld(worldId, entry);
+  }
+
   coordinator(worldId: string): CoordinatorHandle {
     const entry = this.world(worldId);
     if (this.persistDir == null) {

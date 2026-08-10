@@ -11,16 +11,17 @@ import type { ServiceContext } from "./context.ts";
  * the revoked-host exception (I7) — against these facts plus its own runtime.
  */
 export async function sessionActorOf(svc: ServiceContext, ctx: RequestContext, worldId: string): Promise<SessionActor> {
-  if (!await svc.repository.hasActiveWorld(worldId)) {
+  // One query for all three facts; a missing/deleted world is the 404, and
+  // any 403 decision stays with the coordinator — same ordering as before.
+  const facts = await svc.repository.sessionActorFacts(worldId, ctx.playerUuid);
+  if (facts == null) {
     throw worldNotFoundError();
   }
-  const membershipActive = await svc.repository.isWorldMember(worldId, ctx.playerUuid);
-  const everMember = membershipActive || await svc.repository.hasWorldMembership(worldId, ctx.playerUuid);
   return {
     playerUuid: ctx.playerUuid,
     playerName: ctx.playerName,
-    membershipActive,
-    everMember
+    membershipActive: facts.membershipActive,
+    everMember: facts.everMember
   };
 }
 
@@ -79,11 +80,11 @@ export async function publishWorldEvent(
 }
 
 export async function requireMembership(svc: ServiceContext, ctx: RequestContext, worldId: string): Promise<void> {
-  if (!await svc.repository.hasActiveWorld(worldId)) {
+  const facts = await svc.repository.sessionActorFacts(worldId, ctx.playerUuid);
+  if (facts == null) {
     throw worldNotFoundError();
   }
-  const isMember = await svc.repository.isWorldMember(worldId, ctx.playerUuid);
-  if (!isMember) {
+  if (!facts.membershipActive) {
     throw new HttpError(403, "forbidden", "You do not have access to this SharedWorld server.");
   }
 }

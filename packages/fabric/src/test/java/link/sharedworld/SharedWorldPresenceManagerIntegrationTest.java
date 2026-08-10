@@ -107,7 +107,7 @@ final class SharedWorldPresenceManagerIntegrationTest {
         assertEquals(List.of("HostA", "GuestB"), List.of(world.hostClient().listWorlds().get(0).onlinePlayerNames()));
     }
 
-    private static SharedWorldModels.PresenceHeartbeatResponseDto sendPresence(SharedWorldApiClient client, SharedWorldPresenceManager.PresenceUpdate update) throws Exception {
+    private static SharedWorldModels.GuestHeartbeatResponseDto sendPresence(SharedWorldApiClient client, SharedWorldPresenceManager.PresenceUpdate update) throws Exception {
         return client.setPresence(
                 update.worldId(),
                 update.present(),

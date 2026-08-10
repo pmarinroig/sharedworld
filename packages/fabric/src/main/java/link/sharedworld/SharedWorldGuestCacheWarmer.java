@@ -1,7 +1,6 @@
 package link.sharedworld;
 
 import link.sharedworld.api.SharedWorldApiClient;
-import link.sharedworld.api.SharedWorldModels.SnapshotManifestDto;
 import link.sharedworld.sync.ManagedWorldStore;
 import link.sharedworld.sync.WorldSyncCoordinator;
 import net.minecraft.client.Minecraft;
@@ -9,34 +8,22 @@ import net.minecraft.client.Minecraft;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+/**
+ * Socket-native cache warmer: no periodic polling at all. A pushed
+ * snapshot-changed for the active world triggers ONE targeted getWorld fetch
+ * (which rides the conditional-GET cache); in the disconnected fallback lane
+ * the snapshot id arrives on the presence manager's merged beat instead.
+ * Either way, a changed id runs one best-effort warmup.
+ */
 public final class SharedWorldGuestCacheWarmer implements link.sharedworld.realtime.RealtimeEvents.Subscriber {
-    private static final long POLL_INTERVAL_MS = 30_000L;
-    /** Safety-net cadence while snapshot-changed pushes drive warmups (0.3.0). */
-    private static final long PUSH_CONNECTED_POLL_INTERVAL_MS = 5 * 60_000L;
-
     private final SharedWorldApiClient apiClient;
     private final WorldSyncCoordinator syncCoordinator;
     private final HostPlayerIdentity hostPlayerIdentity;
     private final AtomicBoolean inFlight = new AtomicBoolean();
     private volatile String activeWorldId;
     private volatile String latestSnapshotId;
-    private volatile long lastPollAt;
     private volatile String pausedWorldId;
-    private volatile boolean pushConnected;
-    private volatile boolean pushTriggered;
-
-    @Override
-    public void onRealtimeConnectionChanged(boolean connected) {
-        this.pushConnected = connected;
-    }
-
-    /** A pushed snapshot-changed for the active world warms on the next tick. */
-    @Override
-    public void onRealtimeEvent(link.sharedworld.api.SharedWorldModels.RealtimeEventDto event) {
-        if ("snapshot-changed".equals(event.kind()) && event.worldId().equals(this.activeWorldId)) {
-            this.pushTriggered = true;
-        }
-    }
+    private volatile boolean fetchTriggered;
 
     public SharedWorldGuestCacheWarmer(SharedWorldApiClient apiClient) {
         this(apiClient, apiClient::authenticatedWorldPlayerUuidWithHyphens);
@@ -46,6 +33,14 @@ public final class SharedWorldGuestCacheWarmer implements link.sharedworld.realt
         this.apiClient = apiClient;
         this.syncCoordinator = new WorldSyncCoordinator(apiClient, new ManagedWorldStore());
         this.hostPlayerIdentity = hostPlayerIdentity;
+    }
+
+    /** A pushed snapshot-changed for the active world fetches on the next tick. */
+    @Override
+    public void onRealtimeEvent(link.sharedworld.api.SharedWorldModels.RealtimeEventDto event) {
+        if ("snapshot-changed".equals(event.kind()) && event.worldId().equals(this.activeWorldId)) {
+            this.fetchTriggered = true;
+        }
     }
 
     /**
@@ -62,7 +57,7 @@ public final class SharedWorldGuestCacheWarmer implements link.sharedworld.realt
      * Warmup work is abandoned when the active guest world changes or the session ends.
      *
      * Authority source:
-     * The current guest play session plus latest remote manifest metadata.
+     * The current guest play session plus pushed snapshot events / merged-beat snapshot ids.
      */
     public void tick(Minecraft client) {
         SharedWorldPlaySessionTracker.ActiveWorldSession session = SharedWorldClient.playSessionTracker().currentSession();
@@ -80,40 +75,69 @@ public final class SharedWorldGuestCacheWarmer implements link.sharedworld.realt
             return;
         }
 
-        long now = System.currentTimeMillis();
         boolean worldChanged = !session.worldId().equals(this.activeWorldId);
         if (worldChanged) {
             this.activeWorldId = session.worldId();
             this.latestSnapshotId = null;
-            this.lastPollAt = 0L;
         }
-        long interval = this.pushConnected ? PUSH_CONNECTED_POLL_INTERVAL_MS : POLL_INTERVAL_MS;
-        if (!worldChanged && !this.pushTriggered && now - this.lastPollAt < interval) {
+        if (!this.fetchTriggered) {
             return;
         }
-        this.pushTriggered = false;
+        this.fetchTriggered = false;
         if (!this.inFlight.compareAndSet(false, true)) {
             return;
         }
 
-        this.lastPollAt = now;
         CompletableFuture.runAsync(() -> {
             try {
-                SnapshotManifestDto latestManifest = this.apiClient.latestManifest(session.worldId());
-                if (latestManifest == null || latestManifest.snapshotId() == null || latestManifest.snapshotId().equals(this.latestSnapshotId)) {
-                    return;
-                }
-                this.syncCoordinator.ensureCanonicalSynchronizedWorkingCopy(
-                        session.worldId(),
-                        this.hostPlayerIdentity.currentWorldPlayerUuidWithHyphens()
-                );
-                this.latestSnapshotId = latestManifest.snapshotId();
+                // One targeted fetch per snapshot-changed push; getWorld
+                // rides the conditional-GET cache so an already-known state
+                // costs a 304.
+                String remoteSnapshotId = this.apiClient.getWorld(session.worldId()).lastSnapshotId();
+                warmIfChanged(session.worldId(), remoteSnapshotId);
             } catch (Exception exception) {
                 SharedWorldClient.LOGGER.debug("SharedWorld guest cache warmup failed", exception);
             } finally {
                 this.inFlight.set(false);
             }
         }, SharedWorldClient.ioExecutor());
+    }
+
+    /**
+     * Snapshot id off a merged beat (disconnected fallback lane) — no extra
+     * fetch needed, the beat already carried the id. Called on the beat's
+     * background executor; gates mirror the tick's.
+     */
+    public void onMergedSnapshotObservation(String worldId, String remoteSnapshotId) {
+        if (worldId == null || !worldId.equals(this.activeWorldId) || worldId.equals(this.pausedWorldId)) {
+            return;
+        }
+        if (SharedWorldClient.hostingManager().phase() != link.sharedworld.host.SharedWorldHostingManager.Phase.IDLE) {
+            return;
+        }
+        if (!this.inFlight.compareAndSet(false, true)) {
+            return;
+        }
+        CompletableFuture.runAsync(() -> {
+            try {
+                warmIfChanged(worldId, remoteSnapshotId);
+            } catch (Exception exception) {
+                SharedWorldClient.LOGGER.debug("SharedWorld guest cache warmup failed", exception);
+            } finally {
+                this.inFlight.set(false);
+            }
+        }, SharedWorldClient.ioExecutor());
+    }
+
+    private void warmIfChanged(String worldId, String remoteSnapshotId) throws Exception {
+        if (remoteSnapshotId == null || remoteSnapshotId.equals(this.latestSnapshotId)) {
+            return;
+        }
+        this.syncCoordinator.ensureCanonicalSynchronizedWorkingCopy(
+                worldId,
+                this.hostPlayerIdentity.currentWorldPlayerUuidWithHyphens()
+        );
+        this.latestSnapshotId = remoteSnapshotId;
     }
 
     public void onDisconnect(SharedWorldPlaySessionTracker.ActiveWorldSession session) {
@@ -134,7 +158,7 @@ public final class SharedWorldGuestCacheWarmer implements link.sharedworld.realt
         if (worldId == null || worldId.equals(this.activeWorldId)) {
             this.activeWorldId = null;
             this.latestSnapshotId = null;
-            this.lastPollAt = 0L;
+            this.fetchTriggered = false;
         }
         this.inFlight.set(false);
     }

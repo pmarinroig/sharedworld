@@ -14,6 +14,8 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.function.BooleanSupplier;
+import java.util.function.LongSupplier;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
@@ -41,11 +43,23 @@ public final class SharedWorldPushChannel {
     public static final String KEEPALIVE_RESPONSE = "sw-keepalive-ack";
 
     private static final long KEEPALIVE_INTERVAL_MS = 20_000L;
+    /**
+     * Two missed keepalive acks plus margin. The server answers keepalives at
+     * the edge (auto-response), so a healthy socket ALWAYS has inbound traffic
+     * within one keepalive interval — silence past this deadline means the
+     * socket is half-open (NAT death, suspended laptop, hung backend) and must
+     * be dropped so consumers fall back and the reconnect loop takes over.
+     * This is what makes isConnected() honest enough to hang slow safety-net
+     * cadences off (the 0.3.3 half-open caveat is retired).
+     */
+    static final long ACK_DEADLINE_MS = 45_000L;
     private static final long RECONNECT_BASE_DELAY_MS = 1_000L;
-    // Capped below the coordinator's 30s host-disconnect grace: a hosting
-    // client whose socket dropped must get a reconnect attempt in before the
-    // grace forfeits its lease (the old 60s cap could not).
-    private static final long RECONNECT_MAX_DELAY_MS = 15_000L;
+    // Capped below the coordinator's 30s host-disconnect grace while anything
+    // is live: a hosting client whose socket dropped must get a reconnect
+    // attempt in before the grace forfeits its lease. Idle at the title
+    // screen, reconnect attempts back way off instead.
+    private static final long ACTIVE_RECONNECT_MAX_DELAY_MS = 15_000L;
+    private static final long IDLE_RECONNECT_MAX_DELAY_MS = 180_000L;
 
     /** One live socket. Implementations must be safe to close twice. */
     public interface Transport {
@@ -87,6 +101,8 @@ public final class SharedWorldPushChannel {
     private final Executor mainThread;
     private final Listener listener;
     private final long keepaliveIntervalMs;
+    private final BooleanSupplier activitySupplier;
+    private final LongSupplier nanoClock;
     private final Gson gson = new Gson();
 
     // Scheduler-confined state.
@@ -96,6 +112,7 @@ public final class SharedWorldPushChannel {
     private ScheduledFuture<?> pendingReconnect;
     private ScheduledFuture<?> keepaliveTask;
     private long connectionGeneration;
+    private long lastInboundAtNanos;
     private volatile boolean connected;
 
     public SharedWorldPushChannel(
@@ -104,9 +121,10 @@ public final class SharedWorldPushChannel {
             SessionTokenSource tokenSource,
             ScheduledExecutorService scheduler,
             Executor mainThread,
-            Listener listener
+            Listener listener,
+            BooleanSupplier activitySupplier
     ) {
-        this(baseUrl, connector, tokenSource, scheduler, mainThread, listener, KEEPALIVE_INTERVAL_MS);
+        this(baseUrl, connector, tokenSource, scheduler, mainThread, listener, activitySupplier, KEEPALIVE_INTERVAL_MS, System::nanoTime);
     }
 
     SharedWorldPushChannel(
@@ -116,7 +134,9 @@ public final class SharedWorldPushChannel {
             ScheduledExecutorService scheduler,
             Executor mainThread,
             Listener listener,
-            long keepaliveIntervalMs
+            BooleanSupplier activitySupplier,
+            long keepaliveIntervalMs,
+            LongSupplier nanoClock
     ) {
         this.endpoint = websocketEndpoint(baseUrl);
         this.connector = Objects.requireNonNull(connector);
@@ -124,7 +144,9 @@ public final class SharedWorldPushChannel {
         this.scheduler = Objects.requireNonNull(scheduler);
         this.mainThread = Objects.requireNonNull(mainThread);
         this.listener = Objects.requireNonNull(listener);
+        this.activitySupplier = Objects.requireNonNull(activitySupplier);
         this.keepaliveIntervalMs = keepaliveIntervalMs;
+        this.nanoClock = Objects.requireNonNull(nanoClock);
     }
 
     static URI websocketEndpoint(String baseUrl) {
@@ -177,6 +199,42 @@ public final class SharedWorldPushChannel {
         });
     }
 
+    /**
+     * Guest-side world presence over the socket (0.4.1): announced on session
+     * start and after every reconnect, withdrawn on session end. The server
+     * derives roster liveness from the socket itself, so no periodic
+     * re-announce is ever needed.
+     */
+    public void sendWorldPresence(String worldId, boolean present) {
+        scheduler.execute(() -> {
+            if (transport == null) {
+                return;
+            }
+            JsonObject frame = new JsonObject();
+            frame.addProperty("v", PROTOCOL_VERSION);
+            frame.addProperty("type", "world-presence");
+            frame.addProperty("worldId", worldId);
+            frame.addProperty("present", present);
+            trySend(frame.toString());
+        });
+    }
+
+    /**
+     * Activity began (screen opened, session starting): collapse a pending
+     * long idle-backoff reconnect into an immediate attempt.
+     */
+    public void nudge() {
+        scheduler.execute(() -> {
+            if (!started || transport != null || pendingReconnect == null) {
+                return;
+            }
+            pendingReconnect.cancel(false);
+            pendingReconnect = null;
+            failedAttempts = 0;
+            scheduleReconnect();
+        });
+    }
+
     // ------------------------------------------------------------ internals
 
     private void connectNow() {
@@ -207,6 +265,7 @@ public final class SharedWorldPushChannel {
         transport = opened;
         failedAttempts = 0;
         connected = true;
+        lastInboundAtNanos = nanoClock.getAsLong();
         keepaliveTask = scheduler.scheduleAtFixedRate(
                 this::sendKeepalive, keepaliveIntervalMs, keepaliveIntervalMs, TimeUnit.MILLISECONDS);
         LOGGER.info("SharedWorld realtime channel connected");
@@ -217,6 +276,9 @@ public final class SharedWorldPushChannel {
         if (generation != connectionGeneration || text == null) {
             return;
         }
+        // EVERY inbound frame proves the socket is not half-open — including
+        // the keepalive ack (edge-answered) and the welcome frame.
+        lastInboundAtNanos = nanoClock.getAsLong();
         if (KEEPALIVE_RESPONSE.equals(text)) {
             return;
         }
@@ -244,6 +306,12 @@ public final class SharedWorldPushChannel {
     }
 
     private void sendKeepalive() {
+        long silenceMs = (nanoClock.getAsLong() - lastInboundAtNanos) / 1_000_000L;
+        if (silenceMs > ACK_DEADLINE_MS) {
+            LOGGER.info("SharedWorld realtime channel half-open ({}ms without inbound traffic) — reconnecting", silenceMs);
+            dropTransport(true);
+            return;
+        }
         trySend(KEEPALIVE_REQUEST);
     }
 
@@ -291,12 +359,17 @@ public final class SharedWorldPushChannel {
         if (!started || pendingReconnect != null) {
             return;
         }
-        long backoff = Math.min(RECONNECT_MAX_DELAY_MS, RECONNECT_BASE_DELAY_MS << Math.min(failedAttempts, 6));
+        long backoff = backoffMs(failedAttempts, activitySupplier.getAsBoolean());
         long delay = backoff + ThreadLocalRandom.current().nextLong(500);
         pendingReconnect = scheduler.schedule(() -> {
             pendingReconnect = null;
             connectNow();
         }, delay, TimeUnit.MILLISECONDS);
+    }
+
+    static long backoffMs(int failedAttempts, boolean active) {
+        long cap = active ? ACTIVE_RECONNECT_MAX_DELAY_MS : IDLE_RECONNECT_MAX_DELAY_MS;
+        return Math.min(cap, RECONNECT_BASE_DELAY_MS << Math.min(failedAttempts, 8));
     }
 
     private void cancelPending() {

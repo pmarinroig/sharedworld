@@ -118,12 +118,18 @@ public final class SharedWorldApiClient {
 
     public List<WorldSummaryDto> listWorlds() throws IOException, InterruptedException {
         ensureSession();
-        return Arrays.asList(requestWithTransportRetry("GET", "/worlds", WorldSummaryDto[].class));
+        return Arrays.asList(withTransportRetry(() -> conditionalGet("/worlds", WorldSummaryDto[].class)));
     }
 
     public WorldDetailsDto getWorld(String worldId) throws IOException, InterruptedException {
         ensureSession();
-        return request("GET", "/worlds/" + worldId, null, WorldDetailsDto.class, true);
+        return conditionalGet("/worlds/" + worldId, WorldDetailsDto.class);
+    }
+
+    /** On-demand storage usage (0.4.1+): world details no longer carry it inline. */
+    public SharedWorldModels.StorageUsageSummaryDto getStorageUsage(String worldId) throws IOException, InterruptedException {
+        ensureSession();
+        return request("GET", "/worlds/" + worldId + "/storage-usage", null, SharedWorldModels.StorageUsageSummaryDto.class, true);
     }
 
     public CreateWorldResultDto createWorld(
@@ -320,7 +326,7 @@ public final class SharedWorldApiClient {
         request("POST", "/worlds/" + worldId + "/host-startup-progress", body, Object.class, true);
     }
 
-    public SharedWorldModels.PresenceHeartbeatResponseDto setPresence(String worldId, boolean present, long guestSessionEpoch, long presenceSequence) throws IOException, InterruptedException {
+    public SharedWorldModels.GuestHeartbeatResponseDto setPresence(String worldId, boolean present, long guestSessionEpoch, long presenceSequence) throws IOException, InterruptedException {
         ensureSession();
         return request(
                 "POST",
@@ -330,7 +336,7 @@ public final class SharedWorldApiClient {
                         "guestSessionEpoch", guestSessionEpoch,
                         "presenceSequence", presenceSequence
                 ),
-                SharedWorldModels.PresenceHeartbeatResponseDto.class,
+                SharedWorldModels.GuestHeartbeatResponseDto.class,
                 true
         );
     }
@@ -446,7 +452,7 @@ public final class SharedWorldApiClient {
     }
 
     public SharedWorldModels.CreateBlobSessionResponseDto createBlobSession(
-            String worldId, String storageKey, long runtimeEpoch, String hostToken, String contentType, long contentLength
+            String worldId, String storageKey, long runtimeEpoch, String hostToken, String contentType, long contentLength, String blobStamp
     ) throws IOException, InterruptedException {
         ensureSession();
         Map<String, Object> body = new LinkedHashMap<>();
@@ -455,17 +461,25 @@ public final class SharedWorldApiClient {
         body.put("hostToken", hostToken);
         body.put("contentType", contentType);
         body.put("contentLength", contentLength);
+        if (blobStamp != null && !blobStamp.isEmpty()) {
+            // HMAC authority stamp from the plan's signed headers: lets the
+            // backend authorize this artifact without a coordinator call.
+            body.put("blobStamp", blobStamp);
+        }
         return request("POST", "/worlds/" + worldId + "/uploads/blob-session", body, SharedWorldModels.CreateBlobSessionResponseDto.class, true);
     }
 
     public SharedWorldModels.CommitBlobSessionResponseDto commitBlobSession(
-            String worldId, String uploadId, long runtimeEpoch, String hostToken
+            String worldId, String uploadId, long runtimeEpoch, String hostToken, String blobStamp
     ) throws IOException, InterruptedException {
         ensureSession();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("uploadId", uploadId);
         body.put("runtimeEpoch", runtimeEpoch);
         body.put("hostToken", hostToken);
+        if (blobStamp != null && !blobStamp.isEmpty()) {
+            body.put("blobStamp", blobStamp);
+        }
         return request("POST", "/worlds/" + worldId + "/uploads/blob-commit", body, SharedWorldModels.CommitBlobSessionResponseDto.class, true);
     }
 
@@ -481,6 +495,7 @@ public final class SharedWorldApiClient {
             String storageKey,
             long runtimeEpoch,
             String hostToken,
+            String blobStamp,
             Path bodyFile,
             String contentType,
             long fallbackChunkSizeBytes,
@@ -489,12 +504,12 @@ public final class SharedWorldApiClient {
         long contentLength = java.nio.file.Files.size(bodyFile);
         for (int sessionAttempt = 0; ; sessionAttempt++) {
             SharedWorldModels.CreateBlobSessionResponseDto session =
-                    createBlobSession(worldId, storageKey, runtimeEpoch, hostToken, contentType, contentLength);
+                    createBlobSession(worldId, storageKey, runtimeEpoch, hostToken, contentType, contentLength, blobStamp);
             long chunkSize = session.chunkSizeBytes() > 0 ? session.chunkSizeBytes() : fallbackChunkSizeBytes;
             try {
                 new ResumableBlobUploader(this.httpClient, session.sessionUrl(), chunkSize)
                         .upload(bodyFile, contentType, progressListener);
-                commitBlobSessionWithRetry(worldId, session.uploadId(), runtimeEpoch, hostToken);
+                commitBlobSessionWithRetry(worldId, session.uploadId(), runtimeEpoch, hostToken, blobStamp);
                 return;
             } catch (ResumableBlobUploader.SessionGoneException gone) {
                 if (sessionAttempt >= 1) {
@@ -506,12 +521,12 @@ public final class SharedWorldApiClient {
         }
     }
 
-    private void commitBlobSessionWithRetry(String worldId, String uploadId, long runtimeEpoch, String hostToken)
+    private void commitBlobSessionWithRetry(String worldId, String uploadId, long runtimeEpoch, String hostToken, String blobStamp)
             throws IOException, InterruptedException {
         IOException lastFailure = null;
         for (int attempt = 1; attempt <= 3; attempt++) {
             try {
-                commitBlobSession(worldId, uploadId, runtimeEpoch, hostToken);
+                commitBlobSession(worldId, uploadId, runtimeEpoch, hostToken, blobStamp);
                 return;
             } catch (IOException exception) {
                 // Commit is idempotent server-side; only transport-level
@@ -531,15 +546,24 @@ public final class SharedWorldApiClient {
     }
 
     public void uploadBlob(SignedBlobUrlDto signedUrl, Path bodyFile, String contentType, UploadProgressListener progressListener) throws IOException, InterruptedException {
+        long bodySize = Files.size(bodyFile);
+        // The progress wrapper must still declare the body length: a bare
+        // ofInputStream publisher has unknown length, which makes the JDK
+        // client send Transfer-Encoding: chunked with NO Content-Length —
+        // and a known length is what lets the relay stream the body to
+        // storage instead of buffering it.
         HttpRequest.BodyPublisher bodyPublisher = progressListener == null
                 ? HttpRequest.BodyPublishers.ofFile(bodyFile)
-                : HttpRequest.BodyPublishers.ofInputStream(() -> {
-                    try {
-                        return new ProgressInputStream(Files.newInputStream(bodyFile), Files.size(bodyFile), progressListener);
-                    } catch (IOException exception) {
-                        throw new RuntimeException(exception);
-                    }
-                });
+                : HttpRequest.BodyPublishers.fromPublisher(
+                        HttpRequest.BodyPublishers.ofInputStream(() -> {
+                            try {
+                                return new ProgressInputStream(Files.newInputStream(bodyFile), bodySize, progressListener);
+                            } catch (IOException exception) {
+                                throw new RuntimeException(exception);
+                            }
+                        }),
+                        bodySize
+                );
         HttpRequest.Builder builder = HttpRequest.newBuilder()
                 .uri(URI.create(signedUrl.url()))
                 // The timeout covers the whole exchange including body
@@ -1028,6 +1052,9 @@ public final class SharedWorldApiClient {
     private synchronized void invalidateSession() {
         SessionTokenDto invalid = this.cachedSession;
         this.cachedSession = null;
+        // ETag tokens are per-user (the backend hashes the caller in), so a
+        // session change invalidates every cached conditional-GET body.
+        this.conditionalGetCache.clear();
         SharedWorldDevSessionBridge.clear();
         if (this.sessionPersistence != null && invalid != null && !this.cachedSessionIsDev) {
             try {
@@ -1266,6 +1293,14 @@ public final class SharedWorldApiClient {
     }
 
     private <T> T requestWithTransportRetry(String method, String path, Object body, Class<T> responseType) throws IOException, InterruptedException {
+        return withTransportRetry(() -> request(method, path, body, responseType, true));
+    }
+
+    private interface IoCall<T> {
+        T call() throws IOException, InterruptedException;
+    }
+
+    private <T> T withTransportRetry(IoCall<T> call) throws IOException, InterruptedException {
         IOException lastFailure = null;
         for (int attempt = 1; attempt <= READ_RETRY_POLICY.maxAttempts(); attempt++) {
             long delayMs = READ_RETRY_POLICY.delayBeforeAttemptMs(attempt);
@@ -1273,7 +1308,7 @@ public final class SharedWorldApiClient {
                 Thread.sleep(delayMs);
             }
             try {
-                return request(method, path, body, responseType, true);
+                return call.call();
             } catch (IOException exception) {
                 if (!isRetryableTransportError(exception) || !READ_RETRY_POLICY.shouldRetry(attempt)) {
                     throw exception;
@@ -1282,6 +1317,75 @@ public final class SharedWorldApiClient {
             }
         }
         throw lastFailure;
+    }
+
+    private record CachedGet(String etag, String body) {
+    }
+
+    private final java.util.concurrent.ConcurrentHashMap<String, CachedGet> conditionalGetCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Conditional GET for the two world read endpoints: sends If-None-Match
+     * from the per-path cache; a 304 answers from the cached body (never
+     * parsing the empty 304 body), a 200 refreshes the cache from the ETag
+     * header. Only worth it for endpoints the backend hands weak ETags to.
+     */
+    private <T> T conditionalGet(String path, Class<T> responseType) throws IOException, InterruptedException {
+        try {
+            return conditionalGetOnce(path, responseType);
+        } catch (SharedWorldApiException exception) {
+            if (exception.status() != 401
+                    || !("invalid_session".equals(exception.error()) || "expired_session".equals(exception.error()))) {
+                throw exception;
+            }
+            invalidateSession();
+            return conditionalGetOnce(path, responseType);
+        }
+    }
+
+    private <T> T conditionalGetOnce(String path, Class<T> responseType) throws IOException, InterruptedException {
+        CachedGet cached = conditionalGetCache.get(path);
+        HttpRequest.Builder builder = HttpRequest.newBuilder()
+                .uri(URI.create(baseUrl + path))
+                .timeout(Duration.ofSeconds(20))
+                .header("accept", "application/json")
+                .header("x-sharedworld-version", modVersion())
+                .header("authorization", "Bearer " + ensureSession().token())
+                .GET();
+        if (cached != null) {
+            builder.header("if-none-match", cached.etag());
+        }
+        HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() == 304) {
+            if (cached != null) {
+                return gson.fromJson(cached.body(), responseType);
+            }
+            // A 304 without a cached body (evicted mid-flight): retry plain.
+            conditionalGetCache.remove(path);
+            return request("GET", path, null, responseType, true);
+        }
+        if (response.statusCode() >= 400) {
+            ErrorDto error = tryParseError(response.body(), response.statusCode());
+            throw new SharedWorldApiException(
+                    error.error(),
+                    error.message(),
+                    error.status(),
+                    parseRetryAfterSeconds(response.headers().firstValue("retry-after").orElse(null)),
+                    error.reason()
+            );
+        }
+        String etag = response.headers().firstValue("etag").orElse(null);
+        if (etag != null && !etag.isEmpty()) {
+            conditionalGetCache.put(path, new CachedGet(etag, response.body()));
+        } else {
+            conditionalGetCache.remove(path);
+        }
+        try {
+            return gson.fromJson(response.body(), responseType);
+        } catch (JsonSyntaxException exception) {
+            throw new IOException("Failed to parse SharedWorld response.", exception);
+        }
     }
 
     /**

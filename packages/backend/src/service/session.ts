@@ -14,7 +14,7 @@ import {
   type ObserveWaitingRequest,
   type ObserveWaitingResponse,
   type PresenceHeartbeatRequest,
-  type PresenceHeartbeatResponse,
+  type GuestHeartbeatResponse,
   type ReleaseHostRequest,
   type WorldRuntimeStatus
 } from "../../../shared/src/index.ts";
@@ -167,22 +167,41 @@ export async function setHostStartupProgress(
   return svc.realtime.coordinator(worldId).setStartupProgress(actor, request, now);
 }
 
-/** Legacy 0.2.x presence self-report; 0.3.0 rooms are host-reported over WS. */
+/**
+ * The guest beat. Historically a bare presence self-report; since the
+ * efficiency release the response is a FLAT superset (GuestHeartbeatResponse)
+ * carrying the resolved runtime status and the latest snapshot id, so a
+ * 0.4.1+ guest replaces its runtime poll and snapshot-id poll with this one
+ * call. Older clients bind the same body to PresenceHeartbeatResponse and
+ * ignore the extras.
+ */
 export async function setPlayerPresence(
   svc: ServiceContext,
   ctx: RequestContext,
   worldId: string,
   request: PresenceHeartbeatRequest,
   now: Date
-): Promise<PresenceHeartbeatResponse> {
+): Promise<GuestHeartbeatResponse> {
   const actor = await sessionActorOf(svc, ctx, worldId);
-  await svc.realtime.coordinator(worldId).reportLegacyPresence(actor, { present: request.present, guestSessionEpoch: request.guestSessionEpoch, presenceSequence: request.presenceSequence }, now);
+  const status = await svc.realtime.coordinator(worldId).guestHeartbeat(
+    actor,
+    { present: request.present, guestSessionEpoch: request.guestSessionEpoch, presenceSequence: request.presenceSequence },
+    now
+  );
+  const latest = await svc.repository.getLatestSnapshotStamp(worldId);
   const suggestedIntervalMs = parsePositiveInt(svc.env.SUGGESTED_PRESENCE_INTERVAL_MS, 0);
+  // Runtime updatedAt is dropped: the presence ack owns that field name in
+  // this body, and it churns per request anyway.
+  const { updatedAt: _runtimeUpdatedAt, suggestedPollIntervalMs: _unused, ...runtimeFields } = status;
+  void _runtimeUpdatedAt;
+  void _unused;
   return {
+    ...runtimeFields,
     worldId,
     present: request.present,
     updatedAt: now.toISOString(),
     expiresAt: new Date(now.getTime() + PLAYER_PRESENCE_TIMEOUT_MS).toISOString(),
+    lastSnapshotId: latest?.id ?? null,
     ...(suggestedIntervalMs > 0 ? { suggestedIntervalMs } : {})
   };
 }

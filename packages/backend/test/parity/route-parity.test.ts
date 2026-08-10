@@ -49,7 +49,22 @@ function extractModRoutes(source: string): ModRoute[] {
   const routes: ModRoute[] = [];
   const requestCall = /request\(\s*"(GET|POST|PATCH|DELETE|PUT)",\s*([^,]+),/g;
   for (const match of source.matchAll(requestCall)) {
+    // A bare-variable path (conditionalGet's unconditional fallback re-issuing
+    // its own `path`) carries no route of its own — the concrete routes come
+    // from the conditionalGet call sites extracted below.
+    if (!match[2].includes('"')) {
+      continue;
+    }
     routes.push({ method: match[1], template: javaPathExpressionToTemplate(match[2]) });
+  }
+  // Conditional GETs (If-None-Match cache) route through their own helper;
+  // they are GETs by construction.
+  const conditionalCall = /conditionalGet\(\s*([^,]+),/g;
+  for (const match of source.matchAll(conditionalCall)) {
+    if (!match[1].includes('"')) {
+      continue;
+    }
+    routes.push({ method: "GET", template: javaPathExpressionToTemplate(match[1]) });
   }
   return routes;
 }

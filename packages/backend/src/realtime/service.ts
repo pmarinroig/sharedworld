@@ -25,9 +25,11 @@ export type CoordinatorHandle = Pick<
   | "abandonFinalization"
   | "releaseHost"
   | "reportLegacyPresence"
+  | "guestHeartbeat"
   | "reportHostPlayers"
   | "destroyWorld"
   | "memberRevoked"
+  | "membershipsChanged"
 >;
 
 export interface RealtimeService {
@@ -56,9 +58,11 @@ export const COORDINATOR_METHODS: ReadonlyArray<keyof CoordinatorHandle> = [
   "abandonFinalization",
   "releaseHost",
   "reportLegacyPresence",
+  "guestHeartbeat",
   "reportHostPlayers",
   "destroyWorld",
-  "memberRevoked"
+  "memberRevoked",
+  "membershipsChanged"
 ];
 
 // ---------------------------------------------------------------- envelope

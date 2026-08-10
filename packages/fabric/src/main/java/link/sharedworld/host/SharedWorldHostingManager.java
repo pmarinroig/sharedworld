@@ -48,14 +48,15 @@ public final class SharedWorldHostingManager {
     // lease timeout; autosaves may stretch to an hour at most.
     private static final long MAX_SUGGESTED_HEARTBEAT_INTERVAL_MS = 60_000L;
     private static final long MAX_SUGGESTED_AUTOSAVE_INTERVAL_MS = 60 * 60_000L;
-    // 0.3.0: while the realtime channel is connected the coordinator extends
-    // the lease from socket keepalives and settings/membership changes arrive
-    // as pushes, so the live heartbeat relaxes. 0.3.3: relaxed to 60s, not
-    // 5min — a half-open socket looks connected to us (keepalives are
-    // fire-and-forget) while the coordinator's keepalive view goes stale, and
-    // only a heartbeat cadence under the 90s lease keeps hosting alive on
-    // HTTP alone through that.
-    private static final long PUSH_CONNECTED_HEARTBEAT_INTERVAL_MS = 60_000L;
+    // Socket-native (0.4.1): while the realtime channel is connected the
+    // coordinator renews the lease from socket keepalives (one probe per 90s,
+    // no HTTP needed) and settings/membership/deletion changes trigger
+    // immediate heartbeats via pushes — so the periodic live heartbeat is a
+    // pure safety net at five minutes. The 0.3.3 half-open caveat that pinned
+    // this at 60s is retired: the channel now enforces an ack-deadline, so
+    // "connected" implies inbound traffic within the last 45s and a half-open
+    // socket demotes itself to the 30s disconnected cadence within a minute.
+    private static final long PUSH_CONNECTED_HEARTBEAT_INTERVAL_MS = 300_000L;
     // Local gamerule reads are free; only diffs go over HTTP. Decoupled from
     // the heartbeat so stretched heartbeats never delay gamerule persistence.
     private static final long GAMERULES_LOCAL_POLL_INTERVAL_MS = 5_000L;

@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS worlds (
   last_runtime_epoch INTEGER NOT NULL DEFAULT 0,
   settings TEXT,
   settings_revision INTEGER NOT NULL DEFAULT 0,
+  -- 0026: hourly retention throttle claim (compare-and-set at finalize).
+  last_retention_at TEXT,
   created_at TEXT NOT NULL,
   deleted_at TEXT,
   FOREIGN KEY (owner_uuid) REFERENCES users(player_uuid)
@@ -83,6 +85,13 @@ CREATE TABLE IF NOT EXISTS snapshots (
   base_snapshot_id TEXT,
   data_version INTEGER,
   minecraft_version TEXT,
+  -- 0026 pack directory: the snapshot's pack HEADERS as a JSON array
+  -- (incl. membersSnapshotId + memberCount/memberTotalSize). NULL only on
+  -- rows written by pre-0026 workers — readers fall back to snapshot_packs.
+  packs_json TEXT,
+  -- 0026 finalize-time aggregates over the snapshot's loose (non-pack) files.
+  loose_file_count INTEGER,
+  loose_total_size INTEGER,
   FOREIGN KEY (world_id) REFERENCES worlds(id),
   FOREIGN KEY (created_by_uuid) REFERENCES users(player_uuid)
 );
@@ -179,6 +188,14 @@ CREATE INDEX IF NOT EXISTS idx_snapshot_packs_storage_key ON snapshot_packs (sto
 CREATE INDEX IF NOT EXISTS idx_snapshots_world_created ON snapshots (world_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_world_memberships_player ON world_memberships (player_uuid);
 
+-- Partial indexes for the hot snapshot read paths: manifest loads split their
+-- scans by pack membership, and the retention delta-base walk touches only
+-- chained rows instead of every file row of the world.
+CREATE INDEX IF NOT EXISTS idx_snapshot_files_pack_members ON snapshot_files (snapshot_id, path) WHERE pack_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_snapshot_files_loose ON snapshot_files (snapshot_id, path) WHERE pack_id IS NULL;
+CREATE INDEX IF NOT EXISTS idx_snapshot_files_delta_edges ON snapshot_files (snapshot_id, base_snapshot_id) WHERE base_snapshot_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_snapshot_packs_delta_edges ON snapshot_packs (snapshot_id, base_snapshot_id) WHERE base_snapshot_id IS NOT NULL;
+
 -- 0.3.0 realtime: single-writer display mirror maintained by the world's
 -- coordinator Durable Object. Summaries and legacy polls read it; nothing
 -- else ever writes it. status_json = WorldRuntimeStatus, room_players_json
@@ -208,3 +225,8 @@ CREATE TABLE IF NOT EXISTS storage_upload_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_storage_upload_sessions_account_created
   ON storage_upload_sessions (provider, storage_account_id, confirmed_at, created_at);
+
+-- 0026 transition-window safety: legacy referrer scan in deleteSnapshots.
+CREATE INDEX IF NOT EXISTS idx_snapshot_packs_members_donor
+  ON snapshot_packs (members_snapshot_id)
+  WHERE members_snapshot_id IS NOT NULL;

@@ -40,6 +40,24 @@ import {
 export const HOST_DISCONNECT_GRACE_MS = 30_000;
 
 /**
+ * How long the store-cached membership list may serve coordinator calls.
+ * Membership writes poke membershipsChanged/memberRevoked for immediate
+ * invalidation; the TTL only bounds staleness when a poke is lost, costing
+ * at worst a minute of stale candidate election.
+ */
+export const MEMBERSHIP_CACHE_TTL_MS = 60_000;
+
+/** How long expired legacy-presence entries (incl. tombstones) are retained. */
+export const LEGACY_PRESENCE_RETENTION_MS = 10 * 60_000;
+
+/**
+ * Socket-derived presence rides out short socket blips: a closed socket
+ * starts this grace instead of leaving the roster immediately, so a client
+ * that reconnects (~1-2s backoff) inside it causes ZERO presence fan-out.
+ */
+export const PRESENCE_SOCKET_GRACE_MS = 15_000;
+
+/**
  * The caller's identity plus the membership facts the Worker already checked
  * against D1. The coordinator never re-reads membership for access control;
  * it only adds the runtime-derived exception (a revoked host finishing its
@@ -69,6 +87,18 @@ export interface LegacyPresenceEntry {
 }
 
 /**
+ * Socket-derived guest presence (0.4.1 world-presence frames). No expiry
+ * while connected — liveness IS the socket. A closed socket arms
+ * graceDeadlineAt instead of removing the entry, so brief reconnects cost
+ * nothing; the grace alarm prunes entries whose socket never came back.
+ */
+export interface SocketPresenceEntry {
+  playerUuid: string;
+  playerName: string;
+  graceDeadlineAt: string | null;
+}
+
+/**
  * Synchronous per-world state. The coordinator is single-threaded, so the
  * store needs no fencing: reads and writes in one method invocation are
  * atomic by construction.
@@ -93,8 +123,29 @@ export interface CoordinatorStore {
   upsertLegacyPresence(entry: LegacyPresenceEntry): void;
   deleteLegacyPresence(playerUuid: string): void;
   clearLegacyPresence(): void;
+  listSocketPresence(): SocketPresenceEntry[];
+  upsertSocketPresence(entry: SocketPresenceEntry): void;
+  deleteSocketPresence(playerUuid: string): void;
+  clearSocketPresence(): void;
   getHostLink(): { connected: boolean; graceDeadlineAt: string | null };
   setHostLink(link: { connected: boolean; graceDeadlineAt: string | null }): void;
+  /**
+   * Short-lived membership snapshot: nearly every coordinator call needs the
+   * list (candidate election, publish fan-out), and re-reading D1 two or
+   * three times per heartbeat dominated the DO's D1 traffic.
+   */
+  getMembershipCache(): { members: RuntimeMembership[]; fetchedAt: string } | null;
+  setMembershipCache(cache: { members: RuntimeMembership[]; fetchedAt: string }): void;
+  clearMembershipCache(): void;
+  /**
+   * Publish-dedupe fingerprints. Persisted (not instance fields) so a DO
+   * eviction/restart does not rewrite an unchanged mirror row and fan a
+   * redundant event out to every member gateway on its first call.
+   */
+  getStatusFingerprint(): string | null;
+  setStatusFingerprint(fingerprint: string): void;
+  getPresenceFingerprint(): string | null;
+  setPresenceFingerprint(fingerprint: string): void;
   clearAll(): void;
 }
 
@@ -505,6 +556,36 @@ export class WorldCoordinator {
     now: Date
   ): Promise<void> {
     await this.requireSessionAccess(actor);
+    this.applyLegacyPresence(actor, request, now);
+    await this.publishPresence(now);
+    await this.afterStateChange(now);
+  }
+
+  /**
+   * The merged 0.4.1+ guest beat: one coordinator round-trip records the
+   * presence self-report AND answers with the resolved runtime status —
+   * replacing the separate GET /runtime poll. Same access and fencing rules
+   * as its two parents; membership errors keep their exact meanings (the
+   * client treats a 403 membership_revoked as an authoritative kick).
+   */
+  async guestHeartbeat(
+    actor: SessionActor,
+    request: { present: boolean; guestSessionEpoch: number; presenceSequence: number },
+    now: Date
+  ): Promise<WorldRuntimeStatus> {
+    await this.requireSessionAccess(actor);
+    this.applyLegacyPresence(actor, request, now);
+    const resolved = await this.resolve(now);
+    await this.publishPresence(now);
+    await this.afterStateChange(now);
+    return toRuntimeStatus(this.worldId, resolved.runtime, resolved.candidate, resolved.warning);
+  }
+
+  private applyLegacyPresence(
+    actor: SessionActor,
+    request: { present: boolean; guestSessionEpoch: number; presenceSequence: number },
+    now: Date
+  ): void {
     const existing = this.store.listLegacyPresence().find((entry) => entry.playerUuid === actor.playerUuid);
     const accepted = existing == null
       || request.guestSessionEpoch > existing.guestSessionEpoch
@@ -519,22 +600,70 @@ export class WorldCoordinator {
         expiresAt: new Date(now.getTime() + PLAYER_PRESENCE_TIMEOUT_MS).toISOString()
       });
     }
+  }
+
+  /**
+   * A 0.4.1 client announced or withdrew world presence over its socket.
+   * Membership-gated so a just-kicked client's re-announce is inert (the
+   * kick already cleared its entry and the membership cache). No expiry:
+   * while the entry has no grace deadline, the socket IS the liveness.
+   */
+  async reportSocketPresence(playerUuid: string, present: boolean, now: Date): Promise<void> {
+    if (present) {
+      const membership = (await this.memberships(now))
+        .find((member) => member.playerUuid === playerUuid && member.deletedAt == null);
+      if (membership == null) {
+        return;
+      }
+      this.store.upsertSocketPresence({ playerUuid, playerName: membership.playerName, graceDeadlineAt: null });
+    } else {
+      this.store.deleteSocketPresence(playerUuid);
+    }
     await this.publishPresence(now);
     await this.afterStateChange(now);
   }
 
   /**
+   * The player's last gateway socket closed. Arm a grace deadline instead of
+   * dropping the entry: a reconnect inside PRESENCE_SOCKET_GRACE_MS
+   * re-announces and clears it with ZERO fan-out (the roster never changed,
+   * so the presence fingerprint never moves). No publish here on purpose.
+   */
+  async presenceSocketClosed(playerUuid: string, now: Date): Promise<void> {
+    const entry = this.store.listSocketPresence().find((candidate) => candidate.playerUuid === playerUuid);
+    if (entry == null) {
+      return;
+    }
+    this.store.upsertSocketPresence({
+      ...entry,
+      graceDeadlineAt: new Date(now.getTime() + PRESENCE_SOCKET_GRACE_MS).toISOString()
+    });
+    await this.afterStateChange(now);
+  }
+
+  /**
    * The effective room roster: host-reported when this hosting session has
-   * reported one, otherwise unexpired legacy self-reports.
+   * reported one; otherwise socket-derived entries (0.4.1) merged with
+   * unexpired legacy self-reports (older clients and the HTTP fallback
+   * lane), deduped by uuid with the socket entry winning.
    */
   roomPlayers(now: Date): RoomPlayer[] {
     const reported = this.store.getRoomPlayers();
     if (reported != null) {
       return reported;
     }
-    return this.store.listLegacyPresence()
-      .filter((entry) => entry.present && new Date(entry.expiresAt).getTime() > now.getTime())
-      .map((entry) => ({ playerUuid: entry.playerUuid, playerName: entry.playerName }));
+    const players = new Map<string, RoomPlayer>();
+    for (const entry of this.store.listSocketPresence()) {
+      if (entry.graceDeadlineAt == null || new Date(entry.graceDeadlineAt).getTime() > now.getTime()) {
+        players.set(entry.playerUuid, { playerUuid: entry.playerUuid, playerName: entry.playerName });
+      }
+    }
+    for (const entry of this.store.listLegacyPresence()) {
+      if (entry.present && new Date(entry.expiresAt).getTime() > now.getTime() && !players.has(entry.playerUuid)) {
+        players.set(entry.playerUuid, { playerUuid: entry.playerUuid, playerName: entry.playerName });
+      }
+    }
+    return [...players.values()];
   }
 
   // ------------------------------------------------------------- liveness
@@ -581,9 +710,37 @@ export class WorldCoordinator {
         }
       }
     }
+    this.pruneLegacyPresence(now);
+    this.pruneSocketPresence(now);
     await this.resolve(now);
     await this.publishPresence(now);
     await this.afterStateChange(now);
+  }
+
+  /** Drop socket-presence entries whose grace ran out without a reconnect. */
+  private pruneSocketPresence(now: Date): void {
+    for (const entry of this.store.listSocketPresence()) {
+      if (entry.graceDeadlineAt != null && new Date(entry.graceDeadlineAt).getTime() <= now.getTime()) {
+        this.store.deleteSocketPresence(entry.playerUuid);
+      }
+    }
+  }
+
+  /**
+   * Bound legacy-presence storage: entries far past expiry serve nobody —
+   * the roster already ignores them and nextDeadline no longer arms alarms
+   * for them. present:false tombstones deliberately survive well beyond the
+   * 45s presence timeout, because their whole job is to fence stale
+   * resurrecting heartbeats ([P4]) — and old clients beat every 15s, so ten
+   * minutes is ≥40 beats of fencing margin.
+   */
+  private pruneLegacyPresence(now: Date): void {
+    const cutoff = now.getTime() - LEGACY_PRESENCE_RETENTION_MS;
+    for (const entry of this.store.listLegacyPresence()) {
+      if (new Date(entry.expiresAt).getTime() < cutoff) {
+        this.store.deleteLegacyPresence(entry.playerUuid);
+      }
+    }
   }
 
   // ------------------------------------------------------------ lifecycle
@@ -599,14 +756,26 @@ export class WorldCoordinator {
     await this.effects.publish({ worldId: this.worldId, kind: "world-deleted" }, recipients);
   }
 
+  /**
+   * A membership row changed (invite redeemed, command permission flipped):
+   * drop the cached list so candidate election and event fan-out see the
+   * fresh roster immediately instead of after the TTL.
+   */
+  async membershipsChanged(now: Date): Promise<void> {
+    this.store.clearMembershipCache();
+    await this.afterStateChange(now);
+  }
+
   /** A member was kicked. If they are the current host, mark the runtime revoked (P6). */
   async memberRevoked(playerUuid: string, now: Date): Promise<void> {
+    this.store.clearMembershipCache();
     const runtime = this.store.getRuntime();
     if (runtime != null && runtime.hostUuid === playerUuid && runtime.revokedAt == null) {
       this.store.putRuntime({ ...runtime, revokedAt: now.toISOString(), updatedAt: now.toISOString() });
     }
     this.store.deleteWaiter(playerUuid);
     this.store.deleteLegacyPresence(playerUuid);
+    this.store.deleteSocketPresence(playerUuid);
     await this.publishPresence(now);
     await this.afterStateChange(now);
   }
@@ -652,7 +821,7 @@ export class WorldCoordinator {
    */
   private async resolve(now: Date): Promise<ResolvedRuntimeState> {
     this.expireWaiters(now);
-    const memberships = await this.effects.listMemberships(this.worldId);
+    const memberships = await this.memberships(now);
     const waiters = this.store.listWaiters();
     const candidate = choosePreferredCandidate(waiters.filter((waiter) => waiter.waiting), memberships);
     let before = this.store.getRuntime();
@@ -726,6 +895,7 @@ export class WorldCoordinator {
     this.store.setHostLink({ connected: false, graceDeadlineAt: null });
     this.store.setRoomPlayers(null);
     this.store.clearLegacyPresence();
+    this.store.clearSocketPresence();
     if (runtime.hostUuid != null) {
       await this.effects.setHostWatch(runtime.hostUuid, false);
     }
@@ -824,15 +994,41 @@ export class WorldCoordinator {
     };
   }
 
+  /**
+   * Membership list served from the store cache; D1 is consulted at most
+   * once per TTL window (or after an invalidating poke). See
+   * MEMBERSHIP_CACHE_TTL_MS for the staleness argument.
+   */
+  private async memberships(now: Date): Promise<RuntimeMembership[]> {
+    const cached = this.store.getMembershipCache();
+    if (cached != null && now.getTime() - new Date(cached.fetchedAt).getTime() < MEMBERSHIP_CACHE_TTL_MS) {
+      return cached.members;
+    }
+    const members = await this.effects.listMemberships(this.worldId);
+    this.store.setMembershipCache({ members, fetchedAt: now.toISOString() });
+    return members;
+  }
+
+  /**
+   * Explicit fan-out targets for publishes: without them the effects layer
+   * falls back to its own D1 membership read per event.
+   */
+  private activeRecipients(members: RuntimeMembership[]): string[] {
+    return members.filter((member) => member.deletedAt == null).map((member) => member.playerUuid);
+  }
+
   private async publishPresence(now: Date): Promise<void> {
     const players = this.roomPlayers(now);
     const fingerprint = JSON.stringify(players);
-    if (fingerprint === this.lastPresenceFingerprint) {
+    if (fingerprint === this.store.getPresenceFingerprint()) {
       return;
     }
-    this.lastPresenceFingerprint = fingerprint;
+    this.store.setPresenceFingerprint(fingerprint);
     await this.effects.mirrorPresence(this.worldId, players);
-    await this.effects.publish({ worldId: this.worldId, kind: "presence-changed", roomPlayers: players });
+    await this.effects.publish(
+      { worldId: this.worldId, kind: "presence-changed", roomPlayers: players },
+      this.activeRecipients(await this.memberships(now))
+    );
   }
 
   /**
@@ -843,17 +1039,20 @@ export class WorldCoordinator {
    */
   private async afterStateChange(now: Date): Promise<void> {
     const runtime = this.store.getRuntime();
-    const memberships = await this.effects.listMemberships(this.worldId);
+    const memberships = await this.memberships(now);
     const candidate = choosePreferredCandidate(
       this.store.listWaiters().filter((waiter) => waiter.waiting),
       memberships
     );
     const status = toRuntimeStatus(this.worldId, runtime, candidate, this.store.getWarning());
     const fingerprint = statusFingerprint(status);
-    if (fingerprint !== this.lastPublishedFingerprint) {
-      this.lastPublishedFingerprint = fingerprint;
+    if (fingerprint !== this.store.getStatusFingerprint()) {
+      this.store.setStatusFingerprint(fingerprint);
       await this.effects.mirrorRuntime(this.worldId, status);
-      await this.effects.publish({ worldId: this.worldId, kind: "runtime-changed", runtime: status });
+      await this.effects.publish(
+        { worldId: this.worldId, kind: "runtime-changed", runtime: status },
+        this.activeRecipients(memberships)
+      );
     }
     await this.effects.scheduleAlarm(this.nextDeadline(now));
   }
@@ -875,7 +1074,21 @@ export class WorldCoordinator {
       candidates.push(new Date(waiter.updatedAt).getTime() + HANDOFF_WAITER_TIMEOUT_MS);
     }
     for (const entry of this.store.listLegacyPresence()) {
-      candidates.push(new Date(entry.expiresAt).getTime());
+      // Only a present, unexpired entry needs a future alarm (to republish
+      // the roster once when it expires). Expired entries and present:false
+      // tombstones used to land here too — an already-past expiresAt then
+      // hit the now+1s floor below and re-armed a 1-SECOND alarm loop for as
+      // long as a runtime existed. Tombstones are pruned by onAlarm instead.
+      if (entry.present && new Date(entry.expiresAt).getTime() > now.getTime()) {
+        candidates.push(new Date(entry.expiresAt).getTime());
+      }
+    }
+    for (const entry of this.store.listSocketPresence()) {
+      // Connected entries (null grace) need NO alarm — the socket is the
+      // liveness. Only a pending grace deadline gets one, for the prune.
+      if (entry.graceDeadlineAt != null && new Date(entry.graceDeadlineAt).getTime() > now.getTime()) {
+        candidates.push(new Date(entry.graceDeadlineAt).getTime());
+      }
     }
     if (candidates.length === 0) {
       return null;
@@ -883,8 +1096,6 @@ export class WorldCoordinator {
     return new Date(Math.max(Math.min(...candidates), now.getTime() + 1_000));
   }
 
-  private lastPublishedFingerprint: string | null = null;
-  private lastPresenceFingerprint: string | null = null;
 }
 
 // ---------------------------------------------------------------- helpers

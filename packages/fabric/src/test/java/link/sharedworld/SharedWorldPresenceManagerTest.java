@@ -257,8 +257,7 @@ final class SharedWorldPresenceManagerTest {
                     calls.add(format(update));
                     // Two minutes would blow past the backend's 45s presence
                     // timeout; the local cap holds the cadence at 30s.
-                    return new link.sharedworld.api.SharedWorldModels.PresenceHeartbeatResponseDto(
-                            update.worldId(), update.present(), "2026-01-01T00:00:00Z", "2026-01-01T00:00:45Z", 120_000L);
+                    return pacedBeat(update, 120_000L);
                 },
                 Runnable::run
         );
@@ -274,5 +273,163 @@ final class SharedWorldPresenceManagerTest {
 
     private static String format(SharedWorldPresenceManager.PresenceUpdate update) {
         return update.worldId() + ":" + update.present() + ":" + update.guestSessionEpoch() + ":" + update.presenceSequence();
+    }
+
+    private static link.sharedworld.api.SharedWorldModels.GuestHeartbeatResponseDto pacedBeat(
+            SharedWorldPresenceManager.PresenceUpdate update, Long suggestedIntervalMs) {
+        return new link.sharedworld.api.SharedWorldModels.GuestHeartbeatResponseDto(
+                update.worldId(),
+                update.present(),
+                "2026-01-01T00:00:00Z",
+                "2026-01-01T00:00:45Z",
+                suggestedIntervalMs,
+                "host-live",
+                1L,
+                "player-host",
+                "Host",
+                null,
+                null,
+                "join.example",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+        );
+    }
+
+    // ---------------------------------------------------- socket-native lane
+
+    @Test
+    void connectedGuestsSendZeroPeriodicBeats() {
+        List<String> calls = new ArrayList<>();
+        List<String> frames = new ArrayList<>();
+        SharedWorldPresenceManager manager = new SharedWorldPresenceManager(
+                update -> {
+                    calls.add(format(update));
+                    return null;
+                },
+                Runnable::run
+        );
+        manager.setWorldPresenceAnnouncer((worldId, present) -> frames.add(worldId + ":" + present));
+        manager.onRealtimeConnectionChanged(true);
+
+        manager.tickGuestSession("world-1", 1_000L);
+        // A simulated healthy hour of ticks: the socket carries the liveness.
+        for (long now = 2_000L; now <= 3_600_000L; now += 20_000L) {
+            manager.tickGuestSession("world-1", now);
+        }
+
+        // Exactly the session-start beat and the presence announce frame.
+        assertEquals(List.of("world-1:true:1:1"), calls);
+        assertEquals(List.of("world-1:true"), frames);
+    }
+
+    @Test
+    void reconnectResendsTheFrameAndFiresExactlyOneResyncBeat() {
+        List<String> calls = new ArrayList<>();
+        List<String> frames = new ArrayList<>();
+        SharedWorldPresenceManager manager = new SharedWorldPresenceManager(
+                update -> {
+                    calls.add(format(update));
+                    return null;
+                },
+                Runnable::run
+        );
+        manager.setWorldPresenceAnnouncer((worldId, present) -> frames.add(worldId + ":" + present));
+        manager.onRealtimeConnectionChanged(true);
+        manager.tickGuestSession("world-1", 1_000L);
+
+        manager.onRealtimeConnectionChanged(false);
+        manager.onRealtimeConnectionChanged(true);
+        manager.tickGuestSession("world-1", 2_000L);
+        // Later ticks stay silent again.
+        manager.tickGuestSession("world-1", 30_000L);
+        manager.tickGuestSession("world-1", 60_000L);
+
+        assertEquals(List.of("world-1:true:1:1", "world-1:true:1:2"), calls);
+        assertEquals(List.of("world-1:true", "world-1:true"), frames);
+    }
+
+    @Test
+    void disconnectionFallsBackToPeriodicBeatsImmediately() {
+        List<String> calls = new ArrayList<>();
+        SharedWorldPresenceManager manager = new SharedWorldPresenceManager(
+                update -> {
+                    calls.add(format(update));
+                    return null;
+                },
+                Runnable::run
+        );
+        manager.onRealtimeConnectionChanged(true);
+        manager.tickGuestSession("world-1", 1_000L);
+
+        manager.onRealtimeConnectionChanged(false);
+        // First fallback beat lands right away (the socket entry's grace is
+        // riding out server-side), then the 15s cadence resumes.
+        manager.tickGuestSession("world-1", 2_000L);
+        manager.tickGuestSession("world-1", 10_000L);
+        manager.tickGuestSession("world-1", 17_500L);
+
+        assertEquals(List.of("world-1:true:1:1", "world-1:true:1:2", "world-1:true:1:3"), calls);
+    }
+
+    @Test
+    void aKickPushTriggersOneImmediateBeatEvenWhileConnected() {
+        List<String> calls = new ArrayList<>();
+        SharedWorldPresenceManager manager = new SharedWorldPresenceManager(
+                update -> {
+                    calls.add(format(update));
+                    return null;
+                },
+                Runnable::run
+        );
+        manager.onRealtimeConnectionChanged(true);
+        manager.tickGuestSession("world-1", 1_000L);
+
+        manager.onRealtimeEvent(new link.sharedworld.api.SharedWorldModels.RealtimeEventDto(
+                "world-1", "membership-changed", null, null));
+        manager.tickGuestSession("world-1", 2_000L);
+        manager.tickGuestSession("world-1", 3_000L);
+
+        assertEquals(List.of("world-1:true:1:1", "world-1:true:1:2"), calls);
+    }
+
+    @Test
+    void sessionEndWithdrawsOverTheSocketAndBeatsPresentFalse() {
+        List<String> calls = new ArrayList<>();
+        List<String> frames = new ArrayList<>();
+        SharedWorldPresenceManager manager = new SharedWorldPresenceManager(
+                update -> {
+                    calls.add(format(update));
+                    return null;
+                },
+                Runnable::run
+        );
+        manager.setWorldPresenceAnnouncer((worldId, present) -> frames.add(worldId + ":" + present));
+        manager.onRealtimeConnectionChanged(true);
+        manager.tickGuestSession("world-1", 1_000L);
+
+        manager.onDisconnect(GUEST_SESSION);
+
+        assertEquals(List.of("world-1:true:1:1", "world-1:false:1:2"), calls);
+        assertEquals(List.of("world-1:true", "world-1:false"), frames);
+    }
+
+    @Test
+    void beatResponsesForTheActiveSessionReachTheObserver() {
+        List<String> observed = new ArrayList<>();
+        SharedWorldPresenceManager manager = new SharedWorldPresenceManager(
+                update -> pacedBeat(update, null),
+                Runnable::run
+        );
+        manager.setBeatObserver((worldId, response) -> observed.add(worldId + ":" + response.phase()));
+
+        manager.tickGuestSession("world-1", 1_000L);
+
+        assertEquals(List.of("world-1:host-live"), observed);
     }
 }

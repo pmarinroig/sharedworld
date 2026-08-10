@@ -137,6 +137,16 @@ export interface WorldRepository {
     customIconStorageKey?: string | null
   ): Promise<WorldDetails>;
   getWorldDetails(worldId: string, playerUuid: string): Promise<WorldDetails | null>;
+  /**
+   * Membership facts for a session call in one query; null when no active
+   * world exists (the caller's 404). Replaces the hasActiveWorld +
+   * isWorldMember + hasWorldMembership triple on every runtime route.
+   */
+  sessionActorFacts(worldId: string, playerUuid: string): Promise<{ membershipActive: boolean; everMember: boolean } | null>;
+  /** Cheap ETag inputs for GET /worlds — see D1 implementation for coverage notes. */
+  worldsChangeFacts(playerUuid: string): Promise<unknown>;
+  /** Cheap ETag inputs for GET /worlds/:id; null when the caller has no access. */
+  worldChangeFacts(worldId: string, playerUuid: string, now: Date): Promise<unknown | null>;
   updateWorld(ctx: RequestContext, worldId: string, request: WorldUpdateRecord): Promise<WorldDetails>;
   /** Replace the world's settings JSON and bump its revision; false when no active world row exists. */
   updateWorldSettings(worldId: string, settingsJson: string): Promise<boolean>;
@@ -175,6 +185,8 @@ export interface StorageRepository {
   deleteUploadSession(uploadId: string): Promise<void>;
   /** Oldest unconfirmed sessions created before the cutoff, for the orphan sweep. */
   listUnconfirmedUploadSessionsBefore(provider: StorageProviderType, storageAccountId: string, createdBefore: string, limit: number): Promise<StorageUploadSessionRecord[]>;
+  /** Bounded delete of confirmed sessions past their idempotent-retry window. */
+  deleteConfirmedUploadSessionsBefore(provider: StorageProviderType, storageAccountId: string, confirmedBefore: string, limit: number): Promise<void>;
 }
 
 export interface MembershipRepository {
@@ -205,6 +217,10 @@ export interface RuntimeRepository {
 
 export interface SnapshotRepository {
   getLatestSnapshot(worldId: string): Promise<SnapshotManifest | null>;
+  /** Latest snapshot id in one row — for beats that only compare ids. */
+  getLatestSnapshotStamp(worldId: string): Promise<{ id: string } | null>;
+  /** CAS claim of the world's retention slot; true = this caller runs retention. */
+  claimRetentionSlot(worldId: string, now: Date, intervalMs: number): Promise<boolean>;
   getSnapshot(worldId: string, snapshotId: string): Promise<SnapshotManifest | null>;
   listSnapshotSummaries(worldId: string): Promise<WorldSnapshotSummary[]>;
   listSnapshotsForWorld(worldId: string): Promise<SnapshotRecord[]>;

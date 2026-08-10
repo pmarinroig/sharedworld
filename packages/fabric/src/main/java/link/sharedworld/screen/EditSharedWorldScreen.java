@@ -582,7 +582,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
 
     private void applyLoadedState(EditSharedWorldDataController.LoadedState loaded) {
         this.details = loaded.details();
-        this.storageUsage = loaded.details().storageUsage();
+        this.storageUsage = loaded.storageUsage();
         this.snapshots = EditSharedWorldDataController.sortedSnapshots(loaded.snapshots());
         this.memberships = EditSharedWorldDataController.normalizedMemberships(loaded.details());
         this.selectedSnapshot = this.chooseSelectedSnapshot(this.selectedSnapshot == null ? null : this.selectedSnapshot.snapshotId());

@@ -13,7 +13,14 @@ export interface Env {
   MOJANG_SERVICES_PUBLICKEYS_ENDPOINT?: string;
   /** Comma-separated base64 DER pins for the player-certificate key set (test hook / emergency lever). */
   MOJANG_PLAYER_CERTIFICATE_KEYS?: string;
+  /**
+   * HMAC key for blob-authority stamps (wrangler secret; required in prod
+   * for the stamp fast path — unset means every blob op falls back to the
+   * coordinator, which is safe but slower).
+   */
   SIGNING_SECRET?: string;
+  /** Previous HMAC key, accepted for verification only (rotation window). */
+  SIGNING_SECRET_PREVIOUS?: string;
   ALLOW_DEV_AUTH?: string;
   ALLOW_DEV_INSECURE_E4MC?: string;
   DEV_AUTH_SECRET?: string;

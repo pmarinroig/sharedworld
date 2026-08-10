@@ -18,7 +18,15 @@ import net.minecraft.network.chat.Component;
 public final class SharedWorldSessionCoordinator {
     private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger(SharedWorldSessionCoordinator.class);
 
-    private static final long POLL_INTERVAL_MS = 1_000L;
+    /**
+     * Two-stage observe cadence: snappy for the first moments of a waiting
+     * flow (connect handoffs resolve in seconds), then relaxed — pushed
+     * runtime-changed events collapse the wait to an immediate observe via
+     * refreshWaitingNow() anyway.
+     */
+    private static final long INITIAL_POLL_INTERVAL_MS = 1_000L;
+    private static final long INITIAL_POLL_WINDOW_MS = 10_000L;
+    private static final long SETTLED_POLL_INTERVAL_MS = 5_000L;
     private static final int WAITING_FAILURES_BEFORE_NOTICE = 3;
 
     private final SessionBackend backend;
@@ -243,8 +251,19 @@ public final class SharedWorldSessionCoordinator {
             return;
         }
         long now = this.clock.nowMillis();
-        if (now - state.lastPollAt >= POLL_INTERVAL_MS) {
+        long interval = now - state.waitingStartedAt < INITIAL_POLL_WINDOW_MS
+                ? INITIAL_POLL_INTERVAL_MS
+                : SETTLED_POLL_INTERVAL_MS;
+        if (now - state.lastPollAt >= interval) {
             poll(state, now);
+        }
+    }
+
+    /** Pushed runtime-changed for the waited world: observe immediately. */
+    public void onWaitingWorldRuntimeChanged(String worldId) {
+        WaitingFlowState state = this.waitingState;
+        if (state != null && state.worldId.equals(worldId)) {
+            refreshWaitingNow();
         }
     }
 
@@ -566,6 +585,7 @@ public final class SharedWorldSessionCoordinator {
 
     private void startWaitingFlow(Screen parent, String worldId, String worldName, String ownerUuid, String previousJoinTarget, String waiterSessionId, boolean hostChangeFlow, boolean returnToSharedWorldMenu) {
         this.waitingState = new WaitingFlowState(++this.joinAttemptCounter, parent, worldId, worldName, ownerUuid, previousJoinTarget, waiterSessionId, hostChangeFlow, returnToSharedWorldMenu);
+        this.waitingState.waitingStartedAt = this.clock.nowMillis();
         this.waitingState.progressState = progress(hostChangeFlow, Component.translatable("screen.sharedworld.progress.waiting_for_host"), null);
         if (waiterSessionId != null && !waiterSessionId.isBlank()) {
             try {
@@ -843,6 +863,7 @@ public final class SharedWorldSessionCoordinator {
         private final boolean hostChangeFlow;
         private final boolean returnToSharedWorldMenu;
         private long lastPollAt;
+        private long waitingStartedAt;
         private boolean requestInFlight;
         private int consecutivePollFailures;
         private boolean cancelInFlight;

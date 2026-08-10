@@ -1,5 +1,6 @@
 import { D1SharedWorldRepository } from "./d1-repository.ts";
 import type { Env } from "./env.ts";
+import { workersSnapshotManifestCache } from "./manifest-cache.ts";
 import { DoRealtimeService } from "./realtime/service.ts";
 import { createRouter } from "./router.ts";
 import {
@@ -18,7 +19,7 @@ export function createApp(env: Env): { fetch(request: Request): Promise<Response
   if (!env.WORLD_COORDINATOR || !env.USER_GATEWAY) {
     throw new Error("SharedWorld backend requires the WORLD_COORDINATOR and USER_GATEWAY Durable Object bindings.");
   }
-  const repository = new D1SharedWorldRepository(env.DB);
+  const repository = new D1SharedWorldRepository(env.DB, workersSnapshotManifestCache());
   const service = new SharedWorldService(
     repository,
     new MinecraftSessionServerAuthVerifier(

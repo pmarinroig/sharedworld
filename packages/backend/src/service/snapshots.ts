@@ -132,10 +132,18 @@ export async function finalizeSnapshot(
   await validateFinalizeSnapshotRequest(svc, worldId, request);
   await computeChainDeltaBytes(svc, worldId, request);
   const manifest = await svc.repository.finalizeSnapshot(worldId, ctx, request, now);
-  await applySnapshotRetention(svc, worldId, now);
+  // Retention runs at most hourly per world (CAS claim): it only ever
+  // deletes >24h-old snapshots, so per-finalize cadence bought nothing but
+  // delete/promotion writes on every autosave. Manual delete/restore keep
+  // their immediate retention passes.
+  if (await svc.repository.claimRetentionSlot(worldId, now, SNAPSHOT_RETENTION_INTERVAL_MS)) {
+    await applySnapshotRetention(svc, worldId, now);
+  }
   await publishWorldEvent(svc, worldId, "snapshot-changed");
   return manifest;
 }
+
+const SNAPSHOT_RETENTION_INTERVAL_MS = 60 * 60_000;
 
 /**
  * Retention keeps every snapshot from the last day, one per day for a month, and

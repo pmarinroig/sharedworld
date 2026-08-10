@@ -7,23 +7,31 @@ import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.Executor;
 
+/**
+ * Guest presence, socket-native (0.4.1): while the realtime channel is
+ * healthy the guest sends a single world-presence frame on session start and
+ * after every reconnect — the socket itself is the liveness, so there is NO
+ * periodic beat at all. The merged HTTP beat (presence POST answering with
+ * runtime + lastSnapshotId) survives as exactly three things: the reconnect
+ * resync, the push-triggered kick/deletion probe (403/404 stay the only
+ * verdicts), and the 15s fallback lane while the channel is down. Beat
+ * responses are fanned to the runtime watcher and cache warmer so the
+ * fallback lane needs no other polls.
+ */
 public final class SharedWorldPresenceManager implements link.sharedworld.realtime.RealtimeEvents.Subscriber {
     private static final long HEARTBEAT_INTERVAL_MS = 15_000L;
     // Must stay well below the backend's 45s presence timeout or throttled
     // guests would flicker offline in the world list.
     private static final long MAX_SUGGESTED_HEARTBEAT_INTERVAL_MS = 30_000L;
-    /**
-     * While the realtime channel is connected the roster is host-reported
-     * and revocation/deletion arrive as pushes, so the self-report heartbeat
-     * is only a safety net (it still authoritatively detects revocation on
-     * worlds hosted by legacy clients).
-     */
-    private static final long PUSH_CONNECTED_HEARTBEAT_INTERVAL_MS = 60_000L;
     private static final Logger LOGGER = LoggerFactory.getLogger(SharedWorldPresenceManager.class);
 
     private final PresenceSender presenceSender;
     private final ForcedExitHandler forcedExitHandler;
     private final Executor executor;
+    private volatile WorldPresenceAnnouncer announcer = (worldId, present) -> {
+    };
+    private volatile BeatObserver beatObserver = (worldId, response) -> {
+    };
     private volatile String activeGuestWorldId;
     private volatile long activeGuestSessionEpoch;
     private volatile long lastHeartbeatAt;
@@ -31,6 +39,7 @@ public final class SharedWorldPresenceManager implements link.sharedworld.realti
     private long nextGuestSessionEpoch = 1L;
     private long nextPresenceSequence = 1L;
     private volatile boolean pushConnected;
+    private volatile boolean oneShotBeatRequested;
 
     public SharedWorldPresenceManager(SharedWorldApiClient apiClient) {
         this(
@@ -56,9 +65,23 @@ public final class SharedWorldPresenceManager implements link.sharedworld.realti
         this.forcedExitHandler = forcedExitHandler;
     }
 
+    /** Wired after construction (the push channel is created later). */
+    public void setWorldPresenceAnnouncer(WorldPresenceAnnouncer announcer) {
+        this.announcer = announcer;
+    }
+
+    /**
+     * Receives every merged beat response for the active session. Called on
+     * the flush executor; the wiring is responsible for hopping to the main
+     * thread before touching game state.
+     */
+    public void setBeatObserver(BeatObserver beatObserver) {
+        this.beatObserver = beatObserver;
+    }
+
     /**
      * Responsibility:
-     * Maintain guest presence heartbeats without taking ownership of join/host/release lifecycle state.
+     * Maintain guest presence (socket frames + merged beats) without owning join/host/release lifecycle state.
      *
      * Preconditions:
      * Presence tracking only applies while the player is actively connected as a guest.
@@ -87,11 +110,26 @@ public final class SharedWorldPresenceManager implements link.sharedworld.realti
     void tickGuestSession(String worldId, long now) {
         boolean worldChanged = this.activeGuestWorldId == null || !this.activeGuestWorldId.equals(worldId);
         if (worldChanged) {
+            String previousWorldId = this.activeGuestWorldId;
             startGuestSession(worldId);
+            if (previousWorldId != null) {
+                this.announcer.sendWorldPresence(previousWorldId, false);
+            }
+            this.announcer.sendWorldPresence(worldId, true);
+            // The session-start beat runs regardless of channel state: it
+            // establishes legacy presence (fallback + old-host rosters),
+            // primes runtime + lastSnapshotId for the consumers, and is the
+            // first authoritative membership probe.
+        } else if (this.oneShotBeatRequested) {
+            // Push-triggered probe (kick/deletion) or reconnect resync.
+        } else if (this.pushConnected) {
+            // Socket-native steady state: the socket IS the presence.
+            return;
         } else if (now - this.lastHeartbeatAt < this.effectiveHeartbeatIntervalMs()) {
             return;
         }
 
+        this.oneShotBeatRequested = false;
         this.lastHeartbeatAt = now;
         scheduleFlush(new PresenceUpdate(
                 worldId,
@@ -115,6 +153,10 @@ public final class SharedWorldPresenceManager implements link.sharedworld.realti
         long presenceSequence = this.activeGuestWorldId != null && this.activeGuestWorldId.equals(session.worldId())
                 ? this.nextPresenceSequence++
                 : 1L;
+        // Withdraw over the socket AND with the authoritative exit beat: the
+        // frame updates the roster instantly, the beat covers a dead socket
+        // and doubles as the final membership probe of the session.
+        this.announcer.sendWorldPresence(session.worldId(), false);
         scheduleFlush(new PresenceUpdate(session.worldId(), false, guestSessionEpoch, presenceSequence));
         this.activeGuestWorldId = null;
         this.activeGuestSessionEpoch = 0L;
@@ -122,19 +164,34 @@ public final class SharedWorldPresenceManager implements link.sharedworld.realti
     }
 
     long effectiveHeartbeatIntervalMs() {
-        return this.pushConnected
-                ? Math.max(this.heartbeatIntervalMs, PUSH_CONNECTED_HEARTBEAT_INTERVAL_MS)
-                : this.heartbeatIntervalMs;
+        return this.heartbeatIntervalMs;
     }
 
     @Override
     public void onRealtimeConnectionChanged(boolean connected) {
         this.pushConnected = connected;
+        String worldId = this.activeGuestWorldId;
+        if (worldId == null) {
+            return;
+        }
+        if (connected) {
+            // Reconnect resync: re-announce (the gateway forgot the presence
+            // set on close) and fire exactly one beat to re-fence the
+            // session, refresh runtime + lastSnapshotId, and re-verify
+            // membership after the outage.
+            this.announcer.sendWorldPresence(worldId, true);
+            this.oneShotBeatRequested = true;
+        } else {
+            // Fallback lane starts immediately: the socket entry's 15s grace
+            // is riding out, and the first legacy beat keeps the roster
+            // continuous past it.
+            this.oneShotBeatRequested = true;
+        }
     }
 
     /**
      * A pushed membership or deletion change is a TRIGGER, never a verdict:
-     * the next heartbeat probes over HTTP and the authoritative 403/404
+     * one merged beat probes over HTTP and the authoritative 403/404
      * response drives the existing forced-exit path with all its fencing.
      */
     @Override
@@ -144,7 +201,7 @@ public final class SharedWorldPresenceManager implements link.sharedworld.realti
             return;
         }
         if ("membership-changed".equals(event.kind()) || "world-deleted".equals(event.kind())) {
-            this.lastHeartbeatAt = 0L;
+            this.oneShotBeatRequested = true;
         }
     }
 
@@ -153,6 +210,7 @@ public final class SharedWorldPresenceManager implements link.sharedworld.realti
         this.activeGuestSessionEpoch = this.nextGuestSessionEpoch++;
         this.nextPresenceSequence = 1L;
         this.heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS;
+        this.oneShotBeatRequested = false;
     }
 
     private void scheduleFlush(PresenceUpdate update) {
@@ -161,10 +219,13 @@ public final class SharedWorldPresenceManager implements link.sharedworld.realti
 
     private void flush(PresenceUpdate update) {
         try {
-            link.sharedworld.api.SharedWorldModels.PresenceHeartbeatResponseDto response = this.presenceSender.setPresence(update);
+            link.sharedworld.api.SharedWorldModels.GuestHeartbeatResponseDto response = this.presenceSender.setPresence(update);
             if (response != null && matchesActiveGuestSession(update.guestSessionEpoch(), update.worldId())) {
                 this.heartbeatIntervalMs = link.sharedworld.util.ServerPacing.clampSuggestedInterval(
                         response.suggestedIntervalMs(), HEARTBEAT_INTERVAL_MS, MAX_SUGGESTED_HEARTBEAT_INTERVAL_MS);
+                if (update.present()) {
+                    this.beatObserver.onGuestBeat(update.worldId(), response);
+                }
             }
         } catch (Exception exception) {
             if (matchesActiveGuestSession(update.guestSessionEpoch(), update.worldId())) {
@@ -179,9 +240,19 @@ public final class SharedWorldPresenceManager implements link.sharedworld.realti
     }
 
     @FunctionalInterface
+    public interface WorldPresenceAnnouncer {
+        void sendWorldPresence(String worldId, boolean present);
+    }
+
+    @FunctionalInterface
+    public interface BeatObserver {
+        void onGuestBeat(String worldId, link.sharedworld.api.SharedWorldModels.GuestHeartbeatResponseDto response);
+    }
+
+    @FunctionalInterface
     interface PresenceSender {
         /** May return null: older test doubles and offline paths carry no pacing suggestion. */
-        link.sharedworld.api.SharedWorldModels.PresenceHeartbeatResponseDto setPresence(PresenceUpdate update) throws Exception;
+        link.sharedworld.api.SharedWorldModels.GuestHeartbeatResponseDto setPresence(PresenceUpdate update) throws Exception;
     }
 
     @FunctionalInterface

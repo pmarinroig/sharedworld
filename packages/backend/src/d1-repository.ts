@@ -29,6 +29,7 @@ import type {
   UserRecord,
   WorldUpdateRecord
 } from "./repository.ts";
+import type { SnapshotManifestCache } from "./manifest-cache.ts";
 import { runtimePhaseToWorldStatus } from "./runtime-protocol.ts";
 import {
   mapInvite,
@@ -46,9 +47,21 @@ import {
 } from "./repository/d1-support.ts";
 
 export class D1SharedWorldRepository implements SharedWorldRepository {
-  constructor(private readonly db: D1Database) {}
+  constructor(
+    private readonly db: D1Database,
+    private readonly manifestCache: SnapshotManifestCache | null = null
+  ) {}
 
   async createChallenge(challenge: AuthChallengeRecord): Promise<void> {
+    // Piggybacked bounded sweep: challenges are 5-minute one-shots and there
+    // is no cron — without this the table grows forever. A matched-zero
+    // DELETE costs nothing.
+    await this.run(
+      `DELETE FROM auth_challenges WHERE nonce IN (
+         SELECT nonce FROM auth_challenges WHERE expires_at < ? LIMIT 25
+       )`,
+      new Date(Date.now() - 60 * 60_000).toISOString()
+    );
     await this.run(
       "INSERT INTO auth_challenges (nonce, expires_at, used_at) VALUES (?, ?, ?)",
       challenge.serverId,
@@ -98,10 +111,12 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
   }
 
   async upsertUser(user: UserRecord): Promise<void> {
+    // Conditional update: a same-name login must not count as a row write.
     await this.run(
       `INSERT INTO users (player_uuid, player_name, created_at)
        VALUES (?, ?, ?)
-       ON CONFLICT(player_uuid) DO UPDATE SET player_name = excluded.player_name`,
+       ON CONFLICT(player_uuid) DO UPDATE SET player_name = excluded.player_name
+       WHERE excluded.player_name <> users.player_name`,
       user.playerUuid,
       user.playerName,
       user.createdAt
@@ -109,6 +124,13 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
   }
 
   async createSession(session: SessionToken): Promise<void> {
+    // Piggybacked bounded sweep of long-expired sessions (no cron exists).
+    await this.run(
+      `DELETE FROM user_sessions WHERE token IN (
+         SELECT token FROM user_sessions WHERE expires_at < ? LIMIT 25
+       )`,
+      new Date(Date.now() - 24 * 60 * 60_000).toISOString()
+    );
     await this.run(
       "INSERT INTO user_sessions (token, player_uuid, player_name, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
       session.token,
@@ -145,11 +167,148 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       playerUuid
     );
 
-    const summaries: WorldSummary[] = [];
-    for (const row of memberships) {
-      summaries.push(await this.buildWorldSummary(String(row.id)));
+    const worldIds = memberships.map((row) => String(row.id));
+    const summaries = await this.buildWorldSummaries(worldIds);
+    return worldIds
+      .map((worldId) => summaries.get(worldId))
+      .filter((summary): summary is WorldSummary => summary != null);
+  }
+
+  /**
+   * Every D1 input that feeds the GET /worlds list response, as small
+   * deterministic fact rows — no manifests, no summary building. The service
+   * hashes this into the weak ETag; a matching If-None-Match then skips the
+   * whole response build. storageUsage is deliberately absent: only 0.4.1+
+   * clients send conditional requests, and their world bodies carry
+   * storageUsage: null.
+   */
+  async worldsChangeFacts(playerUuid: string): Promise<unknown> {
+    const worlds = await this.all<Row>(
+      `SELECT w.id, w.name, w.motd, w.custom_icon_storage_key, w.storage_account_id, w.settings_revision, w.owner_uuid
+       FROM worlds w
+       JOIN world_memberships wm ON wm.world_id = w.id
+       WHERE wm.player_uuid = ? AND wm.deleted_at IS NULL AND w.deleted_at IS NULL
+       ORDER BY w.id ASC`,
+      playerUuid
+    );
+    if (worlds.length === 0) {
+      return { worlds: [] };
     }
-    return summaries;
+    const memberWorldsFilter = `world_id IN (
+       SELECT world_id FROM world_memberships WHERE player_uuid = ? AND deleted_at IS NULL
+     )`;
+    const memberships = await this.all<Row>(
+      `SELECT world_id, player_uuid, player_name, role, can_use_commands, joined_at
+       FROM world_memberships
+       WHERE deleted_at IS NULL AND ${memberWorldsFilter}
+       ORDER BY world_id ASC, player_uuid ASC`,
+      playerUuid
+    );
+    const mirrors = await this.all<Row>(
+      `SELECT world_id, updated_at FROM world_runtime_mirror
+       WHERE ${memberWorldsFilter}
+       ORDER BY world_id ASC`,
+      playerUuid
+    );
+    const latest = await this.all<Row>(
+      `SELECT world_id, id FROM (
+         SELECT world_id, id, ROW_NUMBER() OVER (PARTITION BY world_id ORDER BY created_at DESC, id DESC) AS rn
+         FROM snapshots
+         WHERE ${memberWorldsFilter}
+       ) WHERE rn = 1
+       ORDER BY world_id ASC`,
+      playerUuid
+    );
+    const accountIds = [...new Set(worlds.map((row) => asNullableString(row.storage_account_id)).filter((id): id is string => id != null))].sort();
+    const accounts = accountIds.length === 0 ? [] : await this.all<Row>(
+      `SELECT id, email FROM storage_accounts WHERE id IN (${accountIds.map(() => "?").join(", ")}) ORDER BY id ASC`,
+      ...accountIds
+    );
+    return { worlds, memberships, mirrors, latest, accounts };
+  }
+
+  /**
+   * The single-world variant for GET /worlds/:id, including the owner-only
+   * invite facts (folded to an is-valid boolean so a purely time-based
+   * expiry still moves the token). Null when the caller has no access —
+   * the handler then skips conditional handling and lets the service
+   * produce its fresh 403/404.
+   */
+  async worldChangeFacts(worldId: string, playerUuid: string, now: Date): Promise<unknown | null> {
+    const world = await this.first<Row>(
+      `SELECT w.id, w.name, w.motd, w.custom_icon_storage_key, w.storage_account_id, w.settings_revision, w.owner_uuid
+       FROM worlds w
+       JOIN world_memberships wm ON wm.world_id = w.id AND wm.player_uuid = ? AND wm.deleted_at IS NULL
+       WHERE w.id = ? AND w.deleted_at IS NULL`,
+      playerUuid,
+      worldId
+    );
+    if (!world) {
+      return null;
+    }
+    const memberships = await this.all<Row>(
+      `SELECT player_uuid, player_name, role, can_use_commands, joined_at
+       FROM world_memberships
+       WHERE world_id = ? AND deleted_at IS NULL
+       ORDER BY player_uuid ASC`,
+      worldId
+    );
+    const mirror = await this.first<Row>(
+      "SELECT updated_at FROM world_runtime_mirror WHERE world_id = ?",
+      worldId
+    );
+    const latest = await this.first<Row>(
+      `SELECT id FROM snapshots WHERE world_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+      worldId
+    );
+    const accountId = asNullableString(world.storage_account_id);
+    const account = accountId == null ? null : await this.first<Row>(
+      "SELECT email FROM storage_accounts WHERE id = ?",
+      accountId
+    );
+    let invite: unknown = null;
+    if (String(world.owner_uuid) === playerUuid) {
+      const inviteRow = await this.first<Row>(
+        `SELECT id, expires_at FROM invite_codes
+         WHERE world_id = ? AND status = 'active'
+         ORDER BY created_at DESC, id DESC
+         LIMIT 1`,
+        worldId
+      );
+      invite = inviteRow == null
+        ? null
+        : { id: String(inviteRow.id), valid: String(inviteRow.expires_at) >= now.toISOString() };
+    }
+    return {
+      world,
+      memberships,
+      mirrorUpdatedAt: asNullableString(mirror?.updated_at),
+      latestSnapshotId: latest == null ? null : String(latest.id),
+      accountEmail: asNullableString(account?.email),
+      invite
+    };
+  }
+
+  async sessionActorFacts(worldId: string, playerUuid: string): Promise<{ membershipActive: boolean; everMember: boolean } | null> {
+    // GROUP BY makes a missing/deleted world return zero rows (the caller's
+    // 404) instead of an all-zero aggregate row.
+    const row = await this.first<Row>(
+      `SELECT MAX(CASE WHEN wm.player_uuid IS NOT NULL AND wm.deleted_at IS NULL THEN 1 ELSE 0 END) AS active,
+              COUNT(wm.player_uuid) AS ever
+       FROM worlds w
+       LEFT JOIN world_memberships wm ON wm.world_id = w.id AND wm.player_uuid = ?
+       WHERE w.id = ? AND w.deleted_at IS NULL
+       GROUP BY w.id`,
+      playerUuid,
+      worldId
+    );
+    if (!row) {
+      return null;
+    }
+    return {
+      membershipActive: Number(row.active ?? 0) === 1,
+      everMember: Number(row.ever ?? 0) > 0
+    };
   }
 
   async hasActiveWorld(worldId: string): Promise<boolean> {
@@ -178,26 +337,30 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     const id = `world_${crypto.randomUUID().replace(/-/g, "")}`;
     const now = new Date().toISOString();
     const uniqueSlug = `${slug}-${id.slice(Math.max(0, id.length - 8))}`;
-    await this.run(
-      "INSERT INTO worlds (id, slug, name, motd, custom_icon_storage_key, owner_uuid, storage_provider, storage_account_id, created_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
-      id,
-      uniqueSlug,
-      name,
-      motd,
-      customIconStorageKey,
-      ctx.playerUuid,
-      storage.provider,
-      storage.storageAccountId,
-      now
-    );
-    await this.run(
-      `INSERT INTO world_memberships (world_id, player_uuid, player_name, role, joined_at, deleted_at)
-       VALUES (?, ?, ?, 'owner', ?, NULL)`,
-      id,
-      ctx.playerUuid,
-      ctx.playerName,
-      now
-    );
+    // One transactional batch: the world row and the owner membership land
+    // together or not at all.
+    await this.batch([
+      this.prepared(
+        "INSERT INTO worlds (id, slug, name, motd, custom_icon_storage_key, owner_uuid, storage_provider, storage_account_id, created_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+        id,
+        uniqueSlug,
+        name,
+        motd,
+        customIconStorageKey,
+        ctx.playerUuid,
+        storage.provider,
+        storage.storageAccountId,
+        now
+      ),
+      this.prepared(
+        `INSERT INTO world_memberships (world_id, player_uuid, player_name, role, joined_at, deleted_at)
+         VALUES (?, ?, ?, 'owner', ?, NULL)`,
+        id,
+        ctx.playerUuid,
+        ctx.playerName,
+        now
+      )
+    ]);
     const details = await this.getWorldDetails(id, ctx.playerUuid);
     if (!details) {
       throw new Error("World creation failed.");
@@ -206,22 +369,18 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
   }
 
   async getWorldDetails(worldId: string, playerUuid: string): Promise<WorldDetails | null> {
-    const member = await this.first<Row>(
-      `SELECT w.id, w.slug, w.name, w.owner_uuid
-       FROM worlds w
-       JOIN world_memberships wm ON wm.world_id = w.id
-       WHERE w.id = ? AND wm.player_uuid = ? AND wm.deleted_at IS NULL AND w.deleted_at IS NULL`,
-      worldId,
-      playerUuid
-    );
-    if (!member) {
-      return null;
-    }
-
-    const summary = await this.buildWorldSummary(worldId);
+    // The membership list doubles as the access gate and the member count —
+    // no separate member-join or COUNT query.
     const memberships = await this.listMemberships(worldId);
     const membership = memberships.find((entry) => entry.playerUuid === playerUuid);
     if (!membership) {
+      return null;
+    }
+    const summaries = await this.buildWorldSummaries([worldId], {
+      memberCounts: new Map([[worldId, memberships.length]])
+    });
+    const summary = summaries.get(worldId);
+    if (!summary) {
       return null;
     }
     return {
@@ -345,11 +504,22 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     if (snapshotReference) {
       return true;
     }
+    // Legacy transition leg (pre-0026 pack rows) plus the JSON directories.
     const packReference = await this.first<Row>(
       "SELECT 1 AS found FROM snapshot_packs WHERE storage_key = ? LIMIT 1",
       storageKey
     );
     if (packReference) {
+      return true;
+    }
+    const directoryReference = await this.first<Row>(
+      `SELECT 1 AS found
+       FROM snapshots, json_each(COALESCE(snapshots.packs_json, '[]')) AS pack
+       WHERE json_extract(pack.value, '$.storageKey') = ?
+       LIMIT 1`,
+      storageKey
+    );
+    if (directoryReference) {
       return true;
     }
     const iconReference = await this.first<Row>(
@@ -393,6 +563,10 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
          JOIN snapshots s ON s.id = sp.snapshot_id
          WHERE s.world_id = ?
          UNION
+         SELECT json_extract(pack.value, '$.storageKey') AS storage_key
+         FROM snapshots s, json_each(COALESCE(s.packs_json, '[]')) AS pack
+         WHERE s.world_id = ?
+         UNION
          SELECT w.custom_icon_storage_key AS storage_key
          FROM worlds w
          WHERE w.id = ? AND w.deleted_at IS NULL AND w.custom_icon_storage_key IS NOT NULL
@@ -403,6 +577,7 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
          ON so.provider = ?
         AND so.storage_account_id = ?
         AND so.storage_key = rk.storage_key`,
+      worldId,
       worldId,
       worldId,
       worldId,
@@ -691,7 +866,34 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     return rows.map(mapUploadSession);
   }
 
+  async deleteConfirmedUploadSessionsBefore(
+    provider: StorageProviderType,
+    storageAccountId: string,
+    confirmedBefore: string,
+    limit: number
+  ): Promise<void> {
+    await this.run(
+      `DELETE FROM storage_upload_sessions WHERE upload_id IN (
+         SELECT upload_id FROM storage_upload_sessions
+         WHERE provider = ? AND storage_account_id = ? AND confirmed_at IS NOT NULL AND confirmed_at < ?
+         LIMIT ?
+       )`,
+      provider,
+      storageAccountId,
+      confirmedBefore,
+      limit
+    );
+  }
+
   async createInvite(worldId: string, _ctx: RequestContext, invite: InviteCode): Promise<InviteCode> {
+    // Physical expiry of stale rows happens here, on the write path —
+    // getActiveInvite filters them out in its WHERE clause instead of
+    // issuing an UPDATE on every owner world-details read.
+    await this.run(
+      "UPDATE invite_codes SET status = 'expired' WHERE world_id = ? AND status = 'active' AND expires_at < ?",
+      worldId,
+      invite.createdAt
+    );
     await this.run(
       `INSERT INTO invite_codes (
         id, world_id, code, created_by_uuid, created_at, expires_at, status
@@ -749,18 +951,17 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
   }
 
   async getActiveInvite(worldId: string, now: Date): Promise<InviteCode | null> {
-    await this.run(
-      "UPDATE invite_codes SET status = 'expired' WHERE world_id = ? AND status = 'active' AND expires_at < ?",
-      worldId,
-      now.toISOString()
-    );
+    // Pure read: expiry is enforced in the WHERE clause. Rows past their
+    // expires_at keep status='active' until the next invite write physically
+    // expires them (createInvite) — no reader can observe them as active.
     const row = await this.first<Row>(
       `SELECT id, world_id, code, created_by_uuid, created_at, expires_at, redeemed_by_uuid, redeemed_at, status
        FROM invite_codes
-       WHERE world_id = ? AND status = 'active'
+       WHERE world_id = ? AND status = 'active' AND expires_at >= ?
        ORDER BY created_at DESC, id DESC
        LIMIT 1`,
-      worldId
+      worldId,
+      now.toISOString()
     );
     return row ? mapInvite(row) : null;
   }
@@ -856,22 +1057,56 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     };
   }
 
-  async getLatestSnapshot(worldId: string): Promise<SnapshotManifest | null> {
-    const snapshot = await this.first<Row>(
-      `SELECT id, world_id, created_at, created_by_uuid
+  /**
+   * Latest-snapshot facts that live on the snapshots row itself (one row
+   * read) — enough for world summaries and for cache keying, without paying
+   * for the full manifest's file rows.
+   */
+  private async latestSnapshotRow(worldId: string): Promise<Row | null> {
+    return this.first<Row>(
+      `SELECT id, world_id, created_at, created_by_uuid, data_version, minecraft_version
        FROM snapshots
        WHERE world_id = ?
        ORDER BY created_at DESC, id DESC
        LIMIT 1`,
       worldId
     );
+  }
+
+  /**
+   * Compare-and-set claim of the world's hourly retention slot: true means
+   * this caller runs retention now; false means another finalize ran it
+   * within the interval. Retention only ever deletes >24h-old snapshots, so
+   * an hourly cadence loses nothing.
+   */
+  async claimRetentionSlot(worldId: string, now: Date, intervalMs: number): Promise<boolean> {
+    const changes = await this.runWithChanges(
+      `UPDATE worlds SET last_retention_at = ?
+       WHERE id = ? AND deleted_at IS NULL
+         AND (last_retention_at IS NULL OR last_retention_at < ?)`,
+      now.toISOString(),
+      worldId,
+      new Date(now.getTime() - intervalMs).toISOString()
+    );
+    return changes > 0;
+  }
+
+  async getLatestSnapshotStamp(worldId: string): Promise<{ id: string } | null> {
+    const row = await this.latestSnapshotRow(worldId);
+    return row == null ? null : { id: String(row.id) };
+  }
+
+  async getLatestSnapshot(worldId: string): Promise<SnapshotManifest | null> {
+    const snapshot = await this.latestSnapshotRow(worldId);
     if (!snapshot) {
       return null;
     }
-    return this.loadSnapshot(String(snapshot.id), worldId, String(snapshot.created_at), String(snapshot.created_by_uuid));
+    return this.loadSnapshotCached(String(snapshot.id), worldId, String(snapshot.created_at), String(snapshot.created_by_uuid));
   }
 
   async getSnapshot(worldId: string, snapshotId: string): Promise<SnapshotManifest | null> {
+    // The DB existence check always runs first: a retention-deleted snapshot
+    // must return null even while its manifest still sits in the cache.
     const row = await this.first<Row>(
       `SELECT id, world_id, created_at, created_by_uuid
        FROM snapshots
@@ -882,7 +1117,22 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     if (!row) {
       return null;
     }
-    return this.loadSnapshot(String(row.id), String(row.world_id), String(row.created_at), String(row.created_by_uuid));
+    return this.loadSnapshotCached(String(row.id), String(row.world_id), String(row.created_at), String(row.created_by_uuid));
+  }
+
+  /**
+   * Manifest content is immutable per snapshot id, so a cache hit skips the
+   * file/pack row loads entirely — the difference between ~2 and several
+   * thousand D1 rows read for the polling paths.
+   */
+  private async loadSnapshotCached(snapshotId: string, worldId: string, createdAt: string, createdByUuid: string): Promise<SnapshotManifest> {
+    const cached = await this.manifestCache?.match(worldId, snapshotId);
+    if (cached != null) {
+      return cached;
+    }
+    const manifest = await this.loadSnapshot(snapshotId, worldId, createdAt, createdByUuid);
+    await this.manifestCache?.put(worldId, snapshotId, manifest);
+    return manifest;
   }
 
   /**
@@ -900,7 +1150,8 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       return [];
     }
     const rows = await this.all<Row>(
-      `SELECT s.id, s.created_at, s.created_by_uuid, s.data_version, s.minecraft_version
+      `SELECT s.id, s.created_at, s.created_by_uuid, s.data_version, s.minecraft_version,
+              s.packs_json, s.loose_file_count, s.loose_total_size
        FROM snapshots s
        WHERE s.world_id = ?
        ORDER BY s.created_at DESC, s.id DESC`,
@@ -913,30 +1164,45 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     // row is the latest snapshot.
     const latestSnapshotId = String(rows[0].id);
 
-    const looseAggregates = await this.all<Row>(
-      `SELECT sf.snapshot_id AS sid, COUNT(*) AS n, COALESCE(SUM(sf.size), 0) AS total
-       FROM snapshot_files sf
-       JOIN snapshots s ON s.id = sf.snapshot_id
-       WHERE s.world_id = ? AND sf.pack_id IS NULL
-       GROUP BY sf.snapshot_id`,
-      worldId
-    );
-    // Pack members resolve through the donor snapshot that physically holds
-    // them (members_snapshot_id, always one hop); LEFT JOIN so a pack with a
-    // missing donor degrades to zero members instead of dropping the pack.
-    const packAggregates = await this.all<Row>(
-      `SELECT sp.snapshot_id AS sid, COUNT(sf.path) AS n, COALESCE(SUM(sf.size), 0) AS total
-       FROM snapshot_packs sp
-       JOIN snapshots s ON s.id = sp.snapshot_id
-       LEFT JOIN snapshot_files sf
-         ON sf.snapshot_id = COALESCE(sp.members_snapshot_id, sp.snapshot_id)
-        AND sf.pack_id = sp.pack_id
-       WHERE s.world_id = ?
-       GROUP BY sp.snapshot_id`,
-      worldId
-    );
-    // Identical per-snapshot dedupe semantics as the old per-snapshot CTE —
-    // the grouping key just gains the snapshot id so one query answers all.
+    // 0026: file/size aggregates come straight off the snapshots rows (loose
+    // columns + directory memberCount/memberTotalSize). The quadratic
+    // member-row join survives only as a fallback for rows written by a
+    // pre-0026 worker mid-deploy.
+    const legacyIds = rows
+      .filter((row) => asNullableString(row.packs_json) == null || row.loose_file_count == null)
+      .map((row) => String(row.id));
+    const legacyLoose = new Map<string, Row>();
+    const legacyPacks = new Map<string, Row>();
+    if (legacyIds.length > 0) {
+      const legacyPlaceholders = sqlPlaceholders(legacyIds.length);
+      const looseAggregates = await this.all<Row>(
+        `SELECT sf.snapshot_id AS sid, COUNT(*) AS n, COALESCE(SUM(sf.size), 0) AS total
+         FROM snapshot_files sf
+         WHERE sf.pack_id IS NULL AND sf.snapshot_id IN (${legacyPlaceholders})
+         GROUP BY sf.snapshot_id`,
+        ...legacyIds
+      );
+      const packAggregates = await this.all<Row>(
+        `SELECT sp.snapshot_id AS sid, COUNT(sf.path) AS n, COALESCE(SUM(sf.size), 0) AS total
+         FROM snapshot_packs sp
+         LEFT JOIN snapshot_files sf
+           ON sf.snapshot_id = COALESCE(sp.members_snapshot_id, sp.snapshot_id)
+          AND sf.pack_id = sp.pack_id
+         WHERE sp.snapshot_id IN (${legacyPlaceholders})
+         GROUP BY sp.snapshot_id`,
+        ...legacyIds
+      );
+      for (const row of looseAggregates) {
+        legacyLoose.set(String(row.sid), row);
+      }
+      for (const row of packAggregates) {
+        legacyPacks.set(String(row.sid), row);
+      }
+    }
+
+    // Stored bytes stay query-time (screen-open frequency only): dedupe by
+    // storage key against provider-reported object sizes, with the file's
+    // compressed size as fallback. Pack keys come from both representations.
     const storedAggregates = await this.all<Row>(
       `WITH referenced_keys AS (
          SELECT sf.snapshot_id AS sid, sf.storage_key AS storage_key, MAX(sf.compressed_size) AS fallback_size
@@ -948,6 +1214,10 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
          SELECT sp.snapshot_id AS sid, sp.storage_key AS storage_key, NULL AS fallback_size
          FROM snapshot_packs sp
          JOIN snapshots s ON s.id = sp.snapshot_id
+         WHERE s.world_id = ?
+         UNION
+         SELECT s.id AS sid, json_extract(pack.value, '$.storageKey') AS storage_key, NULL AS fallback_size
+         FROM snapshots s, json_each(COALESCE(s.packs_json, '[]')) AS pack
          WHERE s.world_id = ?
        ),
        deduped_keys AS (
@@ -964,27 +1234,37 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
        GROUP BY dk.sid`,
       worldId,
       worldId,
+      worldId,
       String(world.storage_provider ?? "google-drive"),
       String(world.storage_account_id ?? "")
     );
 
-    const looseBySnapshot = new Map(looseAggregates.map((row) => [String(row.sid), row]));
-    const packsBySnapshot = new Map(packAggregates.map((row) => [String(row.sid), row]));
     const storedBySnapshot = new Map(storedAggregates.map((row) => [String(row.sid), row]));
     return rows.map((row) => {
-      const loose = looseBySnapshot.get(String(row.id));
-      const packs = packsBySnapshot.get(String(row.id));
-      const stored = storedBySnapshot.get(String(row.id));
+      const snapshotId = String(row.id);
+      const stored = storedBySnapshot.get(snapshotId);
+      let fileCount: number;
+      let totalSize: number;
+      if (asNullableString(row.packs_json) != null && row.loose_file_count != null) {
+        const directory = JSON.parse(String(row.packs_json)) as PackDirectoryEntry[];
+        fileCount = Number(row.loose_file_count) + directory.reduce((total, entry) => total + (entry.memberCount ?? 0), 0);
+        totalSize = Number(row.loose_total_size ?? 0) + directory.reduce((total, entry) => total + (entry.memberTotalSize ?? 0), 0);
+      } else {
+        const loose = legacyLoose.get(snapshotId);
+        const packs = legacyPacks.get(snapshotId);
+        fileCount = Number(loose?.n ?? 0) + Number(packs?.n ?? 0);
+        totalSize = Number(loose?.total ?? 0) + Number(packs?.total ?? 0);
+      }
       return {
-        snapshotId: String(row.id),
+        snapshotId,
         createdAt: String(row.created_at),
         createdByUuid: String(row.created_by_uuid),
         dataVersion: row.data_version == null ? null : Number(row.data_version),
         minecraftVersion: asNullableString(row.minecraft_version),
-        fileCount: Number(loose?.n ?? 0) + Number(packs?.n ?? 0),
-        totalSize: Number(loose?.total ?? 0) + Number(packs?.total ?? 0),
+        fileCount,
+        totalSize,
         totalCompressedSize: Number(stored?.used ?? 0),
-        isLatest: String(row.id) === latestSnapshotId
+        isLatest: snapshotId === latestSnapshotId
       };
     });
   }
@@ -1028,6 +1308,7 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
        WHERE s.world_id = ? AND sf.base_snapshot_id IS NOT NULL`,
       worldId
     );
+    // Legacy transition leg (pre-0026 pack rows) plus the JSON directories.
     const packRows = await this.all<Row>(
       `SELECT DISTINCT sp.snapshot_id, sp.base_snapshot_id
        FROM snapshot_packs sp
@@ -1035,13 +1316,21 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
        WHERE s.world_id = ? AND sp.base_snapshot_id IS NOT NULL`,
       worldId
     );
-    // Member-donor pointers (members_snapshot_id) are deliberately NOT edges
+    const directoryRows = await this.all<Row>(
+      `SELECT DISTINCT s.id AS snapshot_id, json_extract(pack.value, '$.baseSnapshotId') AS base_snapshot_id
+       FROM snapshots s, json_each(COALESCE(s.packs_json, '[]')) AS pack
+       WHERE s.world_id = ? AND json_extract(pack.value, '$.baseSnapshotId') IS NOT NULL`,
+      worldId
+    );
+    // Member-donor pointers (membersSnapshotId) are deliberately NOT edges
     // here: deleteSnapshots promotes inherited member rows to a surviving
     // heir, so donors never need to be kept alive for retention or deletion.
-    return [...fileRows, ...packRows].map((row) => ({
-      snapshotId: String(row.snapshot_id),
-      baseSnapshotId: String(row.base_snapshot_id)
-    }));
+    const edges = new Map<string, { snapshotId: string; baseSnapshotId: string }>();
+    for (const row of [...fileRows, ...packRows, ...directoryRows]) {
+      const edge = { snapshotId: String(row.snapshot_id), baseSnapshotId: String(row.base_snapshot_id) };
+      edges.set(`${edge.snapshotId}->${edge.baseSnapshotId}`, edge);
+    }
+    return [...edges.values()];
   }
 
   /**
@@ -1049,42 +1338,19 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
    * inheritance during finalize. `membersSnapshotId` is the snapshot that
    * physically holds the pack's member rows (NULL = the base itself).
    */
-  private async basePackRowsForInheritance(worldId: string, baseSnapshotId: string): Promise<Map<string, {
-    hash: string;
-    size: number;
-    storageKey: string;
-    transferMode: string;
-    baseSnapshotId: string | null;
-    baseHash: string | null;
-    chainDepth: number | null;
-    membersSnapshotId: string | null;
-    deltaFormatVersion: number | null;
-    deltaBlobSize: number | null;
-    chainDeltaBytes: number | null;
-  }>> {
-    const rows = await this.all<Row>(
-      `SELECT sp.pack_id, sp.hash, sp.size, sp.storage_key, sp.transfer_mode,
-              sp.base_snapshot_id, sp.base_hash, sp.chain_depth, sp.members_snapshot_id,
-              sp.delta_format_version, sp.delta_blob_size, sp.chain_delta_bytes
-       FROM snapshot_packs sp
-       JOIN snapshots s ON s.id = sp.snapshot_id
-       WHERE sp.snapshot_id = ? AND s.world_id = ?`,
+  private async basePackRowsForInheritance(worldId: string, baseSnapshotId: string): Promise<Map<string, PackDirectoryEntry>> {
+    // The world scoping the legacy query enforced via a join is preserved:
+    // a base snapshot from another world simply yields no directory here.
+    const owned = await this.first<Row>(
+      "SELECT 1 AS found FROM snapshots WHERE id = ? AND world_id = ?",
       baseSnapshotId,
       worldId
     );
-    return new Map(rows.map((row) => [String(row.pack_id), {
-      hash: String(row.hash),
-      size: Number(row.size),
-      storageKey: String(row.storage_key),
-      transferMode: String(row.transfer_mode),
-      baseSnapshotId: asNullableString(row.base_snapshot_id),
-      baseHash: asNullableString(row.base_hash),
-      chainDepth: row.chain_depth == null ? null : Number(row.chain_depth),
-      membersSnapshotId: asNullableString(row.members_snapshot_id),
-      deltaFormatVersion: row.delta_format_version == null ? null : Number(row.delta_format_version),
-      deltaBlobSize: row.delta_blob_size == null ? null : Number(row.delta_blob_size),
-      chainDeltaBytes: row.chain_delta_bytes == null ? null : Number(row.chain_delta_bytes)
-    }]));
+    if (!owned) {
+      return new Map();
+    }
+    const directory = await this.packDirectoryOf(baseSnapshotId);
+    return new Map(directory.map((entry) => [entry.packId, entry]));
   }
 
   async finalizeSnapshot(worldId: string, ctx: RequestContext, request: FinalizeSnapshotRequest, now: Date): Promise<SnapshotManifest> {
@@ -1092,22 +1358,11 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     const basePacks = request.baseSnapshotId != null
       ? await this.basePackRowsForInheritance(worldId, request.baseSnapshotId)
       : null;
-    // One transactional batch: a failure mid-write must not leave a partial
-    // snapshot behind, because a partial row would become the world's
-    // "latest" manifest.
-    const statements = [
-      this.prepared(
-        `INSERT INTO snapshots (id, world_id, created_at, created_by_uuid, base_snapshot_id, data_version, minecraft_version)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        snapshotId,
-        worldId,
-        now.toISOString(),
-        ctx.playerUuid,
-        request.baseSnapshotId ?? null,
-        request.dataVersion ?? null,
-        request.minecraftVersion ?? null
-      )
-    ];
+    // Pack HEADERS live in the snapshots row's JSON directory (0026): an
+    // unchanged 300-pack world used to rewrite 300 header rows per autosave.
+    // Member file rows keep the row-level inheritance machinery unchanged.
+    const directory: PackDirectoryEntry[] = [];
+    const statements: ReturnType<D1Database["prepare"]>[] = [];
     const fileInsert = `INSERT INTO snapshot_files (
           snapshot_id, path, hash, size, compressed_size, pack_id, storage_key, content_type, transfer_mode, base_snapshot_id, base_hash, chain_depth
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
@@ -1132,7 +1387,7 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       // A pack identical to the base snapshot's pack inherits that pack's
       // member rows instead of re-inserting them, flattened to the snapshot
       // that physically holds them (one hop, never a chain). Equality is
-      // judged on the same fields the pack row stores — the same trust model
+      // judged on the same fields the header stores — the same trust model
       // as materialized inserts, which never verify member lists either.
       const base = basePacks?.get(pack.packId);
       const inheritFrom = base != null
@@ -1148,25 +1403,25 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
         && (pack.chainDeltaBytes ?? null) === base.chainDeltaBytes
         ? (base.membersSnapshotId ?? request.baseSnapshotId ?? null)
         : null;
-      statements.push(this.prepared(
-        `INSERT INTO snapshot_packs (
-          snapshot_id, pack_id, hash, size, storage_key, transfer_mode, base_snapshot_id, base_hash, chain_depth, members_snapshot_id,
-          delta_format_version, delta_blob_size, chain_delta_bytes
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        snapshotId,
-        pack.packId,
-        pack.hash,
-        pack.size,
-        pack.storageKey,
-        pack.transferMode,
-        pack.baseSnapshotId ?? null,
-        pack.baseHash ?? null,
-        pack.chainDepth ?? null,
-        inheritFrom,
-        pack.deltaFormatVersion ?? null,
-        pack.deltaBlobSize ?? null,
-        pack.chainDeltaBytes ?? null
-      ));
+      directory.push({
+        packId: pack.packId,
+        hash: pack.hash,
+        size: pack.size,
+        storageKey: pack.storageKey,
+        transferMode: pack.transferMode,
+        baseSnapshotId: pack.baseSnapshotId ?? null,
+        baseHash: pack.baseHash ?? null,
+        chainDepth: pack.chainDepth ?? null,
+        membersSnapshotId: inheritFrom,
+        deltaFormatVersion: pack.deltaFormatVersion ?? null,
+        deltaBlobSize: pack.deltaBlobSize ?? null,
+        chainDeltaBytes: pack.chainDeltaBytes ?? null,
+        // The client always sends full member lists, even for inherited
+        // packs — the aggregates cost nothing here and make snapshot
+        // listing O(snapshots).
+        memberCount: pack.files.length,
+        memberTotalSize: pack.files.reduce((total, file) => total + file.size, 0)
+      });
       if (inheritFrom != null) {
         continue;
       }
@@ -1188,8 +1443,28 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
         ));
       }
     }
+    directory.sort((a, b) => a.packId.localeCompare(b.packId));
+    // One transactional batch: a failure mid-write must not leave a partial
+    // snapshot behind, because a partial row would become the world's
+    // "latest" manifest.
+    statements.unshift(this.prepared(
+      `INSERT INTO snapshots (id, world_id, created_at, created_by_uuid, base_snapshot_id, data_version, minecraft_version, packs_json, loose_file_count, loose_total_size)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      snapshotId,
+      worldId,
+      now.toISOString(),
+      ctx.playerUuid,
+      request.baseSnapshotId ?? null,
+      request.dataVersion ?? null,
+      request.minecraftVersion ?? null,
+      JSON.stringify(directory),
+      request.files.length,
+      request.files.reduce((total, file) => total + file.size, 0)
+    ));
     await this.batch(statements);
-    return this.loadSnapshot(snapshotId, worldId, now.toISOString(), ctx.playerUuid);
+    // Cached loader on purpose: a freshly finalized snapshot id cannot be in
+    // the cache yet, so this populates it while every reader is about to ask.
+    return this.loadSnapshotCached(snapshotId, worldId, now.toISOString(), ctx.playerUuid);
   }
 
   async deleteSnapshots(worldId: string, snapshotIds: string[]): Promise<SnapshotDeletionResult> {
@@ -1217,69 +1492,128 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     }
 
     const deletePlaceholders = sqlPlaceholders(deletedSnapshotIds.length);
+    const doomed = new Set(deletedSnapshotIds);
     const candidateRows = await this.all<Row>(
       `SELECT DISTINCT storage_key
        FROM snapshot_files
        WHERE snapshot_id IN (${deletePlaceholders})`,
       ...deletedSnapshotIds
     );
+    // Legacy transition leg: pack rows written by a pre-0026 worker.
     const packCandidateRows = await this.all<Row>(
       `SELECT DISTINCT storage_key
        FROM snapshot_packs
        WHERE snapshot_id IN (${deletePlaceholders})`,
       ...deletedSnapshotIds
     );
-    const candidateStorageKeys = [...candidateRows, ...packCandidateRows].map((row) => String(row.storage_key));
+
+    // All of the world's snapshots with their pack directories, oldest
+    // first: feeds doomed-pack candidates, referrer detection, and the
+    // oldest-heir promotion choice. Retention bounds this to ~35 rows.
+    const worldSnapshotRows = await this.all<Row>(
+      `SELECT id, packs_json FROM snapshots WHERE world_id = ? ORDER BY created_at ASC, id ASC`,
+      worldId
+    );
+    const directories = new Map<string, PackDirectoryEntry[] | null>();
+    for (const row of worldSnapshotRows) {
+      const raw = asNullableString(row.packs_json);
+      directories.set(String(row.id), raw == null ? null : JSON.parse(raw) as PackDirectoryEntry[]);
+    }
+
+    const candidateStorageKeys = [...new Set([
+      ...candidateRows.map((row) => String(row.storage_key)),
+      ...packCandidateRows.map((row) => String(row.storage_key)),
+      ...deletedSnapshotIds.flatMap((id) => (directories.get(id) ?? []).map((entry) => entry.storageKey))
+    ])];
 
     // Member-row promotion: surviving packs that inherit their member rows
     // from a doomed snapshot get those rows copied to the OLDEST surviving
     // heir before the donor is deleted; every other heir is repointed at the
     // new physical holder. This keeps every surviving manifest loadable
-    // without retention ever having to keep donor snapshots alive.
-    const referrerRows = await this.all<Row>(
+    // without retention ever having to keep donor snapshots alive. Referrers
+    // come from both representations: survivors' JSON directories and (for
+    // pre-0026 rows) the legacy snapshot_packs table.
+    const legacyReferrerRows = await this.all<Row>(
       `SELECT sp.snapshot_id, sp.pack_id, sp.members_snapshot_id
        FROM snapshot_packs sp
        JOIN snapshots s ON s.id = sp.snapshot_id
        WHERE s.world_id = ?
          AND sp.members_snapshot_id IN (${deletePlaceholders})
-         AND sp.snapshot_id NOT IN (${deletePlaceholders})
-       ORDER BY s.created_at ASC, s.id ASC`,
+         AND sp.snapshot_id NOT IN (${deletePlaceholders})`,
       worldId,
       ...deletedSnapshotIds,
       ...deletedSnapshotIds
     );
-    const statements: ReturnType<D1Database["prepare"]>[] = [];
-    const promotionTargets = new Set<string>();
-    for (const row of referrerRows) {
-      const donorId = String(row.members_snapshot_id);
-      const packId = String(row.pack_id);
-      const key = `${donorId}\u0000${packId}`;
-      if (promotionTargets.has(key)) {
+    type Referrer = { snapshotId: string; packId: string; donorId: string; representation: "json" | "legacy" };
+    const referrers: Referrer[] = [];
+    // worldSnapshotRows is oldest-first, so referrers accumulate in age
+    // order regardless of representation.
+    for (const row of worldSnapshotRows) {
+      const snapshotId = String(row.id);
+      if (doomed.has(snapshotId)) {
         continue;
       }
-      promotionTargets.add(key);
-      const targetId = String(row.snapshot_id);
+      for (const entry of directories.get(snapshotId) ?? []) {
+        if (entry.membersSnapshotId != null && doomed.has(entry.membersSnapshotId)) {
+          referrers.push({ snapshotId, packId: entry.packId, donorId: entry.membersSnapshotId, representation: "json" });
+        }
+      }
+      for (const legacyRow of legacyReferrerRows) {
+        if (String(legacyRow.snapshot_id) === snapshotId) {
+          referrers.push({
+            snapshotId,
+            packId: String(legacyRow.pack_id),
+            donorId: String(legacyRow.members_snapshot_id),
+            representation: "legacy"
+          });
+        }
+      }
+    }
+
+    const statements: ReturnType<D1Database["prepare"]>[] = [];
+    const promotionTargetByDonorPack = new Map<string, string>();
+    const rewrittenDirectories = new Set<string>();
+    for (const referrer of referrers) {
+      const key = `${referrer.donorId}\u0000${referrer.packId}`;
+      let targetId = promotionTargetByDonorPack.get(key);
+      if (targetId == null) {
+        // First (oldest) referrer becomes the new physical holder.
+        targetId = referrer.snapshotId;
+        promotionTargetByDonorPack.set(key, targetId);
+        statements.push(this.prepared(
+          `INSERT INTO snapshot_files (
+             snapshot_id, path, hash, size, compressed_size, pack_id, storage_key, content_type, transfer_mode, base_snapshot_id, base_hash, chain_depth
+           )
+           SELECT ?, path, hash, size, compressed_size, pack_id, storage_key, content_type, transfer_mode, base_snapshot_id, base_hash, chain_depth
+           FROM snapshot_files
+           WHERE snapshot_id = ? AND pack_id = ?`,
+          targetId,
+          referrer.donorId,
+          referrer.packId
+        ));
+      }
+      if (referrer.representation === "legacy") {
+        statements.push(this.prepared(
+          "UPDATE snapshot_packs SET members_snapshot_id = ? WHERE snapshot_id = ? AND pack_id = ? AND members_snapshot_id = ?",
+          referrer.snapshotId === targetId ? null : targetId,
+          referrer.snapshotId,
+          referrer.packId,
+          referrer.donorId
+        ));
+      } else {
+        const directory = directories.get(referrer.snapshotId);
+        const entry = directory?.find((candidate) => candidate.packId === referrer.packId);
+        if (entry != null && entry.membersSnapshotId === referrer.donorId) {
+          entry.membersSnapshotId = referrer.snapshotId === targetId ? null : targetId;
+          rewrittenDirectories.add(referrer.snapshotId);
+        }
+      }
+    }
+    for (const snapshotId of rewrittenDirectories) {
       statements.push(this.prepared(
-        `INSERT INTO snapshot_files (
-           snapshot_id, path, hash, size, compressed_size, pack_id, storage_key, content_type, transfer_mode, base_snapshot_id, base_hash, chain_depth
-         )
-         SELECT ?, path, hash, size, compressed_size, pack_id, storage_key, content_type, transfer_mode, base_snapshot_id, base_hash, chain_depth
-         FROM snapshot_files
-         WHERE snapshot_id = ? AND pack_id = ?`,
-        targetId,
-        donorId,
-        packId
-      ));
-      statements.push(this.prepared(
-        "UPDATE snapshot_packs SET members_snapshot_id = ? WHERE pack_id = ? AND members_snapshot_id = ?",
-        targetId,
-        packId,
-        donorId
-      ));
-      statements.push(this.prepared(
-        "UPDATE snapshot_packs SET members_snapshot_id = NULL WHERE snapshot_id = ? AND pack_id = ?",
-        targetId,
-        packId
+        "UPDATE snapshots SET packs_json = ? WHERE id = ?",
+        JSON.stringify(directories.get(snapshotId) ?? []),
+        snapshotId
       ));
     }
     statements.push(this.prepared(
@@ -1317,7 +1651,17 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
          WHERE storage_key IN (${keyPlaceholders})`,
         ...candidateStorageKeys
       );
-      const stillReferenced = new Set([...referencedRows, ...referencedPackRows].map((row) => String(row.storage_key)));
+      // Content-addressed dedupe is per storage account, cross-world — the
+      // directory leg must scan every world's snapshots, like the row legs.
+      const referencedDirectoryRows = await this.all<Row>(
+        `SELECT DISTINCT json_extract(pack.value, '$.storageKey') AS storage_key
+         FROM snapshots, json_each(COALESCE(snapshots.packs_json, '[]')) AS pack
+         WHERE json_extract(pack.value, '$.storageKey') IN (${keyPlaceholders})`,
+        ...candidateStorageKeys
+      );
+      const stillReferenced = new Set(
+        [...referencedRows, ...referencedPackRows, ...referencedDirectoryRows].map((row) => String(row.storage_key))
+      );
       unreferencedStorageKeys = candidateStorageKeys.filter((key) => !stillReferenced.has(key)).sort();
     }
 
@@ -1327,52 +1671,123 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     };
   }
 
-  private async buildWorldSummary(worldId: string): Promise<WorldSummary> {
-    const world = await this.first<Row>(
-      "SELECT id, slug, name, motd, custom_icon_storage_key, owner_uuid, storage_provider, storage_account_id, settings, settings_revision FROM worlds WHERE id = ?",
-      worldId
-    );
-    if (!world) {
-      throw new Error(`Unknown world ${worldId}`);
+  /**
+   * Set-based summary builder: five fixed queries for any number of worlds
+   * (worlds, member counts, runtime mirrors, latest snapshots, account
+   * emails), each mirror parsed exactly once. Deleted/unknown worlds are
+   * simply absent from the result map. Summaries only need latest-snapshot
+   * facts that live on the snapshots row itself — loading the full manifest
+   * here made every world list and world-details read cost thousands of
+   * snapshot_files rows.
+   */
+  private async buildWorldSummaries(
+    worldIds: readonly string[],
+    precomputed: { memberCounts?: Map<string, number> } = {}
+  ): Promise<Map<string, WorldSummary>> {
+    const result = new Map<string, WorldSummary>();
+    if (worldIds.length === 0) {
+      return result;
     }
-    const memberCountRow = await this.first<Row>(
-      "SELECT COUNT(*) AS count FROM world_memberships WHERE world_id = ? AND deleted_at IS NULL",
-      worldId
+    const placeholders = worldIds.map(() => "?").join(", ");
+    const worlds = await this.all<Row>(
+      `SELECT id, slug, name, motd, custom_icon_storage_key, owner_uuid, storage_provider, storage_account_id, settings, settings_revision
+       FROM worlds
+       WHERE deleted_at IS NULL AND id IN (${placeholders})`,
+      ...worldIds
     );
-    const lifecycle = await this.summaryLifecycle(worldId);
-    const latest = await this.getLatestSnapshot(worldId);
-    const latestVersions = await this.first<Row>(
-      "SELECT data_version, minecraft_version FROM snapshots WHERE world_id = ? ORDER BY created_at DESC, id DESC LIMIT 1",
-      worldId
+    if (worlds.length === 0) {
+      return result;
+    }
+
+    const memberCounts = precomputed.memberCounts ?? new Map<string, number>();
+    if (precomputed.memberCounts == null) {
+      const countRows = await this.all<Row>(
+        `SELECT world_id, COUNT(*) AS count
+         FROM world_memberships
+         WHERE deleted_at IS NULL AND world_id IN (${placeholders})
+         GROUP BY world_id`,
+        ...worldIds
+      );
+      for (const row of countRows) {
+        memberCounts.set(String(row.world_id), Number(row.count ?? 0));
+      }
+    }
+
+    const mirrors = new Map<string, ParsedRuntimeMirror>();
+    const mirrorRows = await this.all<Row>(
+      `SELECT world_id, status_json, room_players_json
+       FROM world_runtime_mirror
+       WHERE world_id IN (${placeholders})`,
+      ...worldIds
     );
-    const onlinePlayers = await this.listOnlinePlayers(worldId);
-    return {
-      id: String(world.id),
-      slug: String(world.slug),
-      name: String(world.name),
-      ownerUuid: String(world.owner_uuid),
-      motd: asNullableString(world.motd),
-      customIconStorageKey: asNullableString(world.custom_icon_storage_key),
-      customIconDownload: null,
-      memberCount: Number(memberCountRow?.count ?? 0),
-      status: lifecycle.status,
-      lastSnapshotId: latest?.snapshotId ?? null,
-      lastSnapshotAt: latest?.createdAt ?? null,
-      lastSnapshotDataVersion: latestVersions == null ? null : (latestVersions.data_version == null ? null : Number(latestVersions.data_version)),
-      lastSnapshotMinecraftVersion: latestVersions == null ? null : asNullableString(latestVersions.minecraft_version),
-      activeHostUuid: lifecycle.activeHostUuid,
-      activeHostPlayerName: lifecycle.activeHostPlayerName,
-      activeJoinTarget: lifecycle.activeJoinTarget,
-      onlinePlayerCount: onlinePlayers.length,
-      onlinePlayerNames: onlinePlayers.map((entry) => entry.playerName),
-      storageProvider: String(world.storage_provider ?? "google-drive") as StorageProviderType,
-      storageLinked: asNullableString(world.storage_account_id) != null,
-      storageAccountEmail: asNullableString(
-        (await this.first<Row>("SELECT email FROM storage_accounts WHERE id = ?", asNullableString(world.storage_account_id)))?.email
-      ),
-      settings: parseWorldSettings(world.settings),
-      settingsRevision: Number(world.settings_revision ?? 0)
-    };
+    for (const row of mirrorRows) {
+      mirrors.set(String(row.world_id), parseRuntimeMirror(row.status_json, row.room_players_json));
+    }
+
+    const latestByWorld = new Map<string, Row>();
+    const latestRows = await this.all<Row>(
+      `SELECT id, world_id, created_at, data_version, minecraft_version
+       FROM (
+         SELECT id, world_id, created_at, data_version, minecraft_version,
+                ROW_NUMBER() OVER (PARTITION BY world_id ORDER BY created_at DESC, id DESC) AS rn
+         FROM snapshots
+         WHERE world_id IN (${placeholders})
+       )
+       WHERE rn = 1`,
+      ...worldIds
+    );
+    for (const row of latestRows) {
+      latestByWorld.set(String(row.world_id), row);
+    }
+
+    const accountIds = [...new Set(
+      worlds.map((row) => asNullableString(row.storage_account_id)).filter((id): id is string => id != null)
+    )];
+    const accountEmails = new Map<string, string | null>();
+    if (accountIds.length > 0) {
+      const accountRows = await this.all<Row>(
+        `SELECT id, email FROM storage_accounts WHERE id IN (${accountIds.map(() => "?").join(", ")})`,
+        ...accountIds
+      );
+      for (const row of accountRows) {
+        accountEmails.set(String(row.id), asNullableString(row.email));
+      }
+    }
+
+    for (const world of worlds) {
+      const worldId = String(world.id);
+      const mirror = mirrors.get(worldId) ?? EMPTY_RUNTIME_MIRROR;
+      const lifecycle = lifecycleOfMirror(mirror);
+      const onlinePlayers = onlinePlayersOfMirror(mirror);
+      const latest = latestByWorld.get(worldId) ?? null;
+      const storageAccountId = asNullableString(world.storage_account_id);
+      result.set(worldId, {
+        id: worldId,
+        slug: String(world.slug),
+        name: String(world.name),
+        ownerUuid: String(world.owner_uuid),
+        motd: asNullableString(world.motd),
+        customIconStorageKey: asNullableString(world.custom_icon_storage_key),
+        customIconDownload: null,
+        memberCount: memberCounts.get(worldId) ?? 0,
+        status: lifecycle.status,
+        lastSnapshotId: latest == null ? null : String(latest.id),
+        lastSnapshotAt: latest == null ? null : String(latest.created_at),
+        lastSnapshotDataVersion: latest == null || latest.data_version == null ? null : Number(latest.data_version),
+        lastSnapshotMinecraftVersion: latest == null ? null : asNullableString(latest.minecraft_version),
+        activeHostUuid: lifecycle.activeHostUuid,
+        activeHostPlayerName: lifecycle.activeHostPlayerName,
+        activeJoinTarget: lifecycle.activeJoinTarget,
+        onlinePlayerCount: onlinePlayers.length,
+        onlinePlayerNames: onlinePlayers.map((entry) => entry.playerName),
+        storageProvider: String(world.storage_provider ?? "google-drive") as StorageProviderType,
+        storageLinked: storageAccountId != null,
+        storageAccountEmail: storageAccountId == null ? null : accountEmails.get(storageAccountId) ?? null,
+        settings: parseWorldSettings(world.settings),
+        settingsRevision: Number(world.settings_revision ?? 0)
+      });
+    }
+    return result;
   }
 
   async listMemberships(worldId: string): Promise<WorldMembership[]> {
@@ -1414,14 +1829,6 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
        ORDER BY path ASC`,
       snapshotId
     );
-    const packRows = await this.all<Row>(
-      `SELECT pack_id, hash, size, storage_key, transfer_mode, base_snapshot_id, base_hash, chain_depth, members_snapshot_id,
-              delta_format_version, delta_blob_size, chain_delta_bytes
-       FROM snapshot_packs
-       WHERE snapshot_id = ?
-       ORDER BY pack_id ASC`,
-      snapshotId
-    );
     return {
       worldId,
       snapshotId,
@@ -1439,8 +1846,33 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
         baseHash: asNullableString(row.base_hash),
         chainDepth: row.chain_depth == null ? null : Number(row.chain_depth)
       })),
-      packs: await this.loadSnapshotPacks(snapshotId, packRows)
+      packs: await this.loadSnapshotPacks(snapshotId, await this.packDirectoryOf(snapshotId))
     };
+  }
+
+  /**
+   * The snapshot's pack headers: from the 0026 packs_json directory, or the
+   * legacy snapshot_packs rows where the directory is absent (rows written
+   * by a pre-0026 worker mid-deploy). Always sorted by packId so resolved
+   * manifests stay byte-identical to their pre-0026 shape — the manifest
+   * cache depends on content per snapshot id never changing.
+   */
+  private async packDirectoryOf(snapshotId: string): Promise<PackDirectoryEntry[]> {
+    const row = await this.first<Row>("SELECT packs_json FROM snapshots WHERE id = ?", snapshotId);
+    const raw = asNullableString(row?.packs_json);
+    if (raw != null) {
+      const parsed = JSON.parse(raw) as PackDirectoryEntry[];
+      return parsed.sort((a, b) => a.packId.localeCompare(b.packId));
+    }
+    const packRows = await this.all<Row>(
+      `SELECT pack_id, hash, size, storage_key, transfer_mode, base_snapshot_id, base_hash, chain_depth, members_snapshot_id,
+              delta_format_version, delta_blob_size, chain_delta_bytes
+       FROM snapshot_packs
+       WHERE snapshot_id = ?
+       ORDER BY pack_id ASC`,
+      snapshotId
+    );
+    return packRows.map((packRow) => legacyPackRowToDirectoryEntry(packRow));
   }
 
   /**
@@ -1451,11 +1883,11 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
    * members from the donor snapshot that physically holds them
    * (members_snapshot_id, always one hop).
    */
-  private async loadSnapshotPacks(snapshotId: string, packRows: Row[]): Promise<SnapshotManifest["packs"]> {
-    if (packRows.length === 0) {
+  private async loadSnapshotPacks(snapshotId: string, directory: PackDirectoryEntry[]): Promise<SnapshotManifest["packs"]> {
+    if (directory.length === 0) {
       return [];
     }
-    const memberSnapshotIds = [...new Set(packRows.map((row) => asNullableString(row.members_snapshot_id) ?? snapshotId))];
+    const memberSnapshotIds = [...new Set(directory.map((entry) => entry.membersSnapshotId ?? snapshotId))];
     const memberRows = await this.all<Row>(
       `SELECT snapshot_id, pack_id, path, hash, size, content_type
        FROM snapshot_files
@@ -1478,28 +1910,28 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
         contentType: String(fileRow.content_type)
       });
     }
-    return packRows.map((row) => {
-      const membersSnapshotId = asNullableString(row.members_snapshot_id) ?? snapshotId;
-      const members = membersByPack.get(`${membersSnapshotId}\u0000${String(row.pack_id)}`) ?? [];
+    return directory.map((entry) => {
+      const membersSnapshotId = entry.membersSnapshotId ?? snapshotId;
+      const members = membersByPack.get(`${membersSnapshotId}\u0000${entry.packId}`) ?? [];
       if (members.length === 0 && membersSnapshotId !== snapshotId) {
         console.warn("SharedWorld snapshot pack inherited zero member rows — donor missing?", {
           snapshotId,
-          packId: String(row.pack_id),
+          packId: entry.packId,
           membersSnapshotId
         });
       }
       return {
-        packId: String(row.pack_id),
-        hash: String(row.hash),
-        size: Number(row.size),
-        storageKey: String(row.storage_key),
-        transferMode: String(row.transfer_mode) as FileTransferMode,
-        baseSnapshotId: asNullableString(row.base_snapshot_id),
-        baseHash: asNullableString(row.base_hash),
-        chainDepth: row.chain_depth == null ? null : Number(row.chain_depth),
-        deltaFormatVersion: row.delta_format_version == null ? null : Number(row.delta_format_version),
-        deltaBlobSize: row.delta_blob_size == null ? null : Number(row.delta_blob_size),
-        chainDeltaBytes: row.chain_delta_bytes == null ? null : Number(row.chain_delta_bytes),
+        packId: entry.packId,
+        hash: entry.hash,
+        size: entry.size,
+        storageKey: entry.storageKey,
+        transferMode: entry.transferMode as FileTransferMode,
+        baseSnapshotId: entry.baseSnapshotId,
+        baseHash: entry.baseHash,
+        chainDepth: entry.chainDepth,
+        deltaFormatVersion: entry.deltaFormatVersion,
+        deltaBlobSize: entry.deltaBlobSize,
+        chainDeltaBytes: entry.chainDeltaBytes,
         files: members
       };
     });
@@ -1543,71 +1975,116 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     return asNullableString(row?.custom_icon_storage_key);
   }
 
-  private async mirroredRuntime(worldId: string): Promise<{
-    status: import("../../shared/src/index.ts").WorldRuntimeStatus | null;
-    roomPlayers: Array<{ playerUuid: string; playerName: string }>;
-  }> {
-    const mirror = await this.getRuntimeMirror(worldId);
+}
+
+/**
+ * One pack header inside a snapshot's packs_json directory (0026). Field
+ * names are the manifest's own camelCase; memberCount/memberTotalSize are
+ * finalize-time aggregates over the pack's member file rows (null on entries
+ * derived from legacy snapshot_packs rows, which carry no aggregates).
+ */
+type PackDirectoryEntry = {
+  packId: string;
+  hash: string;
+  size: number;
+  storageKey: string;
+  transferMode: string;
+  baseSnapshotId: string | null;
+  baseHash: string | null;
+  chainDepth: number | null;
+  membersSnapshotId: string | null;
+  deltaFormatVersion: number | null;
+  deltaBlobSize: number | null;
+  chainDeltaBytes: number | null;
+  memberCount: number | null;
+  memberTotalSize: number | null;
+};
+
+function legacyPackRowToDirectoryEntry(packRow: Row): PackDirectoryEntry {
+  return {
+    packId: String(packRow.pack_id),
+    hash: String(packRow.hash),
+    size: Number(packRow.size),
+    storageKey: String(packRow.storage_key),
+    transferMode: String(packRow.transfer_mode),
+    baseSnapshotId: asNullableString(packRow.base_snapshot_id),
+    baseHash: asNullableString(packRow.base_hash),
+    chainDepth: packRow.chain_depth == null ? null : Number(packRow.chain_depth),
+    membersSnapshotId: asNullableString(packRow.members_snapshot_id),
+    deltaFormatVersion: packRow.delta_format_version == null ? null : Number(packRow.delta_format_version),
+    deltaBlobSize: packRow.delta_blob_size == null ? null : Number(packRow.delta_blob_size),
+    chainDeltaBytes: packRow.chain_delta_bytes == null ? null : Number(packRow.chain_delta_bytes),
+    memberCount: null,
+    memberTotalSize: null
+  };
+}
+
+type ParsedRuntimeMirror = {
+  status: import("../../shared/src/index.ts").WorldRuntimeStatus | null;
+  roomPlayers: Array<{ playerUuid: string; playerName: string }>;
+};
+
+const EMPTY_RUNTIME_MIRROR: ParsedRuntimeMirror = { status: null, roomPlayers: [] };
+
+function parseRuntimeMirror(statusJson: unknown, roomPlayersJson: unknown): ParsedRuntimeMirror {
+  return {
+    status: statusJson == null
+      ? null
+      : JSON.parse(String(statusJson)) as import("../../shared/src/index.ts").WorldRuntimeStatus,
+    roomPlayers: roomPlayersJson == null
+      ? []
+      : JSON.parse(String(roomPlayersJson)) as Array<{ playerUuid: string; playerName: string }>
+  };
+}
+
+function lifecycleOfMirror(mirror: ParsedRuntimeMirror): {
+  status: WorldSummary["status"];
+  activeHostUuid: string | null;
+  activeHostPlayerName: string | null;
+  activeJoinTarget: string | null;
+} {
+  const status = mirror.status;
+  if (status != null && (status.phase === "host-starting" || status.phase === "host-live" || status.phase === "host-finalizing")) {
     return {
-      status: mirror?.statusJson == null
-        ? null
-        : JSON.parse(mirror.statusJson) as import("../../shared/src/index.ts").WorldRuntimeStatus,
-      roomPlayers: mirror?.roomPlayersJson == null
-        ? []
-        : JSON.parse(mirror.roomPlayersJson) as Array<{ playerUuid: string; playerName: string }>
+      status: runtimePhaseToWorldStatus(status.phase),
+      activeHostUuid: status.hostUuid,
+      activeHostPlayerName: status.hostPlayerName,
+      activeJoinTarget: status.joinTarget
     };
   }
+  return {
+    status: status?.phase === "handoff-waiting" ? "handoff" : "idle",
+    activeHostUuid: null,
+    activeHostPlayerName: null,
+    activeJoinTarget: null
+  };
+}
 
-  private async summaryLifecycle(worldId: string): Promise<{
-    status: WorldSummary["status"];
-    activeHostUuid: string | null;
-    activeHostPlayerName: string | null;
-    activeJoinTarget: string | null;
-  }> {
-    const { status } = await this.mirroredRuntime(worldId);
-    if (status != null && (status.phase === "host-starting" || status.phase === "host-live" || status.phase === "host-finalizing")) {
-      return {
-        status: runtimePhaseToWorldStatus(status.phase),
-        activeHostUuid: status.hostUuid,
-        activeHostPlayerName: status.hostPlayerName,
-        activeJoinTarget: status.joinTarget
-      };
-    }
-    return {
-      status: status?.phase === "handoff-waiting" ? "handoff" : "idle",
-      activeHostUuid: null,
-      activeHostPlayerName: null,
-      activeJoinTarget: null
-    };
+/**
+ * Online players come straight from the coordinator-maintained mirror: the
+ * room roster (host-reported, or legacy self-reports), plus the active
+ * host itself while a hosting session is up.
+ */
+function onlinePlayersOfMirror(mirror: ParsedRuntimeMirror): Array<{ playerUuid: string; playerName: string }> {
+  const { status, roomPlayers } = mirror;
+  // Identities arrive in mixed shapes (the in-game roster reports
+  // hyphenated UUIDs, backend records may be bare 32-char) — the project
+  // rule is hyphen-insensitive comparison, so the dedupe key must be too.
+  const canonical = (uuid: string) => uuid.replace(/-/g, "").toLowerCase();
+  const players = new Map<string, { playerUuid: string; playerName: string }>();
+  if (status != null
+    && (status.phase === "host-starting" || status.phase === "host-live")
+    && status.hostUuid != null
+    && status.hostPlayerName != null) {
+    players.set(canonical(status.hostUuid), { playerUuid: status.hostUuid, playerName: status.hostPlayerName });
   }
-
-  /**
-   * Online players come straight from the coordinator-maintained mirror: the
-   * room roster (host-reported, or legacy self-reports), plus the active
-   * host itself while a hosting session is up.
-   */
-  private async listOnlinePlayers(worldId: string): Promise<Array<{ playerUuid: string; playerName: string }>> {
-    const { status, roomPlayers } = await this.mirroredRuntime(worldId);
-    // Identities arrive in mixed shapes (the in-game roster reports
-    // hyphenated UUIDs, backend records may be bare 32-char) — the project
-    // rule is hyphen-insensitive comparison, so the dedupe key must be too.
-    const canonical = (uuid: string) => uuid.replace(/-/g, "").toLowerCase();
-    const players = new Map<string, { playerUuid: string; playerName: string }>();
-    if (status != null
-      && (status.phase === "host-starting" || status.phase === "host-live")
-      && status.hostUuid != null
-      && status.hostPlayerName != null) {
-      players.set(canonical(status.hostUuid), { playerUuid: status.hostUuid, playerName: status.hostPlayerName });
+  for (const player of roomPlayers) {
+    const key = canonical(player.playerUuid);
+    if (!players.has(key)) {
+      players.set(key, { playerUuid: player.playerUuid, playerName: player.playerName });
     }
-    for (const player of roomPlayers) {
-      const key = canonical(player.playerUuid);
-      if (!players.has(key)) {
-        players.set(key, { playerUuid: player.playerUuid, playerName: player.playerName });
-      }
-    }
-    return [...players.values()];
   }
-
+  return [...players.values()];
 }
 
 

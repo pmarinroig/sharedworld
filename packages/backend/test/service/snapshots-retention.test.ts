@@ -5,6 +5,17 @@ import type { FinalizeSnapshotRequest } from "../../../shared/src/index.ts";
 import { createSqliteRepository } from "../support/sqlite-d1.ts";
 import { authVerifier, claimHostForTest, createBlobSigner, createStorageProviderSpy, createTestService } from "../support/service-fixtures.ts";
 
+function packDirectoryMembersSnapshotId(raw: { query(sql: string): { get(...args: unknown[]): unknown } }, snapshotId: string): { members_snapshot_id: string | null } {
+  // 0026: pack headers live in the snapshots row's JSON directory; keep the
+  // legacy row shape so the assertions below read unchanged.
+  const row = raw.query("SELECT packs_json FROM snapshots WHERE id = ?").get(snapshotId) as { packs_json: string | null } | null;
+  const directory = JSON.parse(row?.packs_json ?? "[]") as Array<{ membersSnapshotId: string | null }>;
+  if (directory.length === 0) {
+    throw new Error(`no pack directory entry on ${snapshotId}`);
+  }
+  return { members_snapshot_id: directory[0].membersSnapshotId };
+}
+
 describe("SharedWorldService snapshots and retention", () => {
   test("snapshot summaries use actual stored bytes for pack-backed artifacts", async () => {
     const repository = createSqliteRepository();
@@ -686,13 +697,9 @@ describe("SharedWorldService snapshots and retention", () => {
       const manifest = await repository.getSnapshot(world.id, survivor);
       expect(manifest?.packs[0]?.files.map((file) => file.path)).toEqual(["data/foo.dat", "level.dat"]);
     }
-    const promoted = repository.raw
-      .query("SELECT members_snapshot_id FROM snapshot_packs WHERE snapshot_id = ?")
-      .get(snapshotB.snapshotId) as { members_snapshot_id: string | null };
+    const promoted = packDirectoryMembersSnapshotId(repository.raw, snapshotB.snapshotId);
     expect(promoted.members_snapshot_id).toBeNull();
-    const repointed = repository.raw
-      .query("SELECT members_snapshot_id FROM snapshot_packs WHERE snapshot_id = ?")
-      .get(snapshotC.snapshotId) as { members_snapshot_id: string | null };
+    const repointed = packDirectoryMembersSnapshotId(repository.raw, snapshotC.snapshotId);
     expect(repointed.members_snapshot_id).toBe(snapshotB.snapshotId);
   });
 
@@ -769,9 +776,7 @@ describe("SharedWorldService snapshots and retention", () => {
     await instance.deleteSnapshot(owner, world.id, snapshotB.snapshotId);
     const manifest = await repository.getSnapshot(world.id, restored.snapshotId);
     expect(manifest?.packs[0]?.files.map((file) => file.path)).toEqual(["data/foo.dat", "level.dat"]);
-    const promoted = repository.raw
-      .query("SELECT members_snapshot_id FROM snapshot_packs WHERE snapshot_id = ?")
-      .get(restored.snapshotId) as { members_snapshot_id: string | null };
+    const promoted = packDirectoryMembersSnapshotId(repository.raw, restored.snapshotId);
     expect(promoted.members_snapshot_id).toBeNull();
   });
 

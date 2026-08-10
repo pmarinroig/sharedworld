@@ -395,6 +395,37 @@ export interface PresenceHeartbeatResponse {
   suggestedIntervalMs?: number;
 }
 
+/**
+ * Merged guest heartbeat: the presence POST's response grown into a FLAT
+ * superset (same pattern as HostHeartbeatResponse extends WorldRuntimeStatus)
+ * so one 0.4.1+ guest beat replaces the separate runtime poll and the
+ * world-details poll for the latest snapshot id. Pre-0.4.1 clients bind this
+ * body to PresenceHeartbeatResponse and ignore the extras — every presence
+ * response field is additive by construction (see above).
+ *
+ * The runtime facts mirror WorldRuntimeStatus minus `updatedAt`: the
+ * presence ack owns that field name, and no client ever bound the runtime's
+ * updatedAt.
+ */
+export interface GuestHeartbeatResponse extends PresenceHeartbeatResponse {
+  phase: WorldRuntimePhase;
+  runtimeEpoch: number;
+  hostUuid: string | null;
+  hostPlayerName: string | null;
+  candidateUuid: string | null;
+  candidatePlayerName: string | null;
+  joinTarget: string | null;
+  startupDeadlineAt: string | null;
+  runtimeTokenIssuedAt: string | null;
+  lastProgressAt: string | null;
+  revokedAt: string | null;
+  startupProgress: HostStartupProgress | null;
+  uncleanShutdownWarning: UncleanShutdownWarning | null;
+  hostMinecraftVersion: string | null;
+  /** Latest snapshot id for the guest cache warmer; null when none exists yet. */
+  lastSnapshotId: string | null;
+}
+
 export interface ReleaseHostRequest {
   snapshotId?: string | null;
   graceful: boolean;
@@ -584,6 +615,8 @@ export interface CreateBlobSessionRequest {
   hostToken?: string | null;
   contentType: string;
   contentLength: number;
+  /** HMAC authority stamp from the upload plan's signed headers (0.4.1+). */
+  blobStamp?: string | null;
 }
 
 export interface CreateBlobSessionResponse {
@@ -598,6 +631,8 @@ export interface CommitBlobSessionRequest {
   uploadId: string;
   runtimeEpoch?: number | null;
   hostToken?: string | null;
+  /** HMAC authority stamp from the upload plan's signed headers (0.4.1+). */
+  blobStamp?: string | null;
 }
 
 export interface CommitBlobSessionResponse {

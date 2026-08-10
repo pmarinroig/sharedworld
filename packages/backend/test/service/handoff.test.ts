@@ -615,6 +615,9 @@ describe("SharedWorldService handoff", () => {
         method: "PUT",
         headers: {
           "content-type": "application/octet-stream",
+          // Constructed Requests carry no implicit Content-Length; declaring
+          // it exercises the streaming (no-buffer) relay path.
+          "content-length": "7",
           ...uploadHeaders
         },
         body: "payload"
@@ -625,6 +628,30 @@ describe("SharedWorldService handoff", () => {
       storageKey: plan.nonRegionPackUpload?.fullStorageKey ?? "packs/final.pack",
       contentType: "application/octet-stream"
     }]);
+
+    // A relay body WITHOUT a declared length (shipped Java clients send
+    // chunked progress uploads) is buffered once and still stored; the relay
+    // ceiling applies either way.
+    const uploadRequest = (headers: Record<string, string>) => new Request("https://example.invalid/upload", {
+      method: "PUT",
+      headers: { "content-type": "application/octet-stream", ...uploadHeaders, ...headers },
+      body: "payload"
+    });
+    await instance.uploadStorageBlob(
+      { playerUuid: "player-host", playerName: "Host" },
+      world.id,
+      "packs/full/no-length.pack",
+      uploadRequest({})
+    );
+    expect(uploaded.map((entry) => entry.storageKey)).toContain("packs/full/no-length.pack");
+    await expect(Promise.resolve().then(() => instance.uploadStorageBlob(
+      { playerUuid: "player-host", playerName: "Host" },
+      world.id,
+      "packs/full/oversized.pack",
+      uploadRequest({ "content-length": String(96_000_000) })
+    ))).rejects.toMatchObject({ status: 413, code: "blob_too_large" });
+    // Exactly the two legitimate uploads reached storage.
+    expect(uploaded).toHaveLength(2);
   });
 
   test("blob uploads require runtime auth headers", async () => {

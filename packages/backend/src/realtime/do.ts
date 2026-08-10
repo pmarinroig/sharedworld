@@ -12,11 +12,13 @@ import {
 
 import { D1SharedWorldRepository } from "../d1-repository.ts";
 import type { Env } from "../env.ts";
+import { workersSnapshotManifestCache } from "../manifest-cache.ts";
 import {
   WorldCoordinator,
   type CoordinatorEffects,
   type CoordinatorStore,
-  type LegacyPresenceEntry
+  type LegacyPresenceEntry,
+  type SocketPresenceEntry
 } from "./coordinator.ts";
 import { decodeCallBody, encodeCallBody, toErrorEnvelope } from "./service.ts";
 import type { RuntimeMembership, RuntimeWaiter, WorldRuntimeRecord } from "../runtime-protocol.ts";
@@ -102,15 +104,32 @@ class SqlCoordinatorStore implements CoordinatorStore {
     this.write("legacyPresence", this.listLegacyPresence().filter((entry) => entry.playerUuid !== playerUuid));
   }
   clearLegacyPresence() { this.remove("legacyPresence"); }
+  listSocketPresence() { return this.read<SocketPresenceEntry[]>("socketPresence") ?? []; }
+  upsertSocketPresence(entry: SocketPresenceEntry) {
+    const entries = this.listSocketPresence().filter((existing) => existing.playerUuid !== entry.playerUuid);
+    entries.push(entry);
+    this.write("socketPresence", entries);
+  }
+  deleteSocketPresence(playerUuid: string) {
+    this.write("socketPresence", this.listSocketPresence().filter((entry) => entry.playerUuid !== playerUuid));
+  }
+  clearSocketPresence() { this.remove("socketPresence"); }
   getHostLink() {
     return this.read<{ connected: boolean; graceDeadlineAt: string | null }>("hostLink")
       ?? { connected: false, graceDeadlineAt: null };
   }
   setHostLink(link: { connected: boolean; graceDeadlineAt: string | null }) { this.write("hostLink", link); }
+  getMembershipCache() { return this.read<{ members: RuntimeMembership[]; fetchedAt: string }>("membershipCache"); }
+  setMembershipCache(cache: { members: RuntimeMembership[]; fetchedAt: string }) { this.write("membershipCache", cache); }
+  clearMembershipCache() { this.remove("membershipCache"); }
+  getStatusFingerprint() { return this.read<string>("statusFingerprint"); }
+  setStatusFingerprint(fingerprint: string) { this.write("statusFingerprint", fingerprint); }
+  getPresenceFingerprint() { return this.read<string>("presenceFingerprint"); }
+  setPresenceFingerprint(fingerprint: string) { this.write("presenceFingerprint", fingerprint); }
   clearAll() { this.sql.exec("DELETE FROM kv"); }
 }
 
-class DoCoordinatorEffects implements CoordinatorEffects {
+export class DoCoordinatorEffects implements CoordinatorEffects {
   constructor(
     private readonly env: Env,
     private readonly storage: DurableObjectStorage,
@@ -121,7 +140,7 @@ class DoCoordinatorEffects implements CoordinatorEffects {
     if (!this.env.DB) {
       throw new Error("SharedWorld coordinator requires the D1 binding (DB).");
     }
-    return new D1SharedWorldRepository(this.env.DB);
+    return new D1SharedWorldRepository(this.env.DB, workersSnapshotManifestCache());
   }
 
   private gateway(playerUuid: string) {
@@ -158,12 +177,24 @@ class DoCoordinatorEffects implements CoordinatorEffects {
     }));
   }
 
+  /**
+   * Dedupe cursor for scheduleAlarm: nearly every coordinator call re-arms
+   * the same deadline, and each setAlarm is a DO-storage write. Instance
+   * state only — a cold start re-arms once, which is harmless.
+   */
+  private lastScheduledAlarmMs: number | null | undefined = undefined;
+
   async scheduleAlarm(at: Date | null): Promise<void> {
+    const target = at == null ? null : at.getTime();
+    if (this.lastScheduledAlarmMs !== undefined && this.lastScheduledAlarmMs === target) {
+      return;
+    }
     if (at == null) {
       await this.storage.deleteAlarm();
     } else {
       await this.storage.setAlarm(at);
     }
+    this.lastScheduledAlarmMs = target;
   }
 
   async setHostWatch(hostUuid: string, watching: boolean): Promise<boolean> {
@@ -296,6 +327,25 @@ export class UserGatewayDO {
     return (await this.ctx.storage.get<string[]>("watches")) ?? [];
   }
 
+  /**
+   * Worlds this player's 0.4.1 client announced guest presence in via
+   * world-presence frames. Deliberately separate from `watches`: that set is
+   * coordinator-owned host plumbing (claim/retire write it, close pokes feed
+   * host grace), while this one is client-announced and cleared on last
+   * socket close — a reconnecting client re-announces.
+   */
+  private async presenceWorlds(): Promise<string[]> {
+    return (await this.ctx.storage.get<string[]>("presenceWorlds")) ?? [];
+  }
+
+  private async setPresenceWorld(worldId: string, present: boolean): Promise<void> {
+    const worlds = await this.presenceWorlds();
+    const next = present
+      ? [...new Set([...worlds, worldId])].filter((id) => id.length > 0)
+      : worlds.filter((id) => id !== worldId);
+    await this.ctx.storage.put("presenceWorlds", next);
+  }
+
   private hasSocket(): boolean {
     // readyState 1 = OPEN; a socket mid-close can still appear in the list.
     return this.ctx.getWebSockets().some((ws) => ws.readyState === 1);
@@ -426,6 +476,17 @@ export class UserGatewayDO {
         new Date()
       ]));
     }
+    if (frame.type === "world-presence" && typeof frame.worldId === "string" && typeof frame.present === "boolean") {
+      const attachment = ws.deserializeAttachment() as GatewayAttachment;
+      await this.serializer.run(async () => {
+        await this.setPresenceWorld(frame.worldId, frame.present);
+        await this.pokeCoordinator(frame.worldId, "reportSocketPresence", [
+          attachment.playerUuid,
+          frame.present,
+          new Date()
+        ]);
+      });
+    }
   }
 
   async webSocketClose(): Promise<void> {
@@ -444,6 +505,16 @@ export class UserGatewayDO {
     const now = new Date();
     for (const worldId of watches) {
       await this.serializer.run(() => this.pokeCoordinator(worldId, "hostSocketClosed", [this.playerUuid(), now]));
+    }
+    // Guest presence: start each announced world's grace, then forget the
+    // set — a reconnecting client re-announces, and the coordinator's grace
+    // prune covers a client that never comes back.
+    const presenceWorlds = await this.presenceWorlds();
+    if (presenceWorlds.length > 0) {
+      await this.ctx.storage.put("presenceWorlds", []);
+      for (const worldId of presenceWorlds) {
+        await this.serializer.run(() => this.pokeCoordinator(worldId, "presenceSocketClosed", [this.playerUuid(), now]));
+      }
     }
   }
 }

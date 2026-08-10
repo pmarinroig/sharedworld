@@ -32,6 +32,17 @@ async function seedGoogleDriveStorageObject(
   });
 }
 
+function packDirectoryMembersSnapshotId(raw: { query(sql: string): { get(...args: unknown[]): unknown } }, snapshotId: string): { members_snapshot_id: string | null } {
+  // 0026: pack headers live in the snapshots row's JSON directory; keep the
+  // legacy row shape so the assertions below read unchanged.
+  const row = raw.query("SELECT packs_json FROM snapshots WHERE id = ?").get(snapshotId) as { packs_json: string | null } | null;
+  const directory = JSON.parse(row?.packs_json ?? "[]") as Array<{ membersSnapshotId: string | null }>;
+  if (directory.length === 0) {
+    throw new Error(`no pack directory entry on ${snapshotId}`);
+  }
+  return { members_snapshot_id: directory[0].membersSnapshotId };
+}
+
 describe("SharedWorldService storage and sync planning", () => {
   test("storage usage counts all referenced stored objects across retained backups", async () => {
     const repository = createSqliteRepository();
@@ -1060,9 +1071,7 @@ describe("SharedWorldService storage and sync planning", () => {
       .query("SELECT COUNT(*) AS count FROM snapshot_files WHERE snapshot_id = ? AND pack_id = ?")
       .get(second.snapshotId, "non-region") as { count: number };
     expect(Number(memberRows.count)).toBe(0);
-    const packRow = repository.raw
-      .query("SELECT members_snapshot_id FROM snapshot_packs WHERE snapshot_id = ?")
-      .get(second.snapshotId) as { members_snapshot_id: string | null };
+    const packRow = packDirectoryMembersSnapshotId(repository.raw, second.snapshotId);
     expect(packRow.members_snapshot_id).toBe(first.snapshotId);
 
     // ...while everything the client observes is unchanged.

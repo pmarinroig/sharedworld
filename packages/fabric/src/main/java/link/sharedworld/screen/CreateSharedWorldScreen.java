@@ -1055,7 +1055,9 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
                     onTerminal.accept(updated);
                     return;
                 }
-                this.delay.sleep(1_000L);
+                // 2s is plenty for an OAuth browser round-trip and halves the
+                // per-link request burst.
+                this.delay.sleep(2_000L);
             }
         }
 

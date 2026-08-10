@@ -86,21 +86,68 @@ public final class SharedWorldClient implements ClientModInitializer {
                     public void onEvent(link.sharedworld.api.SharedWorldModels.RealtimeEventDto event) {
                         REALTIME_EVENTS.dispatchEvent(event);
                     }
-                }
+                },
+                // Activity gates the reconnect cap: anything session-shaped
+                // (or a recently open SharedWorld screen) keeps reconnects
+                // aggressive; idle at the title screen backs off to minutes.
+                () -> PLAY_SESSION_TRACKER.currentSession() != null
+                        || hostingManager.phase() != link.sharedworld.host.SharedWorldHostingManager.Phase.IDLE
+                        || releaseCoordinator.isActive()
+                        || sessionCoordinator.waitingView() != null
+                        || SharedWorldActivity.screenRecentlyOpen()
         );
         REALTIME_EVENTS.subscribe(guestRuntimeWatcher);
         REALTIME_EVENTS.subscribe(guestCacheWarmer);
         REALTIME_EVENTS.subscribe(presenceManager);
+        // The presence manager owns guest liveness: world-presence frames over
+        // the socket, and merged beats whose responses feed the watcher and
+        // warmer (the disconnected fallback lane's only data source).
+        presenceManager.setWorldPresenceAnnouncer(pushChannel::sendWorldPresence);
+        presenceManager.setBeatObserver((worldId, response) -> {
+            guestCacheWarmer.onMergedSnapshotObservation(worldId, response.lastSnapshotId());
+            Minecraft.getInstance().execute(() ->
+                    guestRuntimeWatcher.onMergedObservation(worldId, response.toRuntimeStatus()));
+        });
         hostingManager.setRealtimeConnectedSupplier(REALTIME_EVENTS::isConnected);
         REALTIME_EVENTS.subscribe(new link.sharedworld.realtime.RealtimeEvents.Subscriber() {
             @Override
             public void onRealtimeEvent(link.sharedworld.api.SharedWorldModels.RealtimeEventDto event) {
-                // A pushed settings or membership change reaches the running
-                // host through an immediate heartbeat, reusing the existing
-                // fetch-and-apply path (HTTP stays the authority).
-                if (("settings-changed".equals(event.kind()) || "membership-changed".equals(event.kind()))
+                // Pushed changes reach the running host through an immediate
+                // heartbeat, reusing the existing fetch-and-apply path (HTTP
+                // stays the authority). world-deleted joins the list because
+                // the 5-minute safety-net cadence would otherwise be the only
+                // way a host learns its world vanished; a runtime push whose
+                // payload contradicts our own hosting state (foreign host or
+                // epoch, non-hosting phase) is probed the same way — the
+                // heartbeat's 409/403/404 remains the verdict.
+                if (("settings-changed".equals(event.kind())
+                        || "membership-changed".equals(event.kind())
+                        || "world-deleted".equals(event.kind()))
                         && event.worldId().equals(hostingManager.runningWorldId())) {
                     hostingManager.requestImmediateHeartbeat();
+                    return;
+                }
+                if ("runtime-changed".equals(event.kind())
+                        && event.runtime() != null
+                        && event.worldId().equals(hostingManager.runningWorldId())) {
+                    link.sharedworld.api.SharedWorldModels.WorldRuntimeStatusDto runtime = event.runtime();
+                    boolean foreign = runtime.runtimeEpoch() != hostingManager.currentRuntimeEpoch()
+                            || !("host-starting".equals(runtime.phase())
+                                    || "host-live".equals(runtime.phase())
+                                    || "host-finalizing".equals(runtime.phase()));
+                    if (foreign) {
+                        hostingManager.requestImmediateHeartbeat();
+                    }
+                }
+            }
+        });
+        REALTIME_EVENTS.subscribe(new link.sharedworld.realtime.RealtimeEvents.Subscriber() {
+            @Override
+            public void onRealtimeEvent(link.sharedworld.api.SharedWorldModels.RealtimeEventDto event) {
+                // The waiting flow observes immediately on a pushed runtime
+                // change instead of waiting out its poll interval.
+                if ("runtime-changed".equals(event.kind())) {
+                    sessionCoordinator.onWaitingWorldRuntimeChanged(event.worldId());
                 }
             }
         });
@@ -152,6 +199,11 @@ public final class SharedWorldClient implements ClientModInitializer {
             releaseCoordinator.onClientStopping(client);
             PLAY_SESSION_TRACKER.clear();
             SharedWorldDevSessionBridge.clear();
+            // Clean socket close: the gateway pokes absence/grace immediately
+            // instead of waiting for TCP death to be noticed.
+            if (pushChannel != null) {
+                pushChannel.stop();
+            }
         });
         SharedWorldE4mcCompatibility.logClientInitFinished();
     }
@@ -186,6 +238,12 @@ public final class SharedWorldClient implements ClientModInitializer {
         if (!pushChannelStarted && pushChannel != null) {
             pushChannelStarted = true;
             pushChannel.start();
+            return;
+        }
+        if (pushChannel != null) {
+            // Already started: activity just began, so collapse any pending
+            // long idle-backoff reconnect into an immediate attempt.
+            pushChannel.nudge();
         }
     }
 

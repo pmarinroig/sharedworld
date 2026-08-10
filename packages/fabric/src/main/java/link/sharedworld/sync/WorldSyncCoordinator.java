@@ -574,11 +574,15 @@ public final class WorldSyncCoordinator {
                     if (directUpload != null && directStorageKey != null) {
                         // The uploader owns transport retries with resume; an
                         // outer whole-transfer retry would restart from byte 0.
+                        // The blob stamp rides the plan's signed headers and
+                        // spares the backend a coordinator call per artifact.
+                        java.util.Map<String, String> signedHeaders = preparedUpload.uploadUrl().headers();
                         this.apiClient.uploadBlobDirect(
                                 worldId,
                                 directStorageKey,
                                 runtimeEpoch,
                                 hostToken,
+                                signedHeaders == null ? null : signedHeaders.get("x-sharedworld-blob-stamp"),
                                 preparedUpload.bodyPath(),
                                 contentType,
                                 directUpload.chunkSizeBytes(),

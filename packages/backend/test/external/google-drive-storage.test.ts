@@ -18,20 +18,23 @@ type ScriptedReply = {
   headers?: Record<string, string>;
 };
 
-const requests: Array<{ method: string; path: string; auth: string | null; contentType: string | null; range: string | null }> = [];
+const requests: Array<{ method: string; path: string; auth: string | null; contentType: string | null; range: string | null; contentRange: string | null; bodyText: string }> = [];
 let script: ScriptedReply[] = [];
 let defaultReply: () => Response = () => new Response(JSON.stringify({ id: "drive-object-1" }), { status: 200 });
 
 const server = Bun.serve({
   port: 0,
-  fetch(request) {
+  async fetch(request) {
     const url = new URL(request.url);
     requests.push({
       method: request.method,
       path: url.pathname + url.search,
       auth: request.headers.get("authorization"),
       contentType: request.headers.get("content-type"),
-      range: request.headers.get("range")
+      range: request.headers.get("range"),
+      contentRange: request.headers.get("content-range"),
+      // Drained for the streaming-put assertions; harmless elsewhere.
+      bodyText: await request.text().catch(() => "")
     });
     const scripted = script.shift();
     if (scripted) {
@@ -317,6 +320,85 @@ describe("GoogleDriveStorageProvider", () => {
 
     expect(await fixture.provider.get(fixture.binding, "worlds/w1/a.bin")).toBeNull();
     expect(await fixture.repository.getStorageObject("google-drive", fixture.accountId, "worlds/w1/a.bin")).toBeNull();
+  });
+
+  function streamOf(text: string): ReadableStream {
+    return new Response(text).body!;
+  }
+
+  test("put streams a known-length body through a resumable session, no bearer on the session PUT", async () => {
+    const fixture = freshProviderFixture();
+    await fixture.seedAccount();
+    script = [
+      { status: 200, headers: { location: `http://127.0.0.1:${server.port}/resumable/stream-1` } },
+      { status: 200, body: JSON.stringify({ id: "stream-file-1", size: "7" }) }
+    ];
+
+    await fixture.provider.put(fixture.binding, "worlds/w1/big.bin", streamOf("payload"), "application/octet-stream", 7);
+
+    expect(requests).toHaveLength(2);
+    expect(requests[0].method).toBe("POST");
+    expect(requests[0].path).toBe("/upload/drive/v3/files?uploadType=resumable");
+    expect(requests[1].method).toBe("PUT");
+    expect(requests[1].path).toBe("/resumable/stream-1");
+    expect(requests[1].contentRange).toBe("bytes 0-6/7");
+    expect(requests[1].bodyText).toBe("payload");
+    // The session URL is the credential — the byte PUT must not carry ours.
+    expect(requests[1].auth).toBeNull();
+
+    const object = await fixture.repository.getStorageObject("google-drive", fixture.accountId, "worlds/w1/big.bin");
+    expect(object?.objectId).toBe("stream-file-1");
+    expect(object?.size).toBe(7);
+  });
+
+  test("streaming put reuses the existing Drive file id via a PATCH session init", async () => {
+    const fixture = freshProviderFixture();
+    await fixture.seedAccount();
+    await fixture.provider.put(fixture.binding, "worlds/w1/big.bin", "old-bytes", "application/octet-stream");
+    requests.length = 0;
+    script = [
+      { status: 200, headers: { location: `http://127.0.0.1:${server.port}/resumable/stream-2` } },
+      { status: 200, body: JSON.stringify({ id: "drive-object-1", size: "9" }) }
+    ];
+
+    await fixture.provider.put(fixture.binding, "worlds/w1/big.bin", streamOf("new-bytes"), "application/octet-stream", 9);
+
+    expect(requests[0].method).toBe("PATCH");
+    expect(requests[0].path).toBe("/upload/drive/v3/files/drive-object-1?uploadType=resumable");
+    // Same Drive file id: no superseded-object delete should be issued.
+    expect(requests.map((entry) => entry.method)).toEqual(["PATCH", "PUT"]);
+    const object = await fixture.repository.getStorageObject("google-drive", fixture.accountId, "worlds/w1/big.bin");
+    expect(object?.objectId).toBe("drive-object-1");
+    expect(object?.size).toBe(9);
+  });
+
+  test("a failed streaming PUT surfaces drive_upload_failed and records no object", async () => {
+    const fixture = freshProviderFixture();
+    await fixture.seedAccount();
+    script = [
+      { status: 200, headers: { location: `http://127.0.0.1:${server.port}/resumable/stream-3` } },
+      { status: 500, body: "backend exploded" }
+    ];
+
+    let thrown: unknown = null;
+    try {
+      await fixture.provider.put(fixture.binding, "worlds/w1/big.bin", streamOf("doomed"), "application/octet-stream", 6);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(HttpError);
+    expect((thrown as HttpError).code).toBe("drive_upload_failed");
+    expect(await fixture.repository.getStorageObject("google-drive", fixture.accountId, "worlds/w1/big.bin")).toBeNull();
+  });
+
+  test("a stream without a known length falls back to the buffered multipart path", async () => {
+    const fixture = freshProviderFixture();
+    await fixture.seedAccount();
+
+    await fixture.provider.put(fixture.binding, "worlds/w1/legacy.bin", streamOf("legacy"), "application/octet-stream");
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0].path).toBe("/upload/drive/v3/files?uploadType=multipart");
   });
 
   test("createResumableSession POSTs for a new key and returns the Location verbatim", async () => {

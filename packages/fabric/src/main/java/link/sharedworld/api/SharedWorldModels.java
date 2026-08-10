@@ -882,4 +882,57 @@ public final class SharedWorldModels {
             Long suggestedIntervalMs
     ) {
     }
+
+    /**
+     * The merged guest beat (0.4.1 backend): a FLAT superset of the presence
+     * ack carrying the resolved runtime status (minus its updatedAt — the
+     * presence ack owns that name) plus the latest snapshot id. One call
+     * replaces the old runtime poll, presence beat, and snapshot-id check —
+     * used only for reconnect resync, push-triggered probes, and the
+     * disconnected fallback lane.
+     */
+    public record GuestHeartbeatResponseDto(
+            String worldId,
+            boolean present,
+            String updatedAt,
+            String expiresAt,
+            Long suggestedIntervalMs,
+            String phase,
+            long runtimeEpoch,
+            String hostUuid,
+            String hostPlayerName,
+            String candidateUuid,
+            String candidatePlayerName,
+            String joinTarget,
+            String startupDeadlineAt,
+            String runtimeTokenIssuedAt,
+            String lastProgressAt,
+            String revokedAt,
+            StartupProgressDto startupProgress,
+            UncleanShutdownWarningDto uncleanShutdownWarning,
+            String hostMinecraftVersion,
+            String lastSnapshotId
+    ) {
+        /** The runtime slice, shaped for the existing watcher/verdict logic. */
+        public WorldRuntimeStatusDto toRuntimeStatus() {
+            return new WorldRuntimeStatusDto(
+                    worldId,
+                    phase,
+                    runtimeEpoch,
+                    hostUuid,
+                    hostPlayerName,
+                    candidateUuid,
+                    candidatePlayerName,
+                    joinTarget,
+                    startupDeadlineAt,
+                    runtimeTokenIssuedAt,
+                    lastProgressAt,
+                    revokedAt,
+                    startupProgress,
+                    uncleanShutdownWarning,
+                    hostMinecraftVersion,
+                    suggestedIntervalMs
+            );
+        }
+    }
 }

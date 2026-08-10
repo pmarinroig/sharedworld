@@ -67,8 +67,23 @@ export async function redeemInvite(svc: ServiceContext, ctx: RequestContext, req
     canUseCommands: false
   });
   await publishWorldEvent(svc, invite.worldId, "membership-changed");
+  await pokeMembershipsChanged(svc, invite.worldId, now);
 
   return getWorld(svc, ctx, invite.worldId, now);
+}
+
+/**
+ * Best-effort coordinator poke after a membership write: refreshes the DO's
+ * cached membership list so candidate election and fan-out see the new
+ * roster immediately. Must never fail the membership write itself — the
+ * coordinator's cache TTL covers a lost poke.
+ */
+async function pokeMembershipsChanged(svc: ServiceContext, worldId: string, now: Date): Promise<void> {
+  try {
+    await svc.realtime.coordinator(worldId).membershipsChanged(now);
+  } catch (error) {
+    console.warn("SharedWorld membershipsChanged poke failed", { worldId, error: String(error) });
+  }
 }
 
 export async function setMemberCommandPermission(
@@ -93,6 +108,7 @@ export async function setMemberCommandPermission(
     throw new HttpError(404, "member_not_found", "SharedWorld member not found.");
   }
   await publishWorldEvent(svc, worldId, "membership-changed");
+  await pokeMembershipsChanged(svc, worldId, new Date());
   return membership;
 }
 

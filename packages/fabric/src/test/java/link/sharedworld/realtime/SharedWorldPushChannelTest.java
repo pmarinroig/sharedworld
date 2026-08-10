@@ -14,7 +14,10 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
+import java.util.function.LongSupplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -96,6 +99,11 @@ class SharedWorldPushChannelTest {
     }
 
     private SharedWorldPushChannel channel(FakeConnector connector, RecordingListener listener) {
+        return channel(connector, listener, () -> true, System::nanoTime);
+    }
+
+    private SharedWorldPushChannel channel(
+            FakeConnector connector, RecordingListener listener, BooleanSupplier activity, LongSupplier nanoClock) {
         return new SharedWorldPushChannel(
                 "https://backend.example",
                 connector,
@@ -103,7 +111,9 @@ class SharedWorldPushChannelTest {
                 scheduler,
                 Runnable::run,
                 listener,
-                50L
+                activity,
+                50L,
+                nanoClock
         );
     }
 
@@ -221,6 +231,86 @@ class SharedWorldPushChannelTest {
         assertTrue(frame.contains("\"runtimeEpoch\":3"));
         assertTrue(frame.contains("\"playerUuid\":\"uuid-a\""));
         assertTrue(frame.contains("\"v\":1"));
+    }
+
+    @Test
+    void worldPresenceFramesCarryTheAnnouncedWorld() throws Exception {
+        FakeConnector connector = new FakeConnector();
+        RecordingListener listener = new RecordingListener();
+        SharedWorldPushChannel channel = channel(connector, listener);
+        channel.start();
+        assertTrue(connector.connectedOnce.await(5, TimeUnit.SECONDS));
+
+        channel.sendWorldPresence("w9", true);
+        long deadline = System.currentTimeMillis() + 5_000;
+        String frame = null;
+        while (frame == null && System.currentTimeMillis() < deadline) {
+            frame = connector.current.get().sent.stream()
+                    .filter((text) -> text.contains("world-presence"))
+                    .findFirst()
+                    .orElse(null);
+            Thread.sleep(20);
+        }
+        assertNotNull(frame);
+        assertTrue(frame.contains("\"worldId\":\"w9\""));
+        assertTrue(frame.contains("\"present\":true"));
+        assertTrue(frame.contains("\"v\":1"));
+    }
+
+    @Test
+    void silencePastTheAckDeadlineDropsAndReconnects() throws Exception {
+        FakeConnector connector = new FakeConnector();
+        RecordingListener listener = new RecordingListener();
+        AtomicLong nanos = new AtomicLong(0);
+        SharedWorldPushChannel channel = channel(connector, listener, () -> true, nanos::get);
+        channel.start();
+        assertTrue(connector.connectedOnce.await(5, TimeUnit.SECONDS));
+
+        // Inbound traffic (the edge-answered ack) refreshes the deadline.
+        nanos.set(TimeUnit.SECONDS.toNanos(30));
+        connector.current.get().events.onMessage(SharedWorldPushChannel.KEEPALIVE_RESPONSE);
+        Thread.sleep(150);
+        assertTrue(channel.isConnected());
+
+        // Total silence past ACK_DEADLINE_MS: the next keepalive tick drops
+        // the half-open socket and the reconnect loop takes over.
+        nanos.set(TimeUnit.SECONDS.toNanos(30) + TimeUnit.MILLISECONDS.toNanos(SharedWorldPushChannel.ACK_DEADLINE_MS + 1_000));
+        assertTrue(listener.disconnected.await(5, TimeUnit.SECONDS));
+        assertTrue(connector.connectedTwice.await(10, TimeUnit.SECONDS));
+    }
+
+    @Test
+    void reconnectBackoffCapsDependOnActivity() {
+        assertEquals(1_000L, SharedWorldPushChannel.backoffMs(0, true));
+        assertEquals(15_000L, SharedWorldPushChannel.backoffMs(10, true));
+        assertEquals(180_000L, SharedWorldPushChannel.backoffMs(10, false));
+        assertEquals(8_000L, SharedWorldPushChannel.backoffMs(3, false));
+    }
+
+    @Test
+    void nudgeCollapsesAPendingBackoffIntoAnImmediateAttempt() throws Exception {
+        FakeConnector connector = new FakeConnector();
+        connector.failFirstAttempts = Integer.MAX_VALUE;
+        RecordingListener listener = new RecordingListener();
+        SharedWorldPushChannel channel = channel(connector, listener, () -> false, System::nanoTime);
+        channel.start();
+
+        // Let the backoff grow past the quick early retries (attempt 3 lands
+        // around +6s; the next delay after it is >=8s).
+        long deadline = System.currentTimeMillis() + 12_000;
+        while (connector.attempts.get() < 3 && System.currentTimeMillis() < deadline) {
+            Thread.sleep(20);
+        }
+        int before = connector.attempts.get();
+        assertTrue(before >= 3);
+
+        // A nudge must beat the pending >=8s backoff by a wide margin.
+        channel.nudge();
+        long nudgeDeadline = System.currentTimeMillis() + 3_000;
+        while (connector.attempts.get() == before && System.currentTimeMillis() < nudgeDeadline) {
+            Thread.sleep(20);
+        }
+        assertTrue(connector.attempts.get() > before);
     }
 
     @Test

@@ -40,6 +40,19 @@ describe("D1 repository snapshot pack member inheritance", () => {
   }
 
   function membersSnapshotId(repository: ReturnType<typeof createSqliteRepository>, snapshotId: string, packId: string): string | null {
+    // 0026: pack headers live in the snapshots row's JSON directory; the
+    // legacy table is only consulted for rows written without one.
+    const snapshotRow = repository.raw
+      .query("SELECT packs_json FROM snapshots WHERE id = ?")
+      .get(snapshotId) as { packs_json: string | null } | null;
+    if (snapshotRow?.packs_json != null) {
+      const directory = JSON.parse(snapshotRow.packs_json) as Array<{ packId: string; membersSnapshotId: string | null }>;
+      const entry = directory.find((candidate) => candidate.packId === packId);
+      if (entry == null) {
+        throw new Error(`pack ${packId} missing from ${snapshotId} directory`);
+      }
+      return entry.membersSnapshotId;
+    }
     const row = repository.raw
       .query("SELECT members_snapshot_id FROM snapshot_packs WHERE snapshot_id = ? AND pack_id = ?")
       .get(snapshotId, packId) as { members_snapshot_id: string | null };

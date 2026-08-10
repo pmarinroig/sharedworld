@@ -17,7 +17,19 @@ export class GoogleDriveStorageProvider implements StorageProvider, ResumableUpl
     return (await this.repository.getStorageObject(this.provider, accountId, storageKey)) !== null;
   }
 
-  async put(binding: StorageBinding, storageKey: string, body: ReadableStream | ArrayBuffer | Uint8Array | string, contentType: string): Promise<void> {
+  async put(
+    binding: StorageBinding,
+    storageKey: string,
+    body: ReadableStream | ArrayBuffer | Uint8Array | string,
+    contentType: string,
+    contentLength: number | null = null
+  ): Promise<void> {
+    if (body instanceof ReadableStream && contentLength != null && Number.isSafeInteger(contentLength) && contentLength > 0) {
+      // The relay path: never buffer a stream of known length. Buffering
+      // held 2-3 whole-body copies in the isolate, which is what OOM'd
+      // pre-0.4.0 clients relaying large packs.
+      return this.putStreaming(binding, storageKey, body, contentType, contentLength);
+    }
     const account = await this.requireAccount(binding);
     const bytes = await asUint8Array(body);
     const existing = await this.repository.getStorageObject(this.provider, account.id, storageKey);
@@ -38,6 +50,50 @@ export class GoogleDriveStorageProvider implements StorageProvider, ResumableUpl
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     });
+  }
+
+  /**
+   * Relayed upload as a pass-through: a resumable session (already paced,
+   * retried, and id-reusing) plus ONE streaming PUT of the whole body. The
+   * body stream cannot be replayed, so there is no mid-transfer retry here —
+   * on failure the client's existing relay retry re-sends the blob, exactly
+   * as it did for the buffered path.
+   */
+  private async putStreaming(
+    binding: StorageBinding,
+    storageKey: string,
+    body: ReadableStream,
+    contentType: string,
+    contentLength: number
+  ): Promise<void> {
+    const sessionUrl = await this.createResumableSession(binding, storageKey, contentType, contentLength);
+    // FixedLengthStream is how workerd stamps Content-Length onto a streaming
+    // request body; under Bun (tests) the plain stream goes out chunked and
+    // the Content-Range header still declares the span.
+    const fixedLength = (globalThis as { FixedLengthStream?: new (length: number) => { readable: ReadableStream; writable: WritableStream } }).FixedLengthStream;
+    const outgoing = fixedLength ? body.pipeThrough(new fixedLength(contentLength)) : body;
+    const response = await fetch(sessionUrl, {
+      method: "PUT",
+      headers: { "content-range": `bytes 0-${contentLength - 1}/${contentLength}` },
+      body: outgoing,
+      ...({ duplex: "half" } as object)
+    });
+    if (response.status !== 200 && response.status !== 201) {
+      const text = await response.text().catch(() => "");
+      throw new HttpError(502, "drive_upload_failed", `Google Drive upload failed (HTTP ${response.status}).${text ? ` ${text.slice(0, 200)}` : ""}`);
+    }
+    const payload = await response.json().catch(() => ({})) as { id?: string; size?: string | number };
+    if (!payload.id) {
+      throw new HttpError(502, "drive_upload_failed", "Google Drive completed the upload without reporting a file id.");
+    }
+    const reportedSize = payload.size != null ? Number(payload.size) : Number.NaN;
+    await this.registerUploadedObject(
+      binding,
+      storageKey,
+      payload.id,
+      Number.isFinite(reportedSize) ? reportedSize : contentLength,
+      contentType
+    );
   }
 
   async get(binding: StorageBinding, storageKey: string, range?: BlobRange | null): Promise<StoredBlob | null> {

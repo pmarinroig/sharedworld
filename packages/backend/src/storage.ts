@@ -58,7 +58,13 @@ export interface StorageQuota {
 export interface StorageProvider {
   readonly provider: StorageProviderType;
   exists(binding: StorageBinding, storageKey: string): Promise<boolean>;
-  put(binding: StorageBinding, storageKey: string, body: ReadableStream | ArrayBuffer | Uint8Array | string, contentType: string): Promise<void>;
+  /**
+   * `contentLength` is the body's exact byte count when the caller knows it
+   * (relayed uploads pass the request's Content-Length). Providers use it to
+   * stream a ReadableStream body instead of buffering it — a stream without
+   * a known length falls back to buffering.
+   */
+  put(binding: StorageBinding, storageKey: string, body: ReadableStream | ArrayBuffer | Uint8Array | string, contentType: string, contentLength?: number | null): Promise<void>;
   /** range beyond the end of the blob throws 416 range_not_satisfiable. */
   get(binding: StorageBinding, storageKey: string, range?: BlobRange | null): Promise<StoredBlob | null>;
   delete(binding: StorageBinding, storageKey: string): Promise<void>;
@@ -74,7 +80,7 @@ export class R2StorageProvider implements StorageProvider {
     return (await this.env.BLOBS?.head(storageKey)) != null;
   }
 
-  async put(_binding: StorageBinding, storageKey: string, body: ReadableStream | ArrayBuffer | Uint8Array | string, contentType: string): Promise<void> {
+  async put(_binding: StorageBinding, storageKey: string, body: ReadableStream | ArrayBuffer | Uint8Array | string, contentType: string, _contentLength?: number | null): Promise<void> {
     if (!this.env.BLOBS) {
       throw new HttpError(501, "missing_blob_bucket", "R2 binding is not configured.");
     }

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 
 import type { D1Database, D1PreparedStatement, D1ResultRow } from "../../src/env.ts";
 import { D1SharedWorldRepository } from "../../src/d1-repository.ts";
+import type { SnapshotManifestCache } from "../../src/manifest-cache.ts";
 
 /**
  * Tests run the production D1SharedWorldRepository against an in-memory SQLite
@@ -10,7 +11,10 @@ import { D1SharedWorldRepository } from "../../src/d1-repository.ts";
  * in-memory repository implementation: what the tests exercise is exactly what
  * production runs.
  */
-export function createSqliteRepository(dbPath = ":memory:"): D1SharedWorldRepository & { close(): void; raw: Database } {
+export function createSqliteRepository(
+  dbPath = ":memory:",
+  manifestCache: SnapshotManifestCache | null = null
+): D1SharedWorldRepository & { close(): void; raw: Database } {
   // A file path makes the database survive a process restart — the chaos
   // drills use this so killing the harness backend is faithful to production
   // (where D1 and DO storage both outlive a deploy).
@@ -18,7 +22,7 @@ export function createSqliteRepository(dbPath = ":memory:"): D1SharedWorldReposi
   db.exec("PRAGMA foreign_keys = ON;");
   db.exec(readFileSync(new URL("../../src/schema.sql", import.meta.url), "utf8"));
   seedKnownTestPlayers(db);
-  const repository = new D1SharedWorldRepository(new SqliteD1Database(db)) as D1SharedWorldRepository & { close(): void; raw: Database };
+  const repository = new D1SharedWorldRepository(new SqliteD1Database(db), manifestCache) as D1SharedWorldRepository & { close(): void; raw: Database };
   repository.close = () => db.close(false);
   // Raw handle so tests can assert physical row counts (e.g. that inherited
   // snapshot packs really wrote zero member rows), not just wire-level shapes.

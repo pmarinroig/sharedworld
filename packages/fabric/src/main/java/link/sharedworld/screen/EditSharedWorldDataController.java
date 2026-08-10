@@ -38,7 +38,17 @@ final class EditSharedWorldDataController {
             try {
                 WorldDetailsDto loadedDetails = this.apiClient.getWorld(worldId);
                 WorldSnapshotSummaryDto[] snapshotArray = this.apiClient.listSnapshots(worldId);
-                return new LoadedState(loadedDetails, List.of(snapshotArray));
+                // 0.4.1 backends stop inlining usage into world details; the
+                // dedicated fetch is display-only and must never fail reload.
+                link.sharedworld.api.SharedWorldModels.StorageUsageSummaryDto usage = loadedDetails.storageUsage();
+                if (usage == null) {
+                    try {
+                        usage = this.apiClient.getStorageUsage(worldId);
+                    } catch (Exception ignored) {
+                        usage = null;
+                    }
+                }
+                return new LoadedState(loadedDetails, List.of(snapshotArray), usage);
             } catch (Exception exception) {
                 throw new RuntimeException(exception);
             }
@@ -195,7 +205,11 @@ final class EditSharedWorldDataController {
         return current;
     }
 
-    record LoadedState(WorldDetailsDto details, List<WorldSnapshotSummaryDto> snapshots) {
+    record LoadedState(
+            WorldDetailsDto details,
+            List<WorldSnapshotSummaryDto> snapshots,
+            link.sharedworld.api.SharedWorldModels.StorageUsageSummaryDto storageUsage
+    ) {
     }
 
     record SaveDetailsRequest(

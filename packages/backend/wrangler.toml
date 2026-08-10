@@ -34,6 +34,13 @@ SIGNED_URL_TTL_SECONDS = "900"
 # request-body limit — 100 MB on workers.dev — or the edge 413s first.
 UPLOAD_MAX_BODY_BYTES = "95000000"
 
+# Remote pacing levers for polling clients (pre-socket-native releases).
+# Autosave 10 min halves snapshot-driven load for every client version; the
+# runtime-poll suggestion slows old guests' 5s watcher to 15s (still well
+# under the 30s host-disconnect grace). Clients clamp to their own bounds.
+SUGGESTED_AUTOSAVE_INTERVAL_MS = "600000"
+SUGGESTED_RUNTIME_POLL_INTERVAL_MS = "15000"
+
 # Growth valve: hard ceiling on total non-deleted worlds. Generous on purpose
 # (beta has a handful); exists so unexpected virality queues politely instead
 # of becoming an unbounded D1/Workers bill. Raise via config-only deploy.

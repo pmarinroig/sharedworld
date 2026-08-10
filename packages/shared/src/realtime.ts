@@ -51,6 +51,14 @@ export type RealtimeServerFrame =
  * integrated server whenever it changes (full list, not deltas — self-healing
  * against a missed frame). The gateway's authenticated identity plus the
  * coordinator's current host record authorize it; a stale epoch is dropped.
+ *
+ * world-presence: a 0.4.1+ guest announces (or withdraws) presence in a
+ * world over its socket — the socket-native replacement for periodic
+ * presence POSTs. Carries no playerName: the gateway's authenticated
+ * identity is the identity, and the coordinator resolves display names from
+ * its membership cache. Re-announced by the client after every reconnect;
+ * a lost frame is healed by the server-side socket grace.
  */
 export type RealtimeClientFrame =
-  | { v: number; type: "host-players"; worldId: string; runtimeEpoch: number; players: RoomPlayer[] };
+  | { v: number; type: "host-players"; worldId: string; runtimeEpoch: number; players: RoomPlayer[] }
+  | { v: number; type: "world-presence"; worldId: string; present: boolean };

@@ -51,6 +51,7 @@ import type { Env } from "./env.ts";
 import { HttpError } from "./http.ts";
 import type { RequestContext, SharedWorldRepository } from "./repository.ts";
 import type { StorageProvider } from "./storage.ts";
+import { workersStorageUsageCache } from "./storage-usage-cache.ts";
 import { StorageLinkDomainService } from "./storage/link-service.ts";
 import type { AuthVerifier, BlobUrlSigner, ServiceContext } from "./service/context.ts";
 import type { RealtimeService } from "./realtime/service.ts";
@@ -86,7 +87,8 @@ export class SharedWorldService {
       storageProvider,
       storageLinks: new StorageLinkDomainService(repository, env, storageProvider.provider),
       realtime,
-      env
+      env,
+      storageUsageCache: workersStorageUsageCache()
     };
     this.authDomain = new AuthDomainService(repository, authVerifier, env);
   }
@@ -166,11 +168,22 @@ export class SharedWorldService {
   }
 
   /**
-   * Not routed since 0.1.3 removed the mod-side caller; retained as a
-   * service-level query used by the storage/retention test suites.
+   * Routed again since the efficiency release: GET /worlds/:id/storage-usage
+   * serves 0.4.1+ edit screens on demand, now that world details no longer
+   * compute usage inline for them.
    */
   async getStorageUsage(ctx: RequestContext, worldId: string): Promise<StorageUsageSummary> {
     return worlds.getStorageUsage(this.svc, ctx, worldId);
+  }
+
+  /** Weak ETag for GET /worlds; always present (an empty list is a valid body). */
+  async worldsEtag(ctx: RequestContext): Promise<string> {
+    return worlds.worldsEtag(this.svc, ctx);
+  }
+
+  /** Weak ETag for GET /worlds/:id; null when the caller has no access. */
+  async worldEtag(ctx: RequestContext, worldId: string, now = new Date()): Promise<string | null> {
+    return worlds.worldEtag(this.svc, ctx, worldId, now);
   }
 
   // --- membership ---

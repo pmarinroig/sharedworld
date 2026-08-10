@@ -14,7 +14,7 @@ import type {
   WorldSummary
 } from "../../../shared/src/index.ts";
 
-import { HttpError } from "../http.ts";
+import { clientVersionAtLeast, HttpError } from "../http.ts";
 import { slugify } from "../ids.ts";
 import type { RequestContext, WorldUpdateRecord } from "../repository.ts";
 import type { StorageBinding } from "../storage.ts";
@@ -34,6 +34,34 @@ import { parsePositiveInt } from "./sync-plan.ts";
 export async function listWorlds(svc: ServiceContext, ctx: RequestContext): Promise<WorldSummary[]> {
   const worlds = await svc.repository.listWorldsForPlayer(ctx.playerUuid);
   return Promise.all(worlds.map((world) => hydrateWorldSummary(svc, world, ctx.requestOrigin)));
+}
+
+/**
+ * Weak ETags over the change facts that feed the two world GET responses.
+ * The body itself can never be hashed: it is per-user and carries an
+ * advisory customIconDownload.expiresAt recomputed per call (the signer
+ * enforces nothing at expiry, so serving a cached body with a stale
+ * advisory timestamp is harmless). playerUuid/origin/clientVersion join the
+ * hash because they change what the body contains.
+ */
+export async function worldsEtag(svc: ServiceContext, ctx: RequestContext): Promise<string> {
+  const facts = await svc.repository.worldsChangeFacts(ctx.playerUuid);
+  return weakEtagOf({ facts, playerUuid: ctx.playerUuid, origin: ctx.requestOrigin ?? null, clientVersion: ctx.clientVersion ?? null });
+}
+
+export async function worldEtag(svc: ServiceContext, ctx: RequestContext, worldId: string, now = new Date()): Promise<string | null> {
+  const facts = await svc.repository.worldChangeFacts(worldId, ctx.playerUuid, now);
+  if (facts == null) {
+    return null;
+  }
+  return weakEtagOf({ facts, playerUuid: ctx.playerUuid, origin: ctx.requestOrigin ?? null, clientVersion: ctx.clientVersion ?? null });
+}
+
+async function weakEtagOf(material: unknown): Promise<string> {
+  const bytes = new TextEncoder().encode(JSON.stringify(material));
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const hex = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `W/"${hex}"`;
 }
 
 export async function createWorld(
@@ -89,18 +117,25 @@ export async function createWorld(
 export async function getWorld(svc: ServiceContext, ctx: RequestContext, worldId: string, now: Date): Promise<WorldDetails> {
   const world = await requireWorldDetails(svc, worldId, ctx.playerUuid);
   const hydrated = await hydrateWorldDetails(svc, world, ctx.requestOrigin);
-  // Best-effort: the storage display must never block world details — and
-  // world details must never block joining a session. A world whose Drive
-  // token is expired or tombstoned still hosts and joins fine; only the
-  // usage numbers go missing (clients already tolerate null here).
-  try {
-    hydrated.storageUsage = await getStorageUsage(svc, ctx, worldId);
-  } catch (error) {
-    console.warn("SharedWorld storage usage unavailable for world details", {
-      worldId,
-      error: error instanceof Error ? error.message : String(error)
-    });
+  // 0.4.1+ clients fetch usage on demand (GET /worlds/:id/storage-usage from
+  // the edit screen); the inline value here priced every world-details read
+  // at a full file-table scan plus a Drive quota call — fatal on the paths
+  // old cache warmers poll every 30s. Pre-0.4.1 clients keep the inline
+  // value, served from the Workers Cache. Best-effort either way: the
+  // storage display must never block world details, and clients tolerate
+  // null here.
+  if (clientVersionAtLeast(ctx.clientVersion, 0, 4, 1)) {
     hydrated.storageUsage = null;
+  } else {
+    try {
+      hydrated.storageUsage = await legacyCachedStorageUsage(svc, hydrated);
+    } catch (error) {
+      console.warn("SharedWorld storage usage unavailable for world details", {
+        worldId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      hydrated.storageUsage = null;
+    }
   }
   hydrated.activeInviteCode = world.ownerUuid === ctx.playerUuid
     ? await svc.repository.getActiveInvite(worldId, now)
@@ -231,12 +266,59 @@ export async function getStorageUsage(svc: ServiceContext, ctx: RequestContext, 
   await requireMembership(svc, ctx, worldId);
   const usage = await svc.repository.getStorageUsage(worldId);
   const binding = await requireWorldStorageBinding(svc, worldId);
-  const quota = await svc.storageProvider.quota(binding);
+  const quota = await cachedQuota(svc, binding);
   return {
     ...usage,
     quotaUsedBytes: quota.usedBytes,
     quotaTotalBytes: quota.totalBytes
   };
+}
+
+/**
+ * The pre-0.4.1 inline storageUsage, priced for a polling path: usedBytes is
+ * cached keyed (worldId, lastSnapshotId) so the referenced-keys CTE runs
+ * once per snapshot change instead of per poll, and the provider/linked/email
+ * facts ride the summary the caller already loaded. Advisory display data —
+ * retention/icon drift self-corrects within the cache TTL.
+ */
+async function legacyCachedStorageUsage(svc: ServiceContext, world: WorldDetails): Promise<StorageUsageSummary> {
+  const cache = svc.storageUsageCache;
+  let usedBytes = await cache?.getUsedBytes(world.id, world.lastSnapshotId) ?? null;
+  if (usedBytes == null) {
+    usedBytes = (await svc.repository.getStorageUsage(world.id)).usedBytes;
+    await cache?.putUsedBytes(world.id, world.lastSnapshotId, usedBytes);
+  }
+  const binding = await requireWorldStorageBinding(svc, world.id);
+  const quota = await cachedQuota(svc, binding);
+  return {
+    provider: world.storageProvider,
+    linked: world.storageLinked,
+    usedBytes,
+    quotaUsedBytes: quota.usedBytes,
+    quotaTotalBytes: quota.totalBytes,
+    accountEmail: world.storageAccountEmail
+  };
+}
+
+/** Account quota with the Workers-Cache front: one Drive `/about` per TTL, not per poll. */
+async function cachedQuota(
+  svc: ServiceContext,
+  binding: Awaited<ReturnType<typeof requireWorldStorageBinding>>
+): Promise<{ usedBytes: number | null; totalBytes: number | null }> {
+  const accountId = binding.storageAccountId;
+  const cache = svc.storageUsageCache;
+  if (accountId != null) {
+    const cached = await cache?.getQuota(accountId);
+    if (cached != null) {
+      return cached;
+    }
+  }
+  const fresh = await svc.storageProvider.quota(binding);
+  const quota = { usedBytes: fresh.usedBytes, totalBytes: fresh.totalBytes };
+  if (accountId != null) {
+    await cache?.putQuota(accountId, quota);
+  }
+  return quota;
 }
 
 export async function hydrateWorldSummary(svc: ServiceContext, world: WorldSummary, requestOrigin?: string): Promise<WorldSummary> {

@@ -5,6 +5,7 @@ import {
   type CoordinatorEffects,
   type CoordinatorStore,
   type LegacyPresenceEntry,
+  type SocketPresenceEntry,
   type SessionActor
 } from "../../src/realtime/coordinator.ts";
 import type { RuntimeMembership, RuntimeWaiter, WorldRuntimeRecord } from "../../src/runtime-protocol.ts";
@@ -37,8 +38,23 @@ export class InMemoryCoordinatorStore implements CoordinatorStore {
   upsertLegacyPresence(entry: LegacyPresenceEntry) { this.legacyPresence.set(entry.playerUuid, entry); }
   deleteLegacyPresence(playerUuid: string) { this.legacyPresence.delete(playerUuid); }
   clearLegacyPresence() { this.legacyPresence.clear(); }
+  socketPresence = new Map<string, SocketPresenceEntry>();
+  listSocketPresence() { return [...this.socketPresence.values()]; }
+  upsertSocketPresence(entry: SocketPresenceEntry) { this.socketPresence.set(entry.playerUuid, entry); }
+  deleteSocketPresence(playerUuid: string) { this.socketPresence.delete(playerUuid); }
+  clearSocketPresence() { this.socketPresence.clear(); }
   getHostLink() { return this.hostLink; }
   setHostLink(link: { connected: boolean; graceDeadlineAt: string | null }) { this.hostLink = link; }
+  membershipCache: { members: RuntimeMembership[]; fetchedAt: string } | null = null;
+  statusFingerprint: string | null = null;
+  presenceFingerprint: string | null = null;
+  getMembershipCache() { return this.membershipCache; }
+  setMembershipCache(cache: { members: RuntimeMembership[]; fetchedAt: string }) { this.membershipCache = cache; }
+  clearMembershipCache() { this.membershipCache = null; }
+  getStatusFingerprint() { return this.statusFingerprint; }
+  setStatusFingerprint(fingerprint: string) { this.statusFingerprint = fingerprint; }
+  getPresenceFingerprint() { return this.presenceFingerprint; }
+  setPresenceFingerprint(fingerprint: string) { this.presenceFingerprint = fingerprint; }
   clearAll() {
     this.runtime = null;
     this.warning = null;
@@ -47,6 +63,10 @@ export class InMemoryCoordinatorStore implements CoordinatorStore {
     this.roomPlayers = null;
     this.legacyPresence.clear();
     this.hostLink = { connected: false, graceDeadlineAt: null };
+    this.membershipCache = null;
+    this.statusFingerprint = null;
+    this.presenceFingerprint = null;
+    this.socketPresence.clear();
   }
 }
 
@@ -62,7 +82,10 @@ export class RecordingEffects implements CoordinatorEffects {
   /** What probeHostReachability answers; null = unknown/never seen. */
   lastKeepaliveAt: Date | null = null;
 
+  listMembershipsCalls = 0;
+
   async listMemberships(): Promise<RuntimeMembership[]> {
+    this.listMembershipsCalls += 1;
     return this.memberships;
   }
   async mirrorRuntime(_worldId: string, status: WorldRuntimeStatus): Promise<void> {

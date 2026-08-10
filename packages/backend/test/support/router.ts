@@ -13,6 +13,7 @@ import type {
 } from "../../../shared/src/index.ts";
 
 import { createRouter, type RouterService } from "../../src/router.ts";
+import { clearSessionCache } from "../../src/router/shared.ts";
 
 
 const DEFAULT_SESSION: SessionToken = {
@@ -231,6 +232,17 @@ const defaultRouterService = {
   async getStorageLinkSession(_ctx, _sessionId) {
     return unexpectedRouteCall("getStorageLinkSession");
   },
+  async getStorageUsage(_ctx, _worldId) {
+    return unexpectedRouteCall("getStorageUsage");
+  },
+  // Distinct per-call tags keep fixture GETs unconditional unless a test
+  // overrides these with something stable.
+  async worldsEtag(_ctx) {
+    return `W/"fixture-${crypto.randomUUID()}"`;
+  },
+  async worldEtag(_ctx, _worldId) {
+    return `W/"fixture-${crypto.randomUUID()}"`;
+  },
   async getWorld(_ctx, _worldId) {
     return unexpectedRouteCall("getWorld");
   },
@@ -303,6 +315,10 @@ const defaultRouterService = {
 } satisfies RouterService;
 
 export function createRouterService(overrides: Partial<RouterService> = {}): RouterService {
+  // Every fixture service starts from a clean auth cache: the in-isolate
+  // session cache is module-level, and tests reuse the same fixture token
+  // with different service doubles.
+  clearSessionCache();
   return {
     ...defaultRouterService,
     ...overrides

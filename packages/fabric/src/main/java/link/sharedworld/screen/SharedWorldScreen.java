@@ -22,7 +22,8 @@ import java.util.concurrent.CompletableFuture;
 
 public final class SharedWorldScreen extends link.sharedworld.versioned.VersionedScreen {
     private static final long AUTO_REFRESH_IDLE_MS = 15_000L;
-    private static final long AUTO_REFRESH_ACTIVE_MS = 2_500L;
+    private static final long AUTO_REFRESH_ACTIVE_MS = 10_000L;
+    private static final long EVENT_REFRESH_DEBOUNCE_MS = 1_000L;
     /** Safety-net cadence while pushed events drive the list (0.3.0). */
     private static final long AUTO_REFRESH_PUSH_FALLBACK_MS = 60_000L;
     private static final long SUCCESS_STATUS_TTL_MS = 7_000L;
@@ -42,6 +43,7 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
     private boolean loading;
     private boolean backendReachable = true;
     private boolean refreshInFlight;
+    private long lastRefreshStartedAt;
     private long nextAutoRefreshAt;
     private long seenRealtimeEventCount;
 
@@ -54,6 +56,7 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
 
     @Override
     protected void init() {
+        link.sharedworld.SharedWorldActivity.touchScreen();
         link.sharedworld.versioned.LayoutCompat.addTitleHeader(this.layout, this.title, this.font);
         this.serverList = link.sharedworld.versioned.LayoutCompat.addContentsList(this.layout, new SharedWorldServerList(
                 this.minecraft,
@@ -239,10 +242,15 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
         if (this.minecraft == null || link.sharedworld.versioned.ClientCompat.currentScreen(this.minecraft) != this) {
             return;
         }
+        link.sharedworld.SharedWorldActivity.touchScreen();
 
         long now = link.sharedworld.util.MonotonicClock.millis();
         boolean pushedChange = SharedWorldClient.realtimeEvents().eventCount() != this.seenRealtimeEventCount;
-        if (!this.refreshInFlight && (pushedChange || now >= this.nextAutoRefreshAt)) {
+        // Event bursts (a release fires runtime+presence+snapshot changes in
+        // quick succession) coalesce into one refresh per second.
+        boolean debounced = now - this.lastRefreshStartedAt >= EVENT_REFRESH_DEBOUNCE_MS;
+        if (!this.refreshInFlight && ((pushedChange && debounced) || now >= this.nextAutoRefreshAt)) {
+            this.lastRefreshStartedAt = now;
             this.refreshWorlds();
         }
     }

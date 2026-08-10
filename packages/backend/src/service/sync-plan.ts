@@ -32,11 +32,13 @@ import {
 } from "../../../shared/src/index.ts";
 
 import { clientVersionAtLeast, HttpError } from "../http.ts";
+import { verifyBlobStamp } from "./blob-stamp.ts";
 import { parseSingleByteRange, resumableCapable, type ResumableUploadCapable } from "../storage.ts";
 import { randomId } from "../ids.ts";
 import type { RequestContext, WorldStorageBinding } from "../repository.ts";
 import type { WorldRuntimeRecord } from "../runtime-protocol.ts";
 import {
+  BLOB_STAMP_HEADER,
   HOST_TOKEN_HEADER,
   RUNTIME_EPOCH_HEADER,
   signDownloadForWorld,
@@ -297,8 +299,46 @@ export async function downloadPlan(
 }
 
 /**
+ * True when a valid blob stamp scoped to (worldId, storageKey) names an
+ * epoch that is still the live runtime per the D1 mirror. This replaces the
+ * coordinator round-trip on the per-artifact routes: the stamp was minted
+ * only after full DO authority validation at plan time, and the mirror —
+ * single-writer, coordinator-maintained — pins the epoch to the present.
+ * Mirror `revokedAt` is deliberately ignored, matching validateHostAuthority
+ * (a revoked host may finish its uploads; finalize stays the real gate).
+ * Any miss returns false and the caller falls back to the DO path.
+ */
+async function stampAuthorized(
+  svc: ServiceContext,
+  worldId: string,
+  stamp: string | null | undefined,
+  storageKey: string
+): Promise<boolean> {
+  if (stamp == null || stamp.length === 0) {
+    return false;
+  }
+  const claims = await verifyBlobStamp(svc.env, stamp, { worldId, storageKey }, new Date());
+  if (claims == null) {
+    return false;
+  }
+  const mirror = await svc.repository.getRuntimeMirror(worldId);
+  if (mirror?.statusJson == null) {
+    return false;
+  }
+  try {
+    const status = JSON.parse(mirror.statusJson) as { phase?: string; runtimeEpoch?: number };
+    return (status.phase === "host-starting" || status.phase === "host-live" || status.phase === "host-finalizing")
+      && status.runtimeEpoch === claims.runtimeEpoch;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Blob bytes flow through the worker; host authority for uploads is re-checked
- * from the runtime headers stamped onto the signed upload URL.
+ * from the runtime headers stamped onto the signed upload URL — via the HMAC
+ * blob stamp when present and current (no coordinator call), else the
+ * coordinator path.
  */
 export async function uploadStorageBlob(
   svc: ServiceContext,
@@ -307,24 +347,67 @@ export async function uploadStorageBlob(
   storageKey: string,
   request: Request
 ): Promise<void> {
-  const runtimeEpochHeader = request.headers.get(RUNTIME_EPOCH_HEADER);
-  await requireHostAuthority(
-    svc,
-    ctx,
-    worldId,
-    runtimeEpochHeader == null ? null : Number(runtimeEpochHeader),
-    request.headers.get(HOST_TOKEN_HEADER),
-    ["host-starting", "host-live", "host-finalizing"],
-    new Date()
-  );
+  if (!await stampAuthorized(svc, worldId, request.headers.get(BLOB_STAMP_HEADER), storageKey)) {
+    const runtimeEpochHeader = request.headers.get(RUNTIME_EPOCH_HEADER);
+    await requireHostAuthority(
+      svc,
+      ctx,
+      worldId,
+      runtimeEpochHeader == null ? null : Number(runtimeEpochHeader),
+      request.headers.get(HOST_TOKEN_HEADER),
+      ["host-starting", "host-live", "host-finalizing"],
+      new Date()
+    );
+  }
   const contentType = request.headers.get("content-type") ?? "application/octet-stream";
-  await svc.storageProvider.put(await requireWorldStorageBinding(svc, worldId), storageKey, request.body ?? "", contentType);
+  const contentLengthHeader = request.headers.get("content-length");
+  const declaredLength = contentLengthHeader == null ? Number.NaN : Number(contentLengthHeader);
+  const limitBytes = maxUploadBodyBytes(svc);
+  const oversized = (bytes: number) => {
+    const advice = clientVersionAtLeast(ctx.clientVersion, 0, 4, 0)
+      ? "This world's storage only supports relayed transfers; shrink the world or re-link its storage."
+      : "Update the SharedWorld mod to the latest version (it uploads large files directly), or shrink the world.";
+    return new HttpError(
+      413,
+      "blob_too_large",
+      `This blob is ${Math.max(1, Math.round(bytes / 1_000_000))} MB, but relayed SharedWorld uploads are limited to ${Math.max(1, Math.round(limitBytes / 1_000_000))} MB per blob. ${advice}`
+    );
+  };
+  let body: ReadableStream<Uint8Array> | Uint8Array | string = request.body ?? "";
+  let contentLength: number;
+  if (Number.isSafeInteger(declaredLength) && declaredLength >= 0) {
+    if (declaredLength > limitBytes) {
+      throw oversized(declaredLength);
+    }
+    contentLength = declaredLength;
+  } else {
+    // Chunked upload with no Content-Length: shipped clients (Java
+    // HttpClient with a progress-wrapped InputStream publisher) send these,
+    // so a 411 here breaks real relays. Buffer ONCE — a single copy stays
+    // well under the isolate limit because the relay ceiling does — and
+    // stream to the provider with the now-known length.
+    const buffered = new Uint8Array(await request.arrayBuffer());
+    if (buffered.byteLength > limitBytes) {
+      throw oversized(buffered.byteLength);
+    }
+    // One-chunk stream so the provider takes its streaming path (the
+    // buffered multipart path would copy the body 2-3x — the original OOM).
+    body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(buffered);
+        controller.close();
+      }
+    });
+    contentLength = buffered.byteLength;
+  }
+  await svc.storageProvider.put(await requireWorldStorageBinding(svc, worldId), storageKey, body, contentType, contentLength);
 }
 
 const DIRECT_UPLOAD_CHUNK_BYTES = 16 * 1024 * 1024;
 const UPLOAD_SESSION_TTL_MS = 7 * 24 * 60 * 60_000;
 const UPLOAD_SESSION_SWEEP_AFTER_MS = 8 * 24 * 60 * 60_000;
 const UPLOAD_SESSION_SWEEP_LIMIT = 3;
+const CONFIRMED_SESSION_RETAIN_MS = 24 * 60 * 60_000;
 
 /**
  * Starts a direct-to-provider resumable upload for one storage key. Same
@@ -338,7 +421,9 @@ export async function createBlobUploadSession(
   worldId: string,
   request: CreateBlobSessionRequest
 ): Promise<CreateBlobSessionResponse> {
-  await requireHostAuthority(svc, ctx, worldId, request.runtimeEpoch, request.hostToken, ["host-starting", "host-live", "host-finalizing"], new Date());
+  if (!await stampAuthorized(svc, worldId, request.blobStamp, request.storageKey ?? "")) {
+    await requireHostAuthority(svc, ctx, worldId, request.runtimeEpoch, request.hostToken, ["host-starting", "host-live", "host-finalizing"], new Date());
+  }
   const binding = await requireWorldStorageBinding(svc, worldId);
   const capable = resumableCapable(svc.storageProvider);
   if (!capable || binding.storageAccountId == null) {
@@ -390,13 +475,19 @@ export async function commitBlobUploadSession(
   worldId: string,
   request: CommitBlobSessionRequest
 ): Promise<CommitBlobSessionResponse> {
-  await requireHostAuthority(svc, ctx, worldId, request.runtimeEpoch, request.hostToken, ["host-starting", "host-live", "host-finalizing"], new Date());
+  // Stamp scope-check runs against the session's own storage key; error
+  // ordering for stampless callers is unchanged (authority before the 410).
+  const session = await svc.repository.getUploadSession(request.uploadId ?? "");
+  const stamped = session != null && session.worldId === worldId
+    && await stampAuthorized(svc, worldId, request.blobStamp, session.storageKey);
+  if (!stamped) {
+    await requireHostAuthority(svc, ctx, worldId, request.runtimeEpoch, request.hostToken, ["host-starting", "host-live", "host-finalizing"], new Date());
+  }
   const binding = await requireWorldStorageBinding(svc, worldId);
   const capable = resumableCapable(svc.storageProvider);
   if (!capable || binding.storageAccountId == null) {
     throw new HttpError(409, "direct_upload_unsupported", "This world's storage does not support direct uploads.");
   }
-  const session = await svc.repository.getUploadSession(request.uploadId ?? "");
   if (!session || session.worldId !== worldId) {
     throw new HttpError(410, "upload_session_expired", "This upload session is no longer active. Start the upload again.");
   }
@@ -438,6 +529,15 @@ async function sweepExpiredUploadSessions(
   if (binding.storageAccountId == null) {
     return;
   }
+  // Confirmed rows outlive their commit only to serve idempotent commit
+  // retries; after a day they are pure growth (859 rows in prod before this
+  // sweep existed). Plain bounded DELETE — no probes needed.
+  await svc.repository.deleteConfirmedUploadSessionsBefore(
+    binding.provider,
+    binding.storageAccountId,
+    new Date(now.getTime() - CONFIRMED_SESSION_RETAIN_MS).toISOString(),
+    20
+  );
   const cutoff = new Date(now.getTime() - UPLOAD_SESSION_SWEEP_AFTER_MS).toISOString();
   const stale = await svc.repository.listUnconfirmedUploadSessionsBefore(binding.provider, binding.storageAccountId, cutoff, UPLOAD_SESSION_SWEEP_LIMIT);
   for (const session of stale) {
