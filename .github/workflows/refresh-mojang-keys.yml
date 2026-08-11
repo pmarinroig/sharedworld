@@ -1,0 +1,64 @@
+name: Refresh Mojang keys
+
+# Mojang serves api.minecraftservices.com/publickeys with HTTP 403 to
+# Cloudflare Workers egress, so the Worker can never refresh its own D1 cache
+# of player-certificate public keys. GitHub-hosted runners (Azure egress) are
+# not blocked, so this workflow does what scripts/backend-seed-mojang-keys.sh
+# does from a dev machine: fetch the key set here and write it into remote D1.
+#
+# The seed step needs a CLOUDFLARE_API_TOKEN repo secret (D1 edit permission).
+# Without the secret the workflow still runs the fetch step, which doubles as
+# a canary that Mojang keeps accepting requests from GitHub's IP ranges.
+
+on:
+  schedule:
+    - cron: "23 4 * * *" # daily, 04:23 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/backend
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Fetch player-certificate keys from Mojang
+        run: |
+          python3 - "$RUNNER_TEMP/seed.sql" <<'EOF'
+          import json, sys, urllib.request, urllib.error, datetime
+
+          url = "https://api.minecraftservices.com/publickeys"
+          try:
+              payload = json.load(urllib.request.urlopen(url, timeout=30))
+          except urllib.error.HTTPError as err:
+              raise SystemExit(f"Mojang rejected the request: HTTP {err.code} {err.reason} for {url}")
+          keys = [entry["publicKey"] for entry in payload["playerCertificateKeys"] if entry.get("publicKey")]
+          if not keys:
+              raise SystemExit("publickeys response contained no playerCertificateKeys")
+          keys_json = json.dumps(keys).replace("'", "''")
+          now = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+          sql = (
+              "INSERT INTO mojang_services_keys (id, fetched_at, keys_json) "
+              f"VALUES (1, '{now}', '{keys_json}') "
+              "ON CONFLICT(id) DO UPDATE SET fetched_at = excluded.fetched_at, keys_json = excluded.keys_json;"
+          )
+          open(sys.argv[1], "w").write(sql)
+          print(f"Fetched {len(keys)} Mojang player-certificate key(s), fetched_at {now}")
+          EOF
+
+      - name: Seed production D1
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        run: npx wrangler@4 d1 execute sharedworld --remote --file "$RUNNER_TEMP/seed.sql"
+
+      - name: Note missing Cloudflare credentials
+        if: env.CLOUDFLARE_API_TOKEN == ''
+        run: echo "CLOUDFLARE_API_TOKEN secret is not set — fetched keys were NOT written to D1."
