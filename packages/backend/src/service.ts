@@ -48,12 +48,11 @@ import type {
 
 import { AuthDomainService } from "./auth/service.ts";
 import type { Env } from "./env.ts";
-import { HttpError } from "./http.ts";
 import type { RequestContext, SharedWorldRepository } from "./repository.ts";
 import type { StorageProvider } from "./storage.ts";
 import { workersStorageUsageCache } from "./storage-usage-cache.ts";
 import { StorageLinkDomainService } from "./storage/link-service.ts";
-import type { AuthVerifier, BlobUrlSigner, ServiceContext } from "./service/context.ts";
+import type { BlobUrlSigner, ServiceContext } from "./service/context.ts";
 import type { RealtimeService } from "./realtime/service.ts";
 import * as members from "./service/members.ts";
 import * as session from "./service/session.ts";
@@ -61,7 +60,7 @@ import * as snapshots from "./service/snapshots.ts";
 import * as syncPlan from "./service/sync-plan.ts";
 import * as worlds from "./service/worlds.ts";
 
-export type { AuthVerifier, BlobUrlSigner } from "./service/context.ts";
+export type { BlobUrlSigner } from "./service/context.ts";
 
 /**
  * The single entry point the router talks to. Each method delegates to one
@@ -74,7 +73,6 @@ export class SharedWorldService {
 
   constructor(
     repository: SharedWorldRepository,
-    authVerifier: AuthVerifier,
     blobSigner: BlobUrlSigner,
     storageProvider: StorageProvider,
     env: Env,
@@ -82,7 +80,6 @@ export class SharedWorldService {
   ) {
     this.svc = {
       repository,
-      authVerifier,
       blobSigner,
       storageProvider,
       storageLinks: new StorageLinkDomainService(repository, env, storageProvider.provider),
@@ -90,7 +87,7 @@ export class SharedWorldService {
       env,
       storageUsageCache: workersStorageUsageCache()
     };
-    this.authDomain = new AuthDomainService(repository, authVerifier, env);
+    this.authDomain = new AuthDomainService(repository, env);
   }
 
   // --- auth ---
@@ -99,8 +96,8 @@ export class SharedWorldService {
     return this.authDomain.createChallenge(now);
   }
 
-  async completeAuth(request: AuthCompleteRequest, now = new Date()) {
-    return this.authDomain.completeAuth(request, now);
+  async completeAuth(request: AuthCompleteRequest) {
+    return this.authDomain.completeAuth(request);
   }
 
   async completeCertAuth(request: AuthCompleteCertRequest, now = new Date()) {
@@ -311,99 +308,6 @@ export class SharedWorldService {
   async releaseHost(ctx: RequestContext, worldId: string, request: ReleaseHostRequest, now = new Date()) {
     return session.releaseHost(this.svc, ctx, worldId, request, now);
   }
-}
-
-export class MinecraftSessionServerAuthVerifier implements AuthVerifier {
-  constructor(
-    private readonly endpoint: string,
-    private readonly attemptTimeoutMs = 5_000
-  ) {}
-
-  async verifyJoin(playerName: string, serverId: string): Promise<{ playerUuid: string; playerName: string } | null> {
-    const url = new URL(this.endpoint);
-    url.searchParams.set("username", playerName);
-    url.searchParams.set("serverId", serverId);
-
-    let response: Response;
-    try {
-      response = await fetch(url, {
-        headers: {
-          accept: "application/json"
-        },
-        signal: AbortSignal.timeout(this.attemptTimeoutMs)
-      });
-    } catch (error) {
-      console.warn("SharedWorld Mojang hasJoined request failed", { playerName, serverId, cause: String(error) });
-      throw new HttpError(
-        503,
-        "identity_verification_unavailable",
-        "Minecraft's identity service is unreachable right now. Please try again in a minute."
-      );
-    }
-
-    if (response.status === 204 || response.status === 404) {
-      return null;
-    }
-    if (!response.ok) {
-      const bodyHead = (await response.text().catch(() => "")).slice(0, 200);
-      console.warn("SharedWorld Mojang hasJoined returned an error status", {
-        playerName,
-        serverId,
-        status: response.status,
-        bodyHead
-      });
-      const error = new HttpError(503, "identity_verification_unavailable", unavailableMessageForStatus(response.status));
-      error.upstreamStatus = response.status;
-      if (response.status === 429) {
-        error.retryAfterSeconds = clampRetryAfterSeconds(response.headers.get("retry-after"));
-      }
-      throw error;
-    }
-
-    const text = await response.text();
-    if (text.trim().length === 0) {
-      return null;
-    }
-
-    let payload: { id?: string; name?: string };
-    try {
-      payload = JSON.parse(text) as { id?: string; name?: string };
-    } catch {
-      throw new HttpError(503, "identity_verification_unavailable", "Minecraft identity verification returned an invalid response.");
-    }
-    if (!payload.id || !payload.name) {
-      throw new HttpError(503, "identity_verification_unavailable", "Minecraft identity verification returned an invalid response.");
-    }
-    return {
-      playerUuid: payload.id,
-      playerName: payload.name
-    };
-  }
-}
-
-/**
- * Shipped clients render these messages verbatim, so each upstream cause gets
- * an actionable text while the error code stays identity_verification_unavailable
- * (shipped retry handling and parity tests key on the code, never the text).
- */
-function unavailableMessageForStatus(status: number): string {
-  if (status === 429) {
-    return "Minecraft's identity service is rate-limiting the SharedWorld server. Please wait a minute and try again.";
-  }
-  if (status === 403) {
-    // Mojang's standing block on this egress: only the certificate flow
-    // (0.2.1+) gets around it, so point stale clients at the update.
-    return "Minecraft no longer accepts the sign-in method used by SharedWorld 0.2.0 and older. Please update SharedWorld to 0.2.1 or newer. If you are already updated, a mod that blocks chat signing may be hiding your Minecraft profile keys.";
-  }
-  return "Minecraft identity verification is unavailable.";
-}
-
-function clampRetryAfterSeconds(header: string | null): number {
-  const seconds = header !== null && /^\d+$/.test(header.trim()) ? Number(header.trim()) : Number.NaN;
-  if (Number.isNaN(seconds)) {
-    return 10;
-  }
-  return Math.min(120, Math.max(10, seconds));
 }
 
 /**

@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
 
 import { createSqliteRepository } from "../support/sqlite-d1.ts";
-import { authVerifier, createBlobSigner, createTestService } from "../support/service-fixtures.ts";
+import { createBlobSigner, createTestService } from "../support/service-fixtures.ts";
 
 describe("cross-version guardrail fields", () => {
   test("finalizeSnapshot records the world's data/minecraft version and surfaces it on summaries", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
 
@@ -46,7 +46,7 @@ describe("cross-version guardrail fields", () => {
   test("legacy finalize without versions stays null end to end", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
 
@@ -78,7 +78,7 @@ describe("cross-version guardrail fields", () => {
   test("host heartbeat stamps and preserves the host's Minecraft version", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
 
@@ -125,7 +125,7 @@ describe("cross-version guardrail fields", () => {
   test("restoring a backup keeps its game-version stamps so the guardrail stays armed", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     const owner = { playerUuid: "player-owner", playerName: "Owner" };
@@ -162,7 +162,7 @@ describe("cross-version guardrail fields", () => {
   test("backups cannot be restored while the world is being hosted", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     const owner = { playerUuid: "player-owner", playerName: "Owner" };

@@ -3,11 +3,7 @@ import type { Env } from "./env.ts";
 import { workersSnapshotManifestCache } from "./manifest-cache.ts";
 import { DoRealtimeService } from "./realtime/service.ts";
 import { createRouter } from "./router.ts";
-import {
-  MinecraftSessionServerAuthVerifier,
-  SharedWorldService,
-  WorkerSignedUrlSigner
-} from "./service.ts";
+import { SharedWorldService, WorkerSignedUrlSigner } from "./service.ts";
 import { createStorageProvider } from "./storage.ts";
 
 export { UserGatewayDO, WorldCoordinatorDO } from "./realtime/do.ts";
@@ -22,9 +18,6 @@ export function createApp(env: Env): { fetch(request: Request): Promise<Response
   const repository = new D1SharedWorldRepository(env.DB, workersSnapshotManifestCache());
   const service = new SharedWorldService(
     repository,
-    new MinecraftSessionServerAuthVerifier(
-      env.MOJANG_HAS_JOINED_ENDPOINT ?? "https://sessionserver.mojang.com/session/minecraft/hasJoined"
-    ),
     new WorkerSignedUrlSigner(env),
     createStorageProvider(env, repository),
     env,

@@ -1,18 +1,12 @@
 import type { CreateWorldRequest, HostAssignment, ReleaseHostRequest } from "../../../shared/src/index.ts";
 import type { RequestContext, SharedWorldRepository } from "../../src/repository.ts";
-import type { AuthVerifier, BlobUrlSigner } from "../../src/service.ts";
+import type { BlobUrlSigner } from "../../src/service.ts";
 import { createSqliteRepository } from "./sqlite-d1.ts";
 import { createTestService, type TestDriverSharedWorldService } from "./service-fixtures.ts";
 
 export const OWNER: RequestContext = { playerUuid: "player-owner", playerName: "Owner" };
 export const GUEST: RequestContext = { playerUuid: "player-guest", playerName: "Guest" };
 export const HOST_MEMBER: RequestContext = { playerUuid: "player-host", playerName: "Host" };
-
-const authVerifier: AuthVerifier = {
-  async verifyJoin() {
-    return OWNER;
-  }
-};
 
 export type ServiceFixture<TRepository extends SharedWorldRepository> = {
   label: string;
@@ -35,10 +29,7 @@ class NoopBlobSigner implements BlobUrlSigner {
 }
 
 function createService(repository: SharedWorldRepository): TestDriverSharedWorldService {
-  return createTestService(
-    repository,
-    authVerifier,
-    new NoopBlobSigner(),
+  return createTestService(repository, new NoopBlobSigner(),
     {
       SESSION_TTL_HOURS: "24"
     }

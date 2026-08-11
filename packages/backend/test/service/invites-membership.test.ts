@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
 
 import { createSqliteRepository } from "../support/sqlite-d1.ts";
-import { authVerifier, createBlobSigner, createTestService } from "../support/service-fixtures.ts";
+import { createBlobSigner, createTestService } from "../support/service-fixtures.ts";
 
 describe("SharedWorldService invites and membership", () => {
   test("expired invite codes are rejected", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     const invite = await instance.createInvite({ playerUuid: "player-owner", playerName: "Owner" }, world.id, new Date("2026-01-01T00:00:00.000Z"));
@@ -31,7 +31,7 @@ describe("SharedWorldService invites and membership", () => {
   test("owner reuses the active share code until it expires or rotates", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
 
@@ -60,7 +60,7 @@ describe("SharedWorldService invites and membership", () => {
   test("share codes are reusable for multiple friends and hidden from members", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     const invite = await instance.createInvite(
@@ -91,7 +91,7 @@ describe("SharedWorldService invites and membership", () => {
   test("an owner redeeming their own share code keeps the owner role", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
 
@@ -114,7 +114,7 @@ describe("SharedWorldService invites and membership", () => {
   test("kicking a member rotates the share code so the old code stops working", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     const invite = await instance.createInvite(
@@ -163,7 +163,7 @@ describe("SharedWorldService invites and membership", () => {
   test("duplicate active codes from racing resets self-heal down to the newest one", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     // Two concurrent resets interleaved so both inserted an active code.
@@ -206,7 +206,7 @@ describe("SharedWorldService invites and membership", () => {
   test("redeeming a code for a deleted world fails without creating an orphan membership", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     const invite = await instance.createInvite(
@@ -240,7 +240,7 @@ describe("SharedWorldService invites and membership", () => {
   test("kicked members get membership_revoked from session endpoints while the world stays active", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     await repository.addMembership({
@@ -292,7 +292,7 @@ describe("SharedWorldService invites and membership", () => {
   test("session endpoints still reject never-members with forbidden", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
 
@@ -310,7 +310,7 @@ describe("SharedWorldService invites and membership", () => {
   test("only the owner can manage share codes", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     await repository.addMembership({
@@ -340,7 +340,7 @@ describe("SharedWorldService invites and membership", () => {
   test("rotating a share code invalidates the previous code immediately", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     const initialInvite = await instance.createInvite(
@@ -377,7 +377,7 @@ describe("SharedWorldService invites and membership", () => {
   test("historical redeemed invite rows stay inactive", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     const invite = await repository.createInvite(world.id, { playerUuid: "player-owner", playerName: "Owner" }, {

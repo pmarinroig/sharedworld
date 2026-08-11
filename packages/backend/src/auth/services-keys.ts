@@ -4,27 +4,22 @@ import { decodeBase64Field } from "./certificate.ts";
 
 /**
  * Supplies Mojang's player-certificate public keys (the set that signs profile
- * keypairs). Unlike sessionserver, api.minecraftservices.com/publickeys is a
- * rarely-changing document, so a stale answer is far better than a failed
- * login: the fetched set is cached in D1 with a long TTL and served stale
- * indefinitely when Mojang is unreachable. MOJANG_PLAYER_CERTIFICATE_KEYS
- * (comma-separated base64 DER) pins the set outright — the test hook and the
- * emergency lever if Mojang ever blocks this endpoint for Workers too.
+ * keypairs). Mojang answers 403 to ALL Cloudflare Workers egress — sessionserver
+ * and api.minecraftservices.com alike — so the worker NEVER fetches this
+ * document itself: the set comes from MOJANG_PLAYER_CERTIFICATE_KEYS
+ * (comma-separated base64 DER, the pin/test hook) or from the D1 row that
+ * scripts/backend-seed-mojang-keys.sh writes from a developer machine. The
+ * seeded set is served indefinitely regardless of age — the keys rotate on the
+ * order of years, and a stale answer is far better than a failed login.
  */
 
 export interface ServicesKeyStore {
   getMojangServicesKeys(): Promise<{ fetchedAt: string; keysJson: string } | null>;
-  putMojangServicesKeys(fetchedAt: string, keysJson: string): Promise<void>;
 }
 
 export interface ServicesKeyProvider {
-  playerCertificateKeys(now: Date): Promise<Uint8Array[]>;
+  playerCertificateKeys(): Promise<Uint8Array[]>;
 }
-
-const CACHE_TTL_MS = 24 * 60 * 60_000;
-const FAILED_REFRESH_RETRY_MS = 60 * 60_000;
-const FETCH_TIMEOUT_MS = 5_000;
-const DEFAULT_ENDPOINT = "https://api.minecraftservices.com/publickeys";
 
 export class MojangServicesKeyProvider implements ServicesKeyProvider {
   constructor(
@@ -32,62 +27,25 @@ export class MojangServicesKeyProvider implements ServicesKeyProvider {
     private readonly env: Env
   ) {}
 
-  async playerCertificateKeys(now: Date): Promise<Uint8Array[]> {
+  async playerCertificateKeys(): Promise<Uint8Array[]> {
     const pinned = (this.env.MOJANG_PLAYER_CERTIFICATE_KEYS ?? "").trim();
     if (pinned.length > 0) {
       return pinned.split(",").map((entry) => decodeBase64(entry.trim()));
     }
 
     const cached = await this.store.getMojangServicesKeys();
-    if (cached && now.getTime() - new Date(cached.fetchedAt).getTime() < CACHE_TTL_MS) {
+    if (cached) {
       return parseKeysJson(cached.keysJson);
     }
 
-    try {
-      const keysJson = await this.fetchKeySet();
-      await this.store.putMojangServicesKeys(now.toISOString(), keysJson);
-      return parseKeysJson(keysJson);
-    } catch (error) {
-      if (cached) {
-        // Mojang blocks Workers egress on this endpoint, so once the TTL
-        // lapses every login would re-attempt (and re-fail) the fetch.
-        // Back-date the row so it re-expires in FAILED_REFRESH_RETRY_MS
-        // instead of on every request; backend-seed-mojang-keys.sh remains
-        // the real refresh path.
-        const retryStamp = new Date(now.getTime() - CACHE_TTL_MS + FAILED_REFRESH_RETRY_MS);
-        await this.store.putMojangServicesKeys(retryStamp.toISOString(), cached.keysJson);
-        console.warn("SharedWorld Mojang publickeys refresh failed; serving stale key set", {
-          fetchedAt: cached.fetchedAt,
-          cause: String(error)
-        });
-        return parseKeysJson(cached.keysJson);
-      }
-      console.warn("SharedWorld Mojang publickeys fetch failed with no cached set", { cause: String(error) });
-      throw new HttpError(
-        503,
-        "identity_verification_unavailable",
-        "Minecraft's key registry is unreachable right now. Please try again in a minute."
-      );
-    }
-  }
-
-  private async fetchKeySet(): Promise<string> {
-    const endpoint = this.env.MOJANG_SERVICES_PUBLICKEYS_ENDPOINT ?? DEFAULT_ENDPOINT;
-    const response = await fetch(endpoint, {
-      headers: { accept: "application/json" },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
-    });
-    if (!response.ok) {
-      throw new Error(`publickeys returned HTTP ${response.status}`);
-    }
-    const payload = (await response.json()) as { playerCertificateKeys?: Array<{ publicKey?: string }> };
-    const keys = (payload.playerCertificateKeys ?? [])
-      .map((entry) => entry.publicKey)
-      .filter((key): key is string => typeof key === "string" && key.length > 0);
-    if (keys.length === 0) {
-      throw new Error("publickeys response contained no playerCertificateKeys");
-    }
-    return JSON.stringify(keys);
+    console.error(
+      "SharedWorld Mojang publickeys cache is empty; run scripts/backend-seed-mojang-keys.sh to seed it"
+    );
+    throw new HttpError(
+      503,
+      "identity_verification_unavailable",
+      "Minecraft's key registry is not available to the SharedWorld server right now. Please try again in a minute."
+    );
   }
 }
 

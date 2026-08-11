@@ -7,10 +7,6 @@ import type { StorageUsageCache } from "../storage-usage-cache.ts";
 import type { StorageLinkDomainService } from "../storage/link-service.ts";
 import { mintBlobStamp } from "./blob-stamp.ts";
 
-export interface AuthVerifier {
-  verifyJoin(playerName: string, serverId: string): Promise<{ playerUuid: string; playerName: string } | null>;
-}
-
 export interface SignedBlobRequest<TMethod extends "PUT" | "GET" = "PUT" | "GET"> {
   method: TMethod;
   url: string;
@@ -30,7 +26,6 @@ export interface BlobUrlSigner {
  */
 export interface ServiceContext {
   repository: SharedWorldRepository;
-  authVerifier: AuthVerifier;
   blobSigner: BlobUrlSigner;
   storageProvider: StorageProvider;
   storageLinks: StorageLinkDomainService;

@@ -46,7 +46,6 @@ SUGGESTED_RUNTIME_POLL_INTERVAL_MS = "15000"
 # of becoming an unbounded D1/Workers bill. Raise via config-only deploy.
 MAX_ACTIVE_WORLDS = "1000"
 
-MOJANG_HAS_JOINED_ENDPOINT = "https://sessionserver.mojang.com/session/minecraft/hasJoined"
 
 # 0.3.0 realtime: per-world runtime coordinators + per-player WebSocket
 # gateways (see docs/realtime.md in the workspace repo).

@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
 
 import { createSqliteRepository } from "../support/sqlite-d1.ts";
-import { authVerifier, createBlobSigner, createTestService } from "../support/service-fixtures.ts";
+import { createBlobSigner, createTestService } from "../support/service-fixtures.ts";
 
 describe("SharedWorldService lifecycle", () => {
   test("create world returns a dedicated initial upload assignment without waiter state", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
 
     const created = await instance.createWorld(
@@ -30,7 +30,7 @@ describe("SharedWorldService lifecycle", () => {
   test("observe waiting restarts when the current waiter is promoted to host", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     await repository.upsertUser({ playerUuid: "player-member", playerName: "Member", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "World", "world");
@@ -75,7 +75,7 @@ describe("SharedWorldService lifecycle", () => {
   test("[P4] observe waiting restarts when the waiter session no longer exists", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     await repository.upsertUser({ playerUuid: "player-member", playerName: "Member", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "World", "world");
@@ -102,7 +102,7 @@ describe("SharedWorldService lifecycle", () => {
   test("begin finalization clears the join target and forces join resolution to wait", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     await repository.addMembership({
@@ -140,7 +140,7 @@ describe("SharedWorldService lifecycle", () => {
   test("runtime status never exposes a join target during finalization", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     await repository.addMembership({
@@ -182,7 +182,7 @@ describe("SharedWorldService lifecycle", () => {
   test("host-starting heartbeat extends the startup deadline on the real enter-session path", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
 
@@ -218,7 +218,7 @@ describe("SharedWorldService lifecycle", () => {
   test("heartbeat reports host-finalizing for the same authorized runtime without refreshing it", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
 
@@ -271,7 +271,7 @@ describe("SharedWorldService lifecycle", () => {
   test("[P1] heartbeat still rejects mismatched authority after the runtime is finalizing", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
 
@@ -304,7 +304,7 @@ describe("SharedWorldService lifecycle", () => {
   test("host-live timeout records warning, clears runtime, and clears waiters", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     await repository.upsertUser({ playerUuid: "player-guest", playerName: "Guest", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
@@ -359,7 +359,7 @@ describe("SharedWorldService lifecycle", () => {
   test("host-finalizing timeout uses finalization activity and records warning", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     await repository.upsertUser({ playerUuid: "player-guest", playerName: "Guest", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
@@ -417,7 +417,7 @@ describe("SharedWorldService lifecycle", () => {
   test("beginFinalization resets stale startup activity so finalization does not expire immediately", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     await repository.upsertUser({ playerUuid: "player-guest", playerName: "Guest", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
@@ -478,7 +478,7 @@ describe("SharedWorldService lifecycle", () => {
   test("repeated finalization progress refresh keeps host-finalizing alive", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     await repository.upsertUser({ playerUuid: "player-guest", playerName: "Guest", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
@@ -543,7 +543,7 @@ describe("SharedWorldService lifecycle", () => {
   test("world summaries stop showing finalizing after a host-finalizing timeout and preserve the launch warning", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     const startedAt = new Date(Date.now() - 10 * 60_000);
@@ -588,7 +588,7 @@ describe("SharedWorldService lifecycle", () => {
   test("host-starting timeout does not record an unclean shutdown warning", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
 
@@ -612,7 +612,7 @@ describe("SharedWorldService lifecycle", () => {
   test("host-starting timeout preserves the previous runtime epoch for the next host assignment", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
 
@@ -642,7 +642,7 @@ describe("SharedWorldService lifecycle", () => {
   test("idle worlds with warning require acknowledgement before hosting", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     instance.realtimeLocal.seedWarning(world.id, {
@@ -676,7 +676,7 @@ describe("SharedWorldService lifecycle", () => {
   test("warning survives forced relaunches and clears on a later graceful close", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     instance.realtimeLocal.seedWarning(world.id, {
@@ -739,7 +739,7 @@ describe("SharedWorldService lifecycle", () => {
   test("owner can abandon stranded finalization but non-owner cannot", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     await repository.addMembership({
@@ -779,7 +779,7 @@ describe("SharedWorldService lifecycle", () => {
   test("discarded finalization blocks stale snapshot publication", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     await repository.addMembership({
@@ -836,7 +836,7 @@ describe("SharedWorldService lifecycle", () => {
   test("retried begin-finalization from the finalizing runtime replays success", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "World", "world");
     await instance.enterSession({ playerUuid: "player-owner", playerName: "Owner" }, world.id, {}, new Date("2099-01-01T00:00:00.000Z"));
@@ -854,7 +854,7 @@ describe("SharedWorldService lifecycle", () => {
   test("retried complete-finalization and release-host after success replay success instead of a lost lease", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "World", "world");
     await instance.enterSession({ playerUuid: "player-owner", playerName: "Owner" }, world.id, {}, new Date("2099-01-01T00:00:00.000Z"));
@@ -886,7 +886,7 @@ describe("SharedWorldService lifecycle", () => {
   test("[P1] a lease that expired into an unclean warning rejects a retried release as a real authority loss", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "World", "world");
     await instance.enterSession({ playerUuid: "player-owner", playerName: "Owner" }, world.id, {}, new Date("2099-01-01T00:00:00.000Z"));

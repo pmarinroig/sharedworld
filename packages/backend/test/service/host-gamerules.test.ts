@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { createSqliteRepository } from "../support/sqlite-d1.ts";
-import { authVerifier, createBlobSigner, createTestService } from "../support/service-fixtures.ts";
+import { createBlobSigner, createTestService } from "../support/service-fixtures.ts";
 
 const owner = { playerUuid: "player-owner", playerName: "Owner" };
 const guest = { playerUuid: "player-guest", playerName: "Guest" };
@@ -37,7 +37,7 @@ describe("reportHostGameRules", () => {
   test("a live non-owner host persists gamerules; difficulty and game mode survive the merge", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     const world = await worldWithGuestMember(repository, instance);
     await instance.updateWorldSettings(owner, world.id, {
       settings: { difficulty: "hard", defaultGameMode: "survival", gamerules: { keepInventory: false } }
@@ -83,7 +83,7 @@ describe("reportHostGameRules", () => {
   test("a host-reported difficulty persists alongside gamerules (in-game /difficulty)", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     const world = await worldWithGuestMember(repository, instance);
     await instance.updateWorldSettings(owner, world.id, {
       settings: { difficulty: "easy", defaultGameMode: "survival", gamerules: { keepInventory: false } }
@@ -110,7 +110,7 @@ describe("reportHostGameRules", () => {
   test("a host-reported game mode persists like difficulty does", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     const world = await worldWithGuestMember(repository, instance);
     await instance.updateWorldSettings(owner, world.id, {
       settings: { difficulty: "easy", defaultGameMode: "survival" }
@@ -140,7 +140,7 @@ describe("reportHostGameRules", () => {
   test("an absent difficulty leaves the stored difficulty untouched", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     const world = await worldWithGuestMember(repository, instance);
     await instance.updateWorldSettings(owner, world.id, { settings: { difficulty: "peaceful" } });
 
@@ -158,7 +158,7 @@ describe("reportHostGameRules", () => {
   test("an invalid reported difficulty is rejected and writes nothing", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     const world = await worldWithGuestMember(repository, instance);
     await instance.updateWorldSettings(owner, world.id, { settings: { difficulty: "easy" } });
     const assignment = await becomeLiveHost(instance, owner, world.id, new Date("2026-01-03T00:00:00.000Z"));
@@ -178,7 +178,7 @@ describe("reportHostGameRules", () => {
   test("a world that never had settings gains a gamerules-only settings object", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     const world = await worldWithGuestMember(repository, instance);
     const assignment = await becomeLiveHost(instance, owner, world.id, new Date("2026-01-03T00:00:00.000Z"));
 
@@ -196,7 +196,7 @@ describe("reportHostGameRules", () => {
   test("reports merge per key with previously stored gamerules", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     const world = await worldWithGuestMember(repository, instance);
     await instance.updateWorldSettings(owner, world.id, { settings: { gamerules: { keepInventory: true } } });
     const assignment = await becomeLiveHost(instance, owner, world.id, new Date("2026-01-03T00:00:00.000Z"));
@@ -214,7 +214,7 @@ describe("reportHostGameRules", () => {
   test("reported gamerules are whitelist-validated and nothing is written on rejection", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     const world = await worldWithGuestMember(repository, instance);
     const assignment = await becomeLiveHost(instance, owner, world.id, new Date("2026-01-03T00:00:00.000Z"));
     const creds = { runtimeEpoch: assignment.runtimeEpoch, hostToken: assignment.hostToken };
@@ -238,7 +238,7 @@ describe("reportHostGameRules", () => {
   test("only the authorized live host may report: wrong token, stale epoch, and pre-live phases are 409s", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     const world = await worldWithGuestMember(repository, instance);
     const at = new Date("2026-01-03T00:01:00.000Z");
 
@@ -293,7 +293,7 @@ describe("reportHostGameRules", () => {
   test("a host in host-finalizing may still flush gamerules", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     const world = await worldWithGuestMember(repository, instance);
     const assignment = await becomeLiveHost(instance, owner, world.id, new Date("2026-01-03T00:00:00.000Z"));
 
@@ -316,7 +316,7 @@ describe("reportHostGameRules", () => {
   test("an owner save racing the report loses no data: the CAS retry merges against the fresh base", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     const world = await worldWithGuestMember(repository, instance);
     const assignment = await becomeLiveHost(instance, owner, world.id, new Date("2026-01-03T00:00:00.000Z"));
 
@@ -347,7 +347,7 @@ describe("reportHostGameRules", () => {
   test("a report that keeps losing the CAS race fails as settings_conflict", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     const world = await worldWithGuestMember(repository, instance);
     const assignment = await becomeLiveHost(instance, owner, world.id, new Date("2026-01-03T00:00:00.000Z"));
 
@@ -373,7 +373,7 @@ describe("reportHostGameRules", () => {
   test("updateWorldSettingsIfRevision writes only when the stored revision matches", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     const world = await worldWithGuestMember(repository, instance);
 
     expect(await repository.updateWorldSettingsIfRevision(world.id, JSON.stringify({ gamerules: { pvp: true } }), 0)).toBe(true);

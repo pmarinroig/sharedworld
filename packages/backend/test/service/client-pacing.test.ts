@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { createSqliteRepository } from "../support/sqlite-d1.ts";
-import { authVerifier, claimHostForTest, createBlobSigner, createTestService } from "../support/service-fixtures.ts";
+import { claimHostForTest, createBlobSigner, createTestService } from "../support/service-fixtures.ts";
 
 /**
  * Remote throttle levers: when the SUGGESTED_* env vars are set, responses
@@ -22,7 +22,7 @@ describe("server-driven client pacing suggestions", () => {
   test("suggestions are absent when the env vars are unset", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     const world = await worldWithHost(instance, repository);
 
     const runtime = await instance.runtimeStatus(owner, world.id, new Date("2099-01-01T01:00:00.000Z"));
@@ -39,7 +39,7 @@ describe("server-driven client pacing suggestions", () => {
   test("suggestions are emitted when the env vars are set", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {
+    const instance = createTestService(repository, signer, {
       SUGGESTED_RUNTIME_POLL_INTERVAL_MS: "15000",
       SUGGESTED_HOST_HEARTBEAT_INTERVAL_MS: "60000",
       SUGGESTED_AUTOSAVE_INTERVAL_MS: "900000",
@@ -65,7 +65,7 @@ describe("server-driven client pacing suggestions", () => {
   test("garbage env values behave as unset", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {
+    const instance = createTestService(repository, signer, {
       SUGGESTED_RUNTIME_POLL_INTERVAL_MS: "zero",
       SUGGESTED_PRESENCE_INTERVAL_MS: "-5"
     });

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { StorageAccountRecord } from "../../src/repository.ts";
 import { createSqliteRepository } from "../support/sqlite-d1.ts";
-import { authVerifier, createBlobSigner, createTestService, googleDriveStorageProvider } from "../support/service-fixtures.ts";
+import { createBlobSigner, createTestService, googleDriveStorageProvider } from "../support/service-fixtures.ts";
 
 const owner = { playerUuid: "player-owner", playerName: "Owner" };
 const guest = { playerUuid: "player-guest", playerName: "Guest" };
@@ -35,7 +35,7 @@ describe("SharedWorldService world settings", () => {
   test("owner saves settings; details carry them and every save bumps the revision", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     const world = await worldWithGuestMember(repository, instance);
 
     const first = await instance.updateWorldSettings(owner, world.id, {
@@ -58,7 +58,7 @@ describe("SharedWorldService world settings", () => {
   test("members cannot change world settings", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     const world = await worldWithGuestMember(repository, instance);
 
     await expect(
@@ -69,7 +69,7 @@ describe("SharedWorldService world settings", () => {
   test("settings are whitelist-validated", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     const world = await worldWithGuestMember(repository, instance);
 
     await expect(
@@ -96,7 +96,7 @@ describe("SharedWorldService world settings", () => {
   test("host heartbeat responses carry settings and revision as flat siblings", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     const world = await worldWithGuestMember(repository, instance);
     await instance.updateWorldSettings(owner, world.id, {
       settings: { difficulty: "normal", gamerules: { mobGriefing: false } }
@@ -130,7 +130,7 @@ describe("SharedWorldService world settings", () => {
   test("createWorld binds to the caller's linked storage account on request", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, googleDriveStorageProvider(), {});
+    const instance = createTestService(repository, signer, googleDriveStorageProvider(), {});
     await repository.createOrUpdateStorageAccount(storageAccountFixture());
 
     const created = await instance.createWorld(owner, {
@@ -147,7 +147,7 @@ describe("SharedWorldService world settings", () => {
   test("createWorld with useLinkedStorageAccount fails cleanly when nothing usable is linked", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, googleDriveStorageProvider(), {});
+    const instance = createTestService(repository, signer, googleDriveStorageProvider(), {});
     // An account that lost its refresh token does not qualify.
     await repository.createOrUpdateStorageAccount(storageAccountFixture({ refreshToken: null }));
 

@@ -11,7 +11,6 @@ import { HttpError } from "../http.ts";
 import { randomId, randomServerId } from "../ids.ts";
 import type { Env } from "../env.ts";
 import type { SharedWorldRepository } from "../repository.ts";
-import type { AuthVerifier } from "./../service/context.ts";
 import {
   buildCertificateSignedPayload,
   decodeBase64Field,
@@ -20,8 +19,6 @@ import {
 } from "./certificate.ts";
 import { MojangServicesKeyProvider, type ServicesKeyProvider } from "./services-keys.ts";
 
-const JOIN_VERIFICATION_DELAYS_MS = [0, 150, 300, 600, 1200] as const;
-
 const PLAYER_NAME_PATTERN = /^\w{1,16}$/;
 
 export class AuthDomainService {
@@ -29,7 +26,6 @@ export class AuthDomainService {
 
   constructor(
     private readonly repository: SharedWorldRepository,
-    private readonly authVerifier: AuthVerifier,
     private readonly env: Env
   ) {
     this.servicesKeys = new MojangServicesKeyProvider(repository, env);
@@ -48,30 +44,20 @@ export class AuthDomainService {
     };
   }
 
-  async completeAuth(request: AuthCompleteRequest, now = new Date()): Promise<SessionToken> {
-    const challenge = await this.repository.getChallenge(request.serverId);
-    if (!challenge) {
-      throw new HttpError(404, "challenge_not_found", "Authentication challenge not found.");
-    }
-    if (challenge.usedAt) {
-      throw new HttpError(409, "challenge_used", "Authentication challenge has already been used.");
-    }
-    if (new Date(challenge.expiresAt).getTime() < now.getTime()) {
-      throw new HttpError(410, "challenge_expired", "Authentication challenge has expired.");
-    }
-
-    const verified = await this.verifyJoinedIdentity(request.playerName, request.serverId);
-    const createdAt = now.toISOString();
-    const session = this.createSessionToken(verified.playerUuid, verified.playerName, now);
-
-    await this.repository.markChallengeUsed(request.serverId, createdAt);
-    await this.repository.upsertUser({
-      playerUuid: verified.playerUuid,
-      playerName: verified.playerName,
-      createdAt
-    });
-    await this.repository.createSession(session);
-    return session;
+  /**
+   * The legacy joinServer/hasJoined flow, only reachable by clients ≤0.2.1.
+   * Mojang answers 403 to all Cloudflare Workers egress on sessionserver, so
+   * this flow can NEVER verify an identity from production — every subrequest
+   * it would make is a guaranteed failure. Answer immediately with the update
+   * notice instead: no Mojang egress, no D1 reads. Shipped legacy clients
+   * render this message verbatim and treat the code as terminal.
+   */
+  async completeAuth(_request: AuthCompleteRequest): Promise<SessionToken> {
+    throw new HttpError(
+      403,
+      "identity_verification_failed",
+      "Minecraft no longer accepts the sign-in method used by SharedWorld 0.2.1 and older. Please update SharedWorld to the latest version."
+    );
   }
 
   /**
@@ -85,9 +71,8 @@ export class AuthDomainService {
       return await this.completeCertAuthChecked(request, now);
     } catch (error) {
       if (error instanceof HttpError) {
-        // 4xx auth failures never reach errorResponse's >=500 logging, and
-        // the client falls back to the (blocked) join flow silently — so this
-        // line is the only way production logs can answer "is a real
+        // 4xx auth failures never reach errorResponse's >=500 logging — so
+        // this line is the only way production logs can answer "is a real
         // certificate being rejected?".
         console.warn("SharedWorld certificate auth rejected", {
           code: error.code,
@@ -143,7 +128,7 @@ export class AuthDomainService {
 
     // buildCertificateSignedPayload also rejects malformed UUIDs.
     const payload = buildCertificateSignedPayload(playerUuid, request.publicKeyExpiresAtMs, publicKeyDer);
-    const servicesKeys = await this.servicesKeys.playerCertificateKeys(now);
+    const servicesKeys = await this.servicesKeys.playerCertificateKeys();
     if (!(await verifyCertificateSignature(payload, keySignature, servicesKeys))) {
       throw new HttpError(
         403,
@@ -208,52 +193,4 @@ export class AuthDomainService {
     };
   }
 
-  private async verifyJoinedIdentity(playerName: string, serverId: string) {
-    // The delay ladder serves two failure modes at once: Mojang propagation
-    // lag (verifyJoin resolves null) and transient session-server trouble
-    // (verifyJoin throws identity_verification_unavailable). Both consume
-    // attempts; a single transient blip must not abort verification.
-    let transientFailure: HttpError | null = null;
-    for (const delayMs of JOIN_VERIFICATION_DELAYS_MS) {
-      if (delayMs > 0) {
-        await delay(delayMs);
-      }
-      try {
-        const verified = await this.authVerifier.verifyJoin(playerName, serverId);
-        if (verified) {
-          return verified;
-        }
-      } catch (error) {
-        if (error instanceof HttpError && error.code === "identity_verification_unavailable") {
-          transientFailure = error;
-          if (error.upstreamStatus === 429 || error.upstreamStatus === 403) {
-            // 429: Mojang is rate-limiting this worker's egress; burning the
-            // remaining ladder attempts within ~2s only deepens the
-            // throttling. 403: Mojang blocks this worker's egress outright
-            // (the Cloudflare IP ban), so every further attempt is a wasted
-            // subrequest that cannot succeed. Surface the retryable 503
-            // immediately either way.
-            break;
-          }
-          continue;
-        }
-        throw error;
-      }
-    }
-    if (transientFailure) {
-      // Mojang was unreachable for at least part of the window, so "not
-      // joined" cannot be trusted as terminal: tell the client to try again
-      // soon rather than implying the identity proof failed. A 429 carries
-      // Mojang's own clamped Retry-After from the verifier; keep it.
-      transientFailure.retryAfterSeconds ??= 10;
-      throw transientFailure;
-    }
-    throw new HttpError(403, "identity_verification_failed", "Failed to verify Minecraft identity.");
-  }
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
 }

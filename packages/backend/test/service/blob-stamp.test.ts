@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import type { StorageProvider } from "../../src/storage.ts";
 
 import { BLOB_STAMP_TTL_MS, mintBlobStamp, verifyBlobStamp } from "../../src/service/blob-stamp.ts";
-import { authVerifier, createBlobSigner, createTestService } from "../support/service-fixtures.ts";
+import { createBlobSigner, createTestService } from "../support/service-fixtures.ts";
 import { createSqliteRepository } from "../support/sqlite-d1.ts";
 
 const NOW = new Date("2026-01-01T10:00:00.000Z");
@@ -69,7 +69,7 @@ describe("stamped relay uploads", () => {
       async delete() {},
       async quota() { return { usedBytes: null, totalBytes: null }; }
     };
-    const instance = createTestService(repository, authVerifier, signer, storageProvider, env);
+    const instance = createTestService(repository, signer, storageProvider, env);
     await repository.upsertUser({ ...host, createdAt: new Date().toISOString() });
     const world = await repository.createWorld(host, "Friends SMP", "friends-smp", {
       provider: "google-drive",

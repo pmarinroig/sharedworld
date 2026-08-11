@@ -3,7 +3,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { createRouter } from "../../src/router.ts";
 import { workersStorageUsageCache } from "../../src/storage-usage-cache.ts";
 import { createRouterService } from "../support/router.ts";
-import { authVerifier, createBlobSigner, createTestService } from "../support/service-fixtures.ts";
+import { createBlobSigner, createTestService } from "../support/service-fixtures.ts";
 import { createSqliteRepository } from "../support/sqlite-d1.ts";
 
 /**
@@ -17,7 +17,7 @@ describe("storage usage decoupling", () => {
   async function seeded() {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: owner.playerUuid, playerName: owner.playerName, createdAt: new Date().toISOString() });
     const world = await repository.createWorld(owner, "Friends SMP", "friends-smp");
     return { repository, instance, world };

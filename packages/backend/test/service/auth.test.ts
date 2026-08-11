@@ -1,7 +1,5 @@
 import { describe, expect, test } from "bun:test";
 
-import type { AuthCompleteRequest } from "../../../shared/src/index.ts";
-
 import { HttpError } from "../../src/http.ts";
 import { createSqliteRepository } from "../support/sqlite-d1.ts";
 import { createBlobSigner, createTestService, service } from "../support/service-fixtures.ts";
@@ -9,58 +7,43 @@ import { createBlobSigner, createTestService, service } from "../support/service
 const DEV_AUTH_SECRET = "test-dev-auth-secret";
 
 describe("SharedWorldService auth", () => {
-  test("auth challenge cannot be replayed", async () => {
+  test("the legacy join flow is a network-free tombstone: terminal 403 telling the client to update", async () => {
+    // Mojang answers 403 to all Cloudflare Workers egress on sessionserver,
+    // so /auth/complete must never burn a subrequest (or even a D1 read) on
+    // a flow that cannot succeed. Only clients ≤0.2.1 still call it.
     const instance = service();
-    const challenge = await instance.createChallenge();
-    expect(challenge.serverId).toMatch(/^[0-9a-f]{32}$/);
-    const request: AuthCompleteRequest = {
-      serverId: challenge.serverId,
-      playerName: "Owner"
-    };
-
-    const session = await instance.completeAuth(request);
-    expect(session.playerUuid).toBe("player-owner");
-    await expect(instance.completeAuth(request)).rejects.toThrow("already been used");
+    let caught: unknown = null;
+    try {
+      await instance.completeAuth({ serverId: "0000000000000000000000000000dead", playerName: "Owner" });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(HttpError);
+    expect((caught as HttpError).status).toBe(403);
+    expect((caught as HttpError).code).toBe("identity_verification_failed");
+    expect((caught as HttpError).message).toContain("update SharedWorld");
+    // Terminal, not retryable: no Retry-After hint that would make an old
+    // client loop against a permanently closed flow.
+    expect((caught as HttpError).retryAfterSeconds).toBeUndefined();
   });
 
-  test("retries short propagation lag before succeeding", async () => {
-    let attempts = 0;
-    const instance = createTestService(
-      createSqliteRepository(),
-      {
-        async verifyJoin(playerName, serverId) {
-          attempts += 1;
-          if (attempts < 3) {
-            return null;
-          }
-          expect(playerName).toBe("Owner");
-          expect(serverId).toMatch(/^[0-9a-f]{32}$/);
-          return {
-            playerUuid: "player-owner",
-            playerName: "Owner"
-          };
-        }
-      }
-    );
-
+  test("the tombstone answers without consuming the challenge, which stays usable for cert auth", async () => {
+    const repository = createSqliteRepository();
+    const instance = createTestService(repository);
     const challenge = await instance.createChallenge();
-    const session = await instance.completeAuth({
-      serverId: challenge.serverId,
-      playerName: "Owner"
-    });
-
-    expect(session.playerUuid).toBe("player-owner");
-    expect(attempts).toBe(3);
+    await expect(
+      instance.completeAuth({ serverId: challenge.serverId, playerName: "Owner" })
+    ).rejects.toThrow("update SharedWorld");
+    // The challenge was never marked used — a mixed-version client that
+    // retries through the cert flow still finds it consumable (cert-flow
+    // challenge semantics are pinned in auth-cert.test.ts).
+    const stored = await repository.getChallenge(challenge.serverId);
+    expect(stored?.usedAt ?? null).toBeNull();
   });
 
   test("developer auth uses the dedicated dev endpoint", async () => {
     const instance = createTestService(
       createSqliteRepository(),
-      {
-        async verifyJoin() {
-          throw new Error("should not call Mojang verifier in dev mode");
-        }
-      },
       createBlobSigner().signer,
       {
         ALLOW_DEV_AUTH: "true",
@@ -83,11 +66,6 @@ describe("SharedWorldService auth", () => {
   test("developer auth keeps insecure e4mc disabled unless the backend allows it", async () => {
     const instance = createTestService(
       createSqliteRepository(),
-      {
-        async verifyJoin() {
-          throw new Error("should not call Mojang verifier in dev mode");
-        }
-      },
       createBlobSigner().signer,
       {
         ALLOW_DEV_AUTH: "true",
@@ -102,147 +80,5 @@ describe("SharedWorldService auth", () => {
     });
 
     expect(session.allowInsecureE4mc).toBe(false);
-  });
-
-  test("transient Mojang unavailability is retried and can still succeed", async () => {
-    let attempts = 0;
-    const instance = createTestService(
-      createSqliteRepository(),
-      {
-        async verifyJoin() {
-          attempts += 1;
-          if (attempts < 3) {
-            throw new HttpError(503, "identity_verification_unavailable", "Minecraft identity verification is unavailable.");
-          }
-          return { playerUuid: "player-owner", playerName: "Owner" };
-        }
-      }
-    );
-
-    const challenge = await instance.createChallenge();
-    const session = await instance.completeAuth({ serverId: challenge.serverId, playerName: "Owner" });
-
-    expect(session.playerUuid).toBe("player-owner");
-    expect(attempts).toBe(3);
-  });
-
-  test("persistent Mojang unavailability surfaces the retryable 503, not a 403", async () => {
-    let attempts = 0;
-    const instance = createTestService(
-      createSqliteRepository(),
-      {
-        async verifyJoin() {
-          attempts += 1;
-          throw new HttpError(503, "identity_verification_unavailable", "Minecraft identity verification is unavailable.");
-        }
-      }
-    );
-
-    const challenge = await instance.createChallenge();
-    let caught: unknown = null;
-    try {
-      await instance.completeAuth({ serverId: challenge.serverId, playerName: "Owner" });
-    } catch (error) {
-      caught = error;
-    }
-    expect(caught).toBeInstanceOf(HttpError);
-    expect((caught as HttpError).status).toBe(503);
-    expect((caught as HttpError).code).toBe("identity_verification_unavailable");
-    expect((caught as HttpError).retryAfterSeconds).toBe(10);
-    expect(attempts).toBe(5);
-  });
-
-  test("a Mojang 429 short-circuits the ladder and carries Mojang's Retry-After", async () => {
-    let attempts = 0;
-    const instance = createTestService(
-      createSqliteRepository(),
-      {
-        async verifyJoin() {
-          attempts += 1;
-          const error = new HttpError(
-            503,
-            "identity_verification_unavailable",
-            "Minecraft's identity service is rate-limiting the SharedWorld server. Please wait a minute and try again."
-          );
-          error.upstreamStatus = 429;
-          error.retryAfterSeconds = 60;
-          throw error;
-        }
-      }
-    );
-
-    const challenge = await instance.createChallenge();
-    let caught: unknown = null;
-    try {
-      await instance.completeAuth({ serverId: challenge.serverId, playerName: "Owner" });
-    } catch (error) {
-      caught = error;
-    }
-    expect(caught).toBeInstanceOf(HttpError);
-    expect((caught as HttpError).status).toBe(503);
-    expect((caught as HttpError).code).toBe("identity_verification_unavailable");
-    // Re-hitting a rate limiter within the ~2s ladder deepens the throttling.
-    expect(attempts).toBe(1);
-    expect((caught as HttpError).retryAfterSeconds).toBe(60);
-  });
-
-  test("a Mojang 403 (blocked egress) short-circuits the ladder", async () => {
-    let attempts = 0;
-    const instance = createTestService(
-      createSqliteRepository(),
-      {
-        async verifyJoin() {
-          attempts += 1;
-          const error = new HttpError(
-            503,
-            "identity_verification_unavailable",
-            "Minecraft's identity service rejected the SharedWorld server's request."
-          );
-          error.upstreamStatus = 403;
-          throw error;
-        }
-      }
-    );
-
-    const challenge = await instance.createChallenge();
-    let caught: unknown = null;
-    try {
-      await instance.completeAuth({ serverId: challenge.serverId, playerName: "Owner" });
-    } catch (error) {
-      caught = error;
-    }
-    expect(caught).toBeInstanceOf(HttpError);
-    expect((caught as HttpError).status).toBe(503);
-    expect((caught as HttpError).code).toBe("identity_verification_unavailable");
-    // Mojang blocks this worker's egress outright; further attempts are
-    // wasted subrequests that cannot succeed.
-    expect(attempts).toBe(1);
-    expect((caught as HttpError).retryAfterSeconds).toBe(10);
-  });
-
-  test("mixed propagation lag and transient unavailability prefers the retryable 503 over the terminal 403", async () => {
-    let attempts = 0;
-    const instance = createTestService(
-      createSqliteRepository(),
-      {
-        async verifyJoin() {
-          attempts += 1;
-          if (attempts % 2 === 0) {
-            throw new HttpError(503, "identity_verification_unavailable", "Minecraft identity verification is unavailable.");
-          }
-          return null;
-        }
-      }
-    );
-
-    const challenge = await instance.createChallenge();
-    let caught: unknown = null;
-    try {
-      await instance.completeAuth({ serverId: challenge.serverId, playerName: "Owner" });
-    } catch (error) {
-      caught = error;
-    }
-    expect((caught as HttpError).status).toBe(503);
-    expect(attempts).toBe(5);
   });
 });

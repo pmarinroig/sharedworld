@@ -4,7 +4,7 @@ import { NON_REGION_PACK_ID } from "../../../shared/src/index.ts";
 import type { StorageProvider } from "../../src/storage.ts";
 import { createSqliteRepository } from "../support/sqlite-d1.ts";
 import { choosePreferredCandidate } from "../../src/runtime-protocol.ts";
-import { authVerifier, createBlobSigner, createTestService } from "../support/service-fixtures.ts";
+import { createBlobSigner, createTestService } from "../support/service-fixtures.ts";
 
 describe("SharedWorldService handoff", () => {
   function nonRegionPack(hash: string) {
@@ -107,7 +107,7 @@ describe("SharedWorldService handoff", () => {
   test("stale waiters do not block a fresh host election", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     await repository.addMembership({
@@ -138,7 +138,7 @@ describe("SharedWorldService handoff", () => {
   test("graceful release keeps handoff state and elects the next host", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     await repository.addMembership({
@@ -171,7 +171,7 @@ describe("SharedWorldService handoff", () => {
   test("graceful release with no waiter returns the world to idle", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
 
@@ -193,7 +193,7 @@ describe("SharedWorldService handoff", () => {
   test("forced release does not advertise a planned handoff even if another waiter remains", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     await repository.addMembership({
@@ -225,7 +225,7 @@ describe("SharedWorldService handoff", () => {
   test("claim host stays blocked until finalization completes", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     await repository.addMembership({
@@ -272,7 +272,7 @@ describe("SharedWorldService handoff", () => {
   test("[P2] old host cannot begin finalization after ownership moved to a newer epoch", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     await repository.addMembership({
@@ -330,7 +330,7 @@ describe("SharedWorldService handoff", () => {
   test("player who claims host is removed from waiter pool", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
 
@@ -364,7 +364,7 @@ describe("SharedWorldService handoff", () => {
   test("only the elected handoff host can claim during graceful handoff", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     await repository.addMembership({
@@ -417,7 +417,7 @@ describe("SharedWorldService handoff", () => {
   test("[P3] handoff election moves to the next waiter when the chosen host cancels", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     await repository.addMembership({
@@ -470,7 +470,7 @@ describe("SharedWorldService handoff", () => {
   test("[P6] kicked hosts can still finalize gracefully and then hand off", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     await repository.addMembership({
@@ -565,7 +565,7 @@ describe("SharedWorldService handoff", () => {
         return { usedBytes: null, totalBytes: null };
       }
     };
-    const instance = createTestService(repository, authVerifier, signer, storageProvider, {});
+    const instance = createTestService(repository, signer, storageProvider, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld(
       { playerUuid: "player-owner", playerName: "Owner" },
@@ -675,7 +675,7 @@ describe("SharedWorldService handoff", () => {
         return { usedBytes: null, totalBytes: null };
       }
     };
-    const instance = createTestService(repository, authVerifier, signer, storageProvider, {});
+    const instance = createTestService(repository, signer, storageProvider, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld(
       { playerUuid: "player-owner", playerName: "Owner" },
@@ -731,7 +731,7 @@ describe("SharedWorldService handoff", () => {
         return { usedBytes: null, totalBytes: null };
       }
     };
-    const instance = createTestService(repository, authVerifier, signer, storageProvider, {});
+    const instance = createTestService(repository, signer, storageProvider, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
 
     const initialLeaseAt = new Date("2099-01-03T00:00:00.000Z");
@@ -801,7 +801,7 @@ describe("SharedWorldService handoff", () => {
   test("kicking the next waiting host candidate reselects handoff", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     await repository.addMembership({
@@ -869,7 +869,7 @@ describe("SharedWorldService handoff", () => {
   test("guest presence entries are cleared after completeFinalization handoff", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     await repository.addMembership({
@@ -925,7 +925,7 @@ describe("SharedWorldService handoff", () => {
   test("guest presence entries are cleared after releaseHost", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     await repository.addMembership({

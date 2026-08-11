@@ -6,7 +6,7 @@ import { createRouter } from "../../../src/router.ts";
 import { HttpError } from "../../../src/http.ts";
 import { createSqliteRepository } from "../sqlite-d1.ts";
 import { LocalRealtimeService } from "../realtime-local.ts";
-import { SharedWorldService, WorkerSignedUrlSigner, type AuthVerifier } from "../../../src/service.ts";
+import { SharedWorldService, WorkerSignedUrlSigner } from "../../../src/service.ts";
 import type { SharedWorldRepository } from "../../../src/repository.ts";
 import type { Env } from "../../../src/env.ts";
 import type { BlobRange, ResumableProbe, StorageBinding, StorageProvider, StorageQuota, StoredBlob } from "../../../src/storage.ts";
@@ -470,11 +470,6 @@ function createState(publicBaseUrl: string, persistence: IntegrationPersistence 
   };
   const repository = createSqliteRepository(persistence.dbPath ?? ":memory:");
   const storageProvider = new FakeGoogleDriveStorageProvider(repository, publicBaseUrl, persistence.blobDir ?? null);
-  const authVerifier: AuthVerifier = {
-    async verifyJoin() {
-      throw new Error("integration backend expected developer auth");
-    }
-  };
   // In-process realtime: real coordinator logic per world. The integration
   // server bridges realtime.onPublish to its WebSocket clients.
   const realtime = new LocalRealtimeService(repository, persistence.realtimeStateDir ?? null);
@@ -484,7 +479,6 @@ function createState(publicBaseUrl: string, persistence: IntegrationPersistence 
     realtime,
     service: new SharedWorldService(
       repository,
-      authVerifier,
       new WorkerSignedUrlSigner(env),
       storageProvider,
       env,

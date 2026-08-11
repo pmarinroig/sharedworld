@@ -4,7 +4,7 @@ import type { SnapshotPack } from "../../../shared/src/index.ts";
 
 import { HttpError } from "../../src/http.ts";
 import { createSqliteRepository } from "../support/sqlite-d1.ts";
-import { authVerifier, createBlobSigner, createTestService } from "../support/service-fixtures.ts";
+import { createBlobSigner, createTestService } from "../support/service-fixtures.ts";
 
 const OWNER = { playerUuid: "player-owner", playerName: "Owner" };
 const V2_OWNER = { ...OWNER, clientVersion: "0.4.0" };
@@ -30,7 +30,7 @@ function finalizePack(overrides: Record<string, unknown>): SnapshotPack {
 
 async function fixture() {
   const repository = createSqliteRepository();
-  const instance = createTestService(repository, authVerifier, createBlobSigner().signer, {});
+  const instance = createTestService(repository, createBlobSigner().signer, {});
   await repository.upsertUser({ ...OWNER, createdAt: new Date().toISOString() });
   const world = await repository.createWorld(OWNER, "Delta World", "delta-world");
   await instance.claimHost(OWNER, world.id, { joinTarget: "example.test:25565" }, new Date());

@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { HttpError } from "../../src/http.ts";
 import { parseSingleByteRange } from "../../src/storage.ts";
 import { createSqliteRepository } from "../support/sqlite-d1.ts";
-import { authVerifier, createBlobBucket, createBlobSigner, createTestService } from "../support/service-fixtures.ts";
+import { createBlobBucket, createBlobSigner, createTestService } from "../support/service-fixtures.ts";
 
 const OWNER = { playerUuid: "player-owner", playerName: "Owner" };
 const KEY = "packs/full/ab/abcdef.pack";
@@ -13,7 +13,7 @@ async function fixture() {
   const repository = createSqliteRepository();
   await repository.upsertUser({ ...OWNER, createdAt: new Date().toISOString() });
   const world = await repository.createWorld(OWNER, "Friends SMP", "friends-smp");
-  const instance = createTestService(repository, authVerifier, createBlobSigner().signer, {
+  const instance = createTestService(repository, createBlobSigner().signer, {
     BLOBS: createBlobBucket({ [KEY]: BYTES.slice() })
   });
   return { instance, worldId: world.id };

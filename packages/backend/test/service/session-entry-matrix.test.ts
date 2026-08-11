@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import type { RequestContext } from "../../src/repository.ts";
 import type { WorldRuntimeRecord } from "../../src/runtime-protocol.ts";
 import { createSqliteRepository } from "../support/sqlite-d1.ts";
-import { authVerifier, createBlobSigner, createTestService } from "../support/service-fixtures.ts";
+import { createBlobSigner, createTestService } from "../support/service-fixtures.ts";
 
 /**
  * Characterization matrix for session entry: every decision cell of
@@ -21,7 +21,7 @@ describe("session entry decision matrix", () => {
   async function setup() {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: OWNER.playerUuid, playerName: OWNER.playerName, createdAt: NOW.toISOString() });
     const world = await repository.createWorld(OWNER, "Matrix World", "matrix-world");
     for (const [guest, joinedAt] of [

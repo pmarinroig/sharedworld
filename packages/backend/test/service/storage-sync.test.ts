@@ -6,7 +6,6 @@ import type { SharedWorldRepository } from "../../src/repository.ts";
 
 import { createSqliteRepository } from "../support/sqlite-d1.ts";
 import {
-  authVerifier,
   claimHostForTest,
   createBlobSigner,
   createTestService,
@@ -48,7 +47,7 @@ describe("SharedWorldService storage and sync planning", () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const { storageProvider } = createStorageProviderSpy("google-drive");
-    const instance = createTestService(repository, authVerifier, signer, storageProvider, {});
+    const instance = createTestService(repository, signer, storageProvider, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld(
       { playerUuid: "player-owner", playerName: "Owner" },
@@ -134,7 +133,7 @@ describe("SharedWorldService storage and sync planning", () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const { storageProvider } = createStorageProviderSpy("google-drive");
-    const instance = createTestService(repository, authVerifier, signer, storageProvider, {});
+    const instance = createTestService(repository, signer, storageProvider, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld(
       { playerUuid: "player-owner", playerName: "Owner" },
@@ -222,7 +221,7 @@ describe("SharedWorldService storage and sync planning", () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const { storageProvider } = createStorageProviderSpy("google-drive");
-    const instance = createTestService(repository, authVerifier, signer, storageProvider, {});
+    const instance = createTestService(repository, signer, storageProvider, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const firstWorld = await repository.createWorld(
       { playerUuid: "player-owner", playerName: "Owner" },
@@ -317,7 +316,7 @@ describe("SharedWorldService storage and sync planning", () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const { storageProvider } = createStorageProviderSpy("google-drive");
-    const instance = createTestService(repository, authVerifier, signer, storageProvider, {});
+    const instance = createTestService(repository, signer, storageProvider, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld(
       { playerUuid: "player-owner", playerName: "Owner" },
@@ -355,7 +354,7 @@ describe("SharedWorldService storage and sync planning", () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const { storageProvider } = createStorageProviderSpy("google-drive");
-    const instance = createTestService(repository, authVerifier, signer, storageProvider, {});
+    const instance = createTestService(repository, signer, storageProvider, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld(
       { playerUuid: "player-owner", playerName: "Owner" },
@@ -394,7 +393,7 @@ describe("SharedWorldService storage and sync planning", () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const { storageProvider } = createStorageProviderSpy("google-drive");
-    const instance = createTestService(repository, authVerifier, signer, storageProvider, {});
+    const instance = createTestService(repository, signer, storageProvider, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld(
       { playerUuid: "player-owner", playerName: "Owner" },
@@ -482,7 +481,7 @@ describe("SharedWorldService storage and sync planning", () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const { storageProvider } = createStorageProviderSpy("google-drive");
-    const instance = createTestService(repository, authVerifier, signer, storageProvider, {});
+    const instance = createTestService(repository, signer, storageProvider, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld(
       { playerUuid: "player-owner", playerName: "Owner" },
@@ -565,7 +564,7 @@ describe("SharedWorldService storage and sync planning", () => {
   test("download and upload planning skip unchanged files", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
 
@@ -681,7 +680,7 @@ describe("SharedWorldService storage and sync planning", () => {
   test("region uploads expose delta candidates and cold downloads receive a reconstruction chain", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Delta World", "delta-world");
     await claimHostForTest(instance, { playerUuid: "player-owner", playerName: "Owner" }, world.id);
@@ -798,7 +797,7 @@ describe("SharedWorldService storage and sync planning", () => {
       "drive-world",
       { provider: "google-drive", storageAccountId: "storage-account-1" }
     );
-    const instance = createTestService(repository, authVerifier, signer, googleDriveStorageProvider(), {});
+    const instance = createTestService(repository, signer, googleDriveStorageProvider(), {});
     await claimHostForTest(instance, { playerUuid: "player-owner", playerName: "Owner" }, world.id);
 
     const uploadPlan = await instance.prepareUploads(
@@ -832,7 +831,7 @@ describe("SharedWorldService storage and sync planning", () => {
       "huge-world",
       { provider: "google-drive", storageAccountId: "storage-account-1" }
     );
-    const instance = createTestService(repository, authVerifier, signer, googleDriveStorageProvider(), {});
+    const instance = createTestService(repository, signer, googleDriveStorageProvider(), {});
     await claimHostForTest(instance, { playerUuid: "player-owner", playerName: "Owner" }, world.id);
 
     await expect(
@@ -862,7 +861,7 @@ describe("SharedWorldService storage and sync planning", () => {
   test("non-region packs plan delta uploads and warm download tails", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Packed World", "packed-world");
     await claimHostForTest(instance, { playerUuid: "player-owner", playerName: "Owner" }, world.id);
@@ -972,7 +971,7 @@ describe("SharedWorldService storage and sync planning", () => {
   test("a delta chain whose base snapshot is gone fails the download plan loudly instead of truncating it", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Broken Chain", "broken-chain");
     await claimHostForTest(instance, { playerUuid: "player-owner", playerName: "Owner" }, world.id);
@@ -1015,7 +1014,7 @@ describe("SharedWorldService storage and sync planning", () => {
   test("an old client's unchanged-pack resend inherits member rows without changing what it sees", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Old Client SMP", "old-client-smp");
     await claimHostForTest(instance, { playerUuid: "player-owner", playerName: "Owner" }, world.id);

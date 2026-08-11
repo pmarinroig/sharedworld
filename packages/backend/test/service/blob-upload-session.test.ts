@@ -4,7 +4,7 @@ import { HttpError } from "../../src/http.ts";
 import type { SharedWorldRepository } from "../../src/repository.ts";
 import type { ResumableProbe, ResumableUploadCapable, StorageBinding, StorageProvider } from "../../src/storage.ts";
 import { createSqliteRepository } from "../support/sqlite-d1.ts";
-import { authVerifier, createBlobSigner, createTestService } from "../support/service-fixtures.ts";
+import { createBlobSigner, createTestService } from "../support/service-fixtures.ts";
 
 const OWNER = { playerUuid: "player-owner", playerName: "Owner" };
 const KEY = "packs/full/aa/aaaa.pack";
@@ -92,7 +92,7 @@ function fakeResumableProvider(repository: SharedWorldRepository) {
 async function fixture() {
   const repository = createSqliteRepository();
   const provider = fakeResumableProvider(repository);
-  const instance = createTestService(repository, authVerifier, createBlobSigner().signer, provider, {});
+  const instance = createTestService(repository, createBlobSigner().signer, provider, {});
   await repository.upsertUser({ ...OWNER, createdAt: new Date().toISOString() });
   const world = await repository.createWorld(OWNER, "Friends SMP", "friends-smp",
     { provider: "google-drive", storageAccountId: "storage-account-1" });

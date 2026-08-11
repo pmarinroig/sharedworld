@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import type { RequestContext } from "../../src/repository.ts";
 import { clientVersionAtLeast } from "../../src/http.ts";
 import { createSqliteRepository } from "../support/sqlite-d1.ts";
-import { authVerifier, createBlobSigner, createTestService } from "../support/service-fixtures.ts";
+import { createBlobSigner, createTestService } from "../support/service-fixtures.ts";
 
 /**
  * 0.3.2+ clients decide "does this world have a snapshot" from
@@ -19,7 +19,7 @@ describe("session enter manifest version gate", () => {
   async function setup() {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: OWNER.playerUuid, playerName: OWNER.playerName, createdAt: NOW.toISOString() });
     const world = await repository.createWorld(OWNER, "Gate World", "gate-world");
     const snapshot = await repository.finalizeSnapshot(world.id, OWNER, {

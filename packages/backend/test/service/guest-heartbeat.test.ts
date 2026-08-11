@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { actor, makeCoordinator, member } from "../support/realtime.ts";
-import { authVerifier, createBlobSigner, createTestService } from "../support/service-fixtures.ts";
+import { createBlobSigner, createTestService } from "../support/service-fixtures.ts";
 import { createSqliteRepository } from "../support/sqlite-d1.ts";
 
 /**
@@ -15,7 +15,7 @@ describe("merged guest heartbeat", () => {
 
   async function fixture() {
     const repository = createSqliteRepository();
-    const instance = createTestService(repository, authVerifier, createBlobSigner().signer, {});
+    const instance = createTestService(repository, createBlobSigner().signer, {});
     await repository.upsertUser({ ...owner, createdAt: new Date().toISOString() });
     const world = await repository.createWorld(owner, "Friends SMP", "friends-smp");
     return { repository, instance, world };

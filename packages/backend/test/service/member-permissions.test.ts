@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { createSqliteRepository } from "../support/sqlite-d1.ts";
-import { authVerifier, createBlobSigner, createTestService } from "../support/service-fixtures.ts";
+import { createBlobSigner, createTestService } from "../support/service-fixtures.ts";
 
 const owner = { playerUuid: "player-owner", playerName: "Owner" };
 const guest = { playerUuid: "player-guest", playerName: "Guest" };
@@ -18,7 +18,7 @@ describe("SharedWorldService member command permissions", () => {
   test("owner grants and revokes a member's command permission", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     const world = await worldWithGuestMember(repository, instance);
 
     const granted = await instance.setMemberCommandPermission(owner, world.id, guest.playerUuid, { canUseCommands: true });
@@ -35,7 +35,7 @@ describe("SharedWorldService member command permissions", () => {
   test("members cannot change command permissions", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     const world = await worldWithGuestMember(repository, instance);
 
     await expect(
@@ -46,7 +46,7 @@ describe("SharedWorldService member command permissions", () => {
   test("the owner's own permissions cannot be toggled", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     const world = await worldWithGuestMember(repository, instance);
 
     await expect(
@@ -57,7 +57,7 @@ describe("SharedWorldService member command permissions", () => {
   test("toggling an unknown or removed member fails with member_not_found", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     const world = await worldWithGuestMember(repository, instance);
 
     await expect(
@@ -73,7 +73,7 @@ describe("SharedWorldService member command permissions", () => {
   test("a kicked member who rejoins does not retain command permission", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     const world = await worldWithGuestMember(repository, instance);
 
     await instance.setMemberCommandPermission(owner, world.id, guest.playerUuid, { canUseCommands: true });
@@ -92,7 +92,7 @@ describe("SharedWorldService member command permissions", () => {
   test("host heartbeat responses carry the membership permission list as a flat superset", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     const world = await worldWithGuestMember(repository, instance);
     await instance.setMemberCommandPermission(owner, world.id, guest.playerUuid, { canUseCommands: true });
 

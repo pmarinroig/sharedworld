@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import type { FinalizeSnapshotRequest } from "../../../shared/src/index.ts";
 
 import { createSqliteRepository } from "../support/sqlite-d1.ts";
-import { authVerifier, claimHostForTest, createBlobSigner, createStorageProviderSpy, createTestService } from "../support/service-fixtures.ts";
+import { claimHostForTest, createBlobSigner, createStorageProviderSpy, createTestService } from "../support/service-fixtures.ts";
 
 function packDirectoryMembersSnapshotId(raw: { query(sql: string): { get(...args: unknown[]): unknown } }, snapshotId: string): { members_snapshot_id: string | null } {
   // 0026: pack headers live in the snapshots row's JSON directory; keep the
@@ -21,7 +21,7 @@ describe("SharedWorldService snapshots and retention", () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const { storageProvider } = createStorageProviderSpy("google-drive");
-    const instance = createTestService(repository, authVerifier, signer, storageProvider, {});
+    const instance = createTestService(repository, signer, storageProvider, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld(
       { playerUuid: "player-owner", playerName: "Owner" },
@@ -85,7 +85,7 @@ describe("SharedWorldService snapshots and retention", () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const { storageProvider } = createStorageProviderSpy("google-drive");
-    const instance = createTestService(repository, authVerifier, signer, storageProvider, {});
+    const instance = createTestService(repository, signer, storageProvider, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld(
       { playerUuid: "player-owner", playerName: "Owner" },
@@ -188,7 +188,7 @@ describe("SharedWorldService snapshots and retention", () => {
   test("first snapshot can be finalized when baseSnapshotId is omitted", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     await claimHostForTest(instance, { playerUuid: "player-owner", playerName: "Owner" }, world.id);
@@ -218,7 +218,7 @@ describe("SharedWorldService snapshots and retention", () => {
   test("restoring a packed snapshot preserves packs and yields a usable latest manifest", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Packed Restore", "packed-restore");
 
@@ -342,7 +342,7 @@ describe("SharedWorldService snapshots and retention", () => {
   test("snapshot retention keeps recent snapshots, thins older history, and only deletes unreferenced blobs", async () => {
     const repository = createSqliteRepository();
     const { signer, deleted } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Retention Test", "retention-test");
     await claimHostForTest(instance, { playerUuid: "player-owner", playerName: "Owner" }, world.id);
@@ -486,7 +486,7 @@ describe("SharedWorldService snapshots and retention", () => {
   test("retention keeps every delta base a surviving snapshot still needs", async () => {
     const repository = createSqliteRepository();
     const { signer, deleted } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Chain Retention", "chain-retention");
     await claimHostForTest(instance, { playerUuid: "player-owner", playerName: "Owner" }, world.id);
@@ -552,7 +552,7 @@ describe("SharedWorldService snapshots and retention", () => {
   test("a backup another backup builds on cannot be deleted until its dependant is gone", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Delete Guard", "delete-guard");
     await claimHostForTest(instance, { playerUuid: "player-owner", playerName: "Owner" }, world.id);
@@ -607,7 +607,7 @@ describe("SharedWorldService snapshots and retention", () => {
   test("the latest backup is well-defined even when two snapshots share a timestamp", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Latest Tie", "latest-tie");
     await claimHostForTest(instance, { playerUuid: "player-owner", playerName: "Owner" }, world.id);
@@ -660,7 +660,7 @@ describe("SharedWorldService snapshots and retention", () => {
   test("retention prunes member donors and promotes their rows to a surviving heir", async () => {
     const repository = createSqliteRepository();
     const { signer, deleted } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Donor Retention", "donor-retention");
     await claimHostForTest(instance, { playerUuid: "player-owner", playerName: "Owner" }, world.id);
@@ -706,7 +706,7 @@ describe("SharedWorldService snapshots and retention", () => {
   test("deleting a member donor promotes rows to its heir instead of refusing or orphaning", async () => {
     const repository = createSqliteRepository();
     const { signer, deleted } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Donor Delete", "donor-delete");
     await claimHostForTest(instance, { playerUuid: "player-owner", playerName: "Owner" }, world.id);
@@ -744,7 +744,7 @@ describe("SharedWorldService snapshots and retention", () => {
   test("restore flattens through an inheriting snapshot, so the intermediate stays deletable", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Restore Flatten", "restore-flatten");
     await claimHostForTest(instance, { playerUuid: "player-owner", playerName: "Owner" }, world.id);
@@ -783,7 +783,7 @@ describe("SharedWorldService snapshots and retention", () => {
   test("a pruned donor's delta chain stays reconstructable through the surviving heir", async () => {
     const repository = createSqliteRepository();
     const { signer, deleted } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Mixed Edges", "mixed-edges");
     await claimHostForTest(instance, { playerUuid: "player-owner", playerName: "Owner" }, world.id);

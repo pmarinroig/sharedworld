@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { StorageAccountRecord } from "../../src/repository.ts";
 import { createSqliteRepository } from "../support/sqlite-d1.ts";
-import { authVerifier, createBlobSigner, createTestService, googleDriveStorageProvider } from "../support/service-fixtures.ts";
+import { createBlobSigner, createTestService, googleDriveStorageProvider } from "../support/service-fixtures.ts";
 
 const OWNER_CTX = { playerUuid: "player-owner", playerName: "Owner" };
 const GUEST_CTX = { playerUuid: "player-guest", playerName: "Guest" };
@@ -27,7 +27,7 @@ describe("SharedWorldService storage links", () => {
   test("creating a new storage link cancels older pending sessions for the same player", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, googleDriveStorageProvider(), {});
+    const instance = createTestService(repository, signer, googleDriveStorageProvider(), {});
 
     const first = await instance.createStorageLink(OWNER_CTX, {}, new Date("2099-04-04T10:00:00.000Z"));
     const second = await instance.createStorageLink(OWNER_CTX, {}, new Date("2099-04-04T10:01:00.000Z"));
@@ -45,7 +45,7 @@ describe("SharedWorldService storage links", () => {
   test("cancelling a pending storage link marks it cancelled", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, googleDriveStorageProvider(), {});
+    const instance = createTestService(repository, signer, googleDriveStorageProvider(), {});
 
     const session = await instance.createStorageLink(OWNER_CTX, {}, new Date("2099-04-04T10:00:00.000Z"));
     const cancelled = await instance.cancelStorageLink(OWNER_CTX, session.id, new Date("2099-04-04T10:02:00.000Z"));
@@ -57,7 +57,7 @@ describe("SharedWorldService storage links", () => {
   test("cancelling another player's storage link is forbidden", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, googleDriveStorageProvider(), {});
+    const instance = createTestService(repository, signer, googleDriveStorageProvider(), {});
 
     const session = await instance.createStorageLink(OWNER_CTX, {}, new Date("2099-04-04T10:00:00.000Z"));
 
@@ -67,7 +67,7 @@ describe("SharedWorldService storage links", () => {
   test("a first-time link forces the Google consent screen", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, googleDriveStorageProvider(), {});
+    const instance = createTestService(repository, signer, googleDriveStorageProvider(), {});
 
     const session = await instance.createStorageLink(OWNER_CTX, {}, new Date("2099-04-04T10:00:00.000Z"));
 
@@ -78,7 +78,7 @@ describe("SharedWorldService storage links", () => {
   test("a player with a refreshable linked account skips the consent screen", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, googleDriveStorageProvider(), {});
+    const instance = createTestService(repository, signer, googleDriveStorageProvider(), {});
     await repository.createOrUpdateStorageAccount(storageAccountFixture({ refreshToken: "rt-1" }));
 
     const session = await instance.createStorageLink(OWNER_CTX, {}, new Date("2099-04-04T10:00:00.000Z"));
@@ -90,7 +90,7 @@ describe("SharedWorldService storage links", () => {
   test("forceConsent overrides the consent skip", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, googleDriveStorageProvider(), {});
+    const instance = createTestService(repository, signer, googleDriveStorageProvider(), {});
     await repository.createOrUpdateStorageAccount(storageAccountFixture({ refreshToken: "rt-1" }));
 
     const session = await instance.createStorageLink(OWNER_CTX, { forceConsent: true }, new Date("2099-04-04T10:00:00.000Z"));
@@ -101,7 +101,7 @@ describe("SharedWorldService storage links", () => {
   test("an account whose refresh token was lost still forces consent", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, googleDriveStorageProvider(), {});
+    const instance = createTestService(repository, signer, googleDriveStorageProvider(), {});
     await repository.createOrUpdateStorageAccount(storageAccountFixture({ refreshToken: null }));
 
     const session = await instance.createStorageLink(OWNER_CTX, {}, new Date("2099-04-04T10:00:00.000Z"));
@@ -112,7 +112,7 @@ describe("SharedWorldService storage links", () => {
   test("getStorageAccount reports not linked, unhealthy, and healthy states", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, googleDriveStorageProvider(), {});
+    const instance = createTestService(repository, signer, googleDriveStorageProvider(), {});
 
     await expect(instance.getStorageAccount(OWNER_CTX)).resolves.toEqual({
       linked: false,
@@ -138,7 +138,7 @@ describe("SharedWorldService storage links", () => {
   test("another player's account does not satisfy the consent skip or the summary", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, googleDriveStorageProvider(), {});
+    const instance = createTestService(repository, signer, googleDriveStorageProvider(), {});
     await repository.createOrUpdateStorageAccount(storageAccountFixture({ refreshToken: "rt-1" }));
 
     const session = await instance.createStorageLink(GUEST_CTX, {}, new Date("2099-04-04T10:00:00.000Z"));
@@ -150,7 +150,7 @@ describe("SharedWorldService storage links", () => {
   test("completing a cancelled storage link is rejected", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, googleDriveStorageProvider(), {});
+    const instance = createTestService(repository, signer, googleDriveStorageProvider(), {});
 
     const session = await instance.createStorageLink(OWNER_CTX, {}, new Date("2099-04-04T10:00:00.000Z"));
     await instance.cancelStorageLink(OWNER_CTX, session.id, new Date("2099-04-04T10:01:00.000Z"));

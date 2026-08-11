@@ -14,7 +14,7 @@ import { createSqliteRepository } from "./sqlite-d1.ts";
 import { LocalRealtimeService } from "./realtime-local.ts";
 import type { RequestContext, SharedWorldRepository } from "../../src/repository.ts";
 import { R2StorageProvider } from "../../src/storage.ts";
-import { SharedWorldService, type AuthVerifier, type BlobUrlSigner } from "../../src/service.ts";
+import { SharedWorldService, type BlobUrlSigner } from "../../src/service.ts";
 import type { StorageProvider } from "../../src/storage.ts";
 
 type TestHostLeaseView = {
@@ -150,7 +150,6 @@ export class TestDriverSharedWorldService extends SharedWorldService {
 
   constructor(
     private readonly runtimeRepository: SharedWorldRepository,
-    authVerifier: AuthVerifier,
     blobSigner: BlobUrlSigner,
     storageProviderOrEnv: StorageProvider | Env,
     maybeEnv?: Env
@@ -159,7 +158,6 @@ export class TestDriverSharedWorldService extends SharedWorldService {
     const realtimeLocal = new LocalRealtimeService(runtimeRepository);
     super(
       runtimeRepository,
-      authVerifier,
       blobSigner,
       storageProvider,
       env,
@@ -301,15 +299,6 @@ export class TestDriverSharedWorldService extends SharedWorldService {
   }
 }
 
-export const authVerifier: AuthVerifier = {
-  async verifyJoin() {
-    return {
-      playerUuid: "player-owner",
-      playerName: "Owner"
-    };
-  }
-};
-
 export function createBlobSigner() {
   const deleted: string[] = [];
   const signer: BlobUrlSigner = {
@@ -328,12 +317,11 @@ export function createBlobSigner() {
 
 export function createTestService(
   repository: SharedWorldRepository = createSqliteRepository(),
-  verifier: AuthVerifier = authVerifier,
   signer: BlobUrlSigner = createBlobSigner().signer,
   storageProviderOrEnv: StorageProvider | Env = { SESSION_TTL_HOURS: "24" },
   maybeEnv?: Env
 ) {
-  return new TestDriverSharedWorldService(repository, verifier, signer, storageProviderOrEnv, maybeEnv);
+  return new TestDriverSharedWorldService(repository, signer, storageProviderOrEnv, maybeEnv);
 }
 
 function resolveStorageProviderAndEnv(storageProviderOrEnv: StorageProvider | Env, maybeEnv?: Env): [StorageProvider, Env] {

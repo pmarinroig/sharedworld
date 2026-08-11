@@ -4,7 +4,6 @@ import type { Env } from "../../src/env.ts";
 import type { SharedWorldRepository } from "../../src/repository.ts";
 import { createSqliteRepository } from "../support/sqlite-d1.ts";
 import {
-  authVerifier,
   claimHostForTest,
   createBlobBucket,
   createBlobSigner,
@@ -39,7 +38,7 @@ describe("SharedWorldService world management", () => {
   test("world summaries include live online player names and count", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     await repository.addMembership({
@@ -69,7 +68,7 @@ describe("SharedWorldService world management", () => {
   test("a host-reported roster with hyphenated UUIDs never duplicates the host", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "11111111111111111111111111111111", playerName: "HostA", createdAt: new Date().toISOString() });
     const owner = { playerUuid: "11111111111111111111111111111111", playerName: "HostA" };
     const world = await repository.createWorld(owner, "Roster SMP", "roster-smp");
@@ -92,7 +91,7 @@ describe("SharedWorldService world management", () => {
   test("different players can create worlds with the same name", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-a", playerName: "Alpha", createdAt: new Date().toISOString() });
     await repository.upsertUser({ playerUuid: "player-b", playerName: "Bravo", createdAt: new Date().toISOString() });
 
@@ -108,7 +107,7 @@ describe("SharedWorldService world management", () => {
   test("createWorld rejects names that are too short or too long regardless of the client cap", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const ctx = { playerUuid: "player-owner", playerName: "Owner" };
 
@@ -122,7 +121,7 @@ describe("SharedWorldService world management", () => {
   test("MAX_ACTIVE_WORLDS refuses creation at capacity and counts only live worlds", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, { MAX_ACTIVE_WORLDS: "2" });
+    const instance = createTestService(repository, signer, { MAX_ACTIVE_WORLDS: "2" });
     await repository.upsertUser({ playerUuid: "player-a", playerName: "Alpha", createdAt: new Date().toISOString() });
     await repository.upsertUser({ playerUuid: "player-b", playerName: "Bravo", createdAt: new Date().toISOString() });
     const alpha = { playerUuid: "player-a", playerName: "Alpha" };
@@ -151,10 +150,10 @@ describe("SharedWorldService world management", () => {
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const ctx = { playerUuid: "player-owner", playerName: "Owner" };
 
-    const unset = createTestService(repository, authVerifier, signer, {});
+    const unset = createTestService(repository, signer, {});
     await unset.createWorld(ctx, { name: "Unset Cap" });
 
-    const invalid = createTestService(repository, authVerifier, signer, { MAX_ACTIVE_WORLDS: "not-a-number" });
+    const invalid = createTestService(repository, signer, { MAX_ACTIVE_WORLDS: "not-a-number" });
     await invalid.createWorld(ctx, { name: "Invalid Cap" });
 
     expect(await repository.countActiveWorlds()).toBe(2);
@@ -163,7 +162,7 @@ describe("SharedWorldService world management", () => {
   test("deleting the last member purges world snapshots and orphaned blobs", async () => {
     const repository = createSqliteRepository();
     const { signer, deleted } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Cleanup Test", "cleanup-test");
     await claimHostForTest(instance, { playerUuid: "player-owner", playerName: "Owner" }, world.id);
@@ -200,7 +199,7 @@ describe("SharedWorldService world management", () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const { storageProvider, deleted } = createStorageProviderSpy("google-drive");
-    const instance = createTestService(repository, authVerifier, signer, storageProvider, {});
+    const instance = createTestService(repository, signer, storageProvider, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld(
       { playerUuid: "player-owner", playerName: "Owner" },
@@ -245,7 +244,7 @@ describe("SharedWorldService world management", () => {
   test("owner delete removes world invites", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Invite Cleanup", "invite-cleanup");
     const invite = await instance.createInvite(
@@ -267,7 +266,7 @@ describe("SharedWorldService world management", () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const { storageProvider, deleted } = createStorageProviderSpy("google-drive");
-    const instance = createTestService(repository, authVerifier, signer, storageProvider, {});
+    const instance = createTestService(repository, signer, storageProvider, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld(
       { playerUuid: "player-owner", playerName: "Owner" },
@@ -323,7 +322,7 @@ describe("SharedWorldService world management", () => {
     const { storageProvider, deleted } = createStorageProviderSpy("google-drive", {
       failDeletesFor: ["blobs/fail/cleanup.bin"]
     });
-    const instance = createTestService(repository, authVerifier, signer, storageProvider, {});
+    const instance = createTestService(repository, signer, storageProvider, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld(
       { playerUuid: "player-owner", playerName: "Owner" },
@@ -380,7 +379,7 @@ describe("SharedWorldService world management", () => {
   test("only the owner can rename a world", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     await repository.addMembership({
@@ -410,7 +409,7 @@ describe("SharedWorldService world management", () => {
     const { signer } = createBlobSigner();
     const iconBytes = createPng64Bytes();
     const env: Env = { BLOBS: createBlobBucket({}) };
-    const instance = createTestService(repository, authVerifier, signer, env);
+    const instance = createTestService(repository, signer, env);
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
 
     const created = await instance.createWorld(
@@ -435,7 +434,7 @@ describe("SharedWorldService world management", () => {
     const newIconBytes = createPng64Bytes();
     newIconBytes[15] = 0x53;
     const env: Env = { BLOBS: createBlobBucket({}) };
-    const instance = createTestService(repository, authVerifier, signer, env);
+    const instance = createTestService(repository, signer, env);
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await instance.createWorld(
       { playerUuid: "player-owner", playerName: "Owner", requestOrigin: "http://127.0.0.1:8787" },
@@ -458,7 +457,7 @@ describe("SharedWorldService world management", () => {
   test("request-side customIconStorageKey is ignored on update", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Weekend World", "weekend-world");
 
@@ -480,7 +479,7 @@ describe("SharedWorldService world management", () => {
   test("deleting as owner permanently deletes the world for all members", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     await repository.addMembership({
@@ -512,7 +511,7 @@ describe("SharedWorldService world management", () => {
   test("deleting as non-owner leaves the world intact for other members", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     await repository.addMembership({
@@ -536,7 +535,7 @@ describe("SharedWorldService world management", () => {
   test("[P5] deleting an active world makes session endpoints report it as deleted", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
     await repository.addMembership({
@@ -585,7 +584,7 @@ describe("SharedWorldService world management", () => {
   test("stale guest presence heartbeats cannot restore a player after a newer disconnect", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Ordering Test", "ordering-test");
     await repository.addMembership({
@@ -626,7 +625,7 @@ describe("SharedWorldService world management", () => {
   test("new guest sessions can replace older disconnect tombstones", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
     const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Rejoin Test", "rejoin-test");
     await repository.addMembership({
@@ -661,7 +660,7 @@ describe("SharedWorldService world management", () => {
   test("[S15 fixed] [P8] a create whose runtime seed loses leaves no orphaned world behind", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
-    const instance = createTestService(repository, authVerifier, signer, {});
+    const instance = createTestService(repository, signer, {});
     const ctx = { playerUuid: "player-owner", playerName: "Owner" };
     // Force the initial-upload host claim to lose, as a concurrent claimant
     // would make it: the world/membership rows exist by then, and P8 requires

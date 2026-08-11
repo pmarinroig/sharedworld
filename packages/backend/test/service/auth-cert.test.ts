@@ -57,11 +57,6 @@ const keysPromise = generateTestKeys();
 function certService(keys: TestKeys, repository = createSqliteRepository()) {
   return createTestService(
     repository,
-    {
-      async verifyJoin() {
-        throw new Error("certificate auth must never call the Mojang sessionserver verifier");
-      }
-    },
     undefined,
     {
       SESSION_TTL_HOURS: "24",
@@ -190,8 +185,8 @@ describe("completeCertAuth", () => {
   });
 
   test("a certificate rejection leaves a Workers Logs line naming the code and player", async () => {
-    // The client falls back to the join flow silently on these, so this warn
-    // is the only production record that a real certificate was rejected.
+    // 4xx auth failures never reach the >=500 error logging, so this warn is
+    // the only production record that a real certificate was rejected.
     const keys = await keysPromise;
     const instance = certService(keys);
     const challenge = await instance.createChallenge();
@@ -225,79 +220,51 @@ describe("completeCertAuth", () => {
 });
 
 describe("MojangServicesKeyProvider", () => {
-  test("fetches once, caches in the repository, and serves the cache within the TTL", async () => {
+  // Mojang answers 403 to all Cloudflare Workers egress, so the provider must
+  // NEVER fetch: keys come from the pinned env var or the D1 row seeded by
+  // scripts/backend-seed-mojang-keys.sh, served indefinitely regardless of age.
+  test("never fetches: serves the seeded D1 row regardless of its age", async () => {
     const keys = await keysPromise;
-    let hits = 0;
-    const server = Bun.serve({
-      port: 0,
-      fetch() {
-        hits += 1;
-        return Response.json({
-          profilePropertyKeys: [{ publicKey: "aWdub3JlZA==" }],
-          playerCertificateKeys: [{ publicKey: keys.servicesPublicB64 }]
-        });
-      }
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(() => {
+      throw new Error("the services-key provider must never make a network request");
     });
     try {
       const repository = createSqliteRepository();
-      const provider = new MojangServicesKeyProvider(repository, {
-        MOJANG_SERVICES_PUBLICKEYS_ENDPOINT: `http://127.0.0.1:${server.port}/publickeys`
-      });
-      const first = await provider.playerCertificateKeys(new Date());
-      const second = await provider.playerCertificateKeys(new Date());
-      expect(first).toHaveLength(1);
-      expect(second).toHaveLength(1);
-      expect(hits).toBe(1);
-      expect(await repository.getMojangServicesKeys()).not.toBeNull();
+      // A row far older than any plausible TTL is still authoritative.
+      await repository.putMojangServicesKeys("2020-01-01T00:00:00.000Z", JSON.stringify([keys.servicesPublicB64]));
+      const provider = new MojangServicesKeyProvider(repository, {});
+      expect(await provider.playerCertificateKeys()).toHaveLength(1);
+      expect(fetchSpy).not.toHaveBeenCalled();
     } finally {
-      server.stop(true);
+      fetchSpy.mockRestore();
     }
   });
 
-  test("serves the stale cache when the refresh fails, and fails 503 with no cache at all", async () => {
+  test("the pinned env var wins without touching the store", async () => {
     const keys = await keysPromise;
-    const closedPortServer = Bun.serve({ port: 0, fetch: () => new Response(null) });
-    const closedPort = closedPortServer.port;
-    closedPortServer.stop(true);
-    const env = { MOJANG_SERVICES_PUBLICKEYS_ENDPOINT: `http://127.0.0.1:${closedPort}/publickeys` };
-
-    const repository = createSqliteRepository();
-    // A cache far older than the TTL still beats a failed login.
-    await repository.putMojangServicesKeys("2020-01-01T00:00:00.000Z", JSON.stringify([keys.servicesPublicB64]));
-    const stale = new MojangServicesKeyProvider(repository, env);
-    expect(await stale.playerCertificateKeys(new Date())).toHaveLength(1);
-
-    const empty = new MojangServicesKeyProvider(createSqliteRepository(), env);
-    await expectHttpError(empty.playerCertificateKeys(new Date()), 503, "identity_verification_unavailable");
+    const provider = new MojangServicesKeyProvider(
+      {
+        async getMojangServicesKeys() {
+          throw new Error("pinned keys must not read the store");
+        }
+      },
+      { MOJANG_PLAYER_CERTIFICATE_KEYS: keys.servicesPublicB64 }
+    );
+    expect(await provider.playerCertificateKeys()).toHaveLength(1);
   });
 
-  test("a failed refresh throttles further fetch attempts instead of retrying per request", async () => {
-    const keys = await keysPromise;
-    let hits = 0;
-    const server = Bun.serve({
-      port: 0,
-      fetch() {
-        hits += 1;
-        return new Response(null, { status: 403 });
-      }
+  test("an unseeded store fails 503 instead of attempting a fetch", async () => {
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(() => {
+      throw new Error("the services-key provider must never make a network request");
     });
+    const warn = spyOn(console, "error").mockImplementation(() => {});
     try {
-      const repository = createSqliteRepository();
-      await repository.putMojangServicesKeys("2020-01-01T00:00:00.000Z", JSON.stringify([keys.servicesPublicB64]));
-      const provider = new MojangServicesKeyProvider(repository, {
-        MOJANG_SERVICES_PUBLICKEYS_ENDPOINT: `http://127.0.0.1:${server.port}/publickeys`
-      });
-      expect(await provider.playerCertificateKeys(new Date())).toHaveLength(1);
-      expect(await provider.playerCertificateKeys(new Date())).toHaveLength(1);
-      expect(hits).toBe(1);
-      // The row re-expires later (one retry per throttle window), rather than
-      // being refreshed to a full TTL by a failure.
-      const restamped = await repository.getMojangServicesKeys();
-      expect(restamped).not.toBeNull();
-      const age = Date.now() - new Date(restamped!.fetchedAt).getTime();
-      expect(age).toBeGreaterThan(60 * 60_000);
+      const empty = new MojangServicesKeyProvider(createSqliteRepository(), {});
+      await expectHttpError(empty.playerCertificateKeys(), 503, "identity_verification_unavailable");
+      expect(fetchSpy).not.toHaveBeenCalled();
     } finally {
-      server.stop(true);
+      fetchSpy.mockRestore();
+      warn.mockRestore();
     }
   });
 });

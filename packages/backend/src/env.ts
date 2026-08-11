@@ -9,8 +9,6 @@ export interface Env {
   SESSION_TTL_HOURS?: string;
   PUBLIC_BASE_URL?: string;
   SIGNED_URL_TTL_SECONDS?: string;
-  MOJANG_HAS_JOINED_ENDPOINT?: string;
-  MOJANG_SERVICES_PUBLICKEYS_ENDPOINT?: string;
   /** Comma-separated base64 DER pins for the player-certificate key set (test hook / emergency lever). */
   MOJANG_PLAYER_CERTIFICATE_KEYS?: string;
   /**
