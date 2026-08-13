@@ -1,5 +1,16 @@
 export const HOST_HEARTBEAT_INTERVAL_MS = 30_000;
 export const HOST_LEASE_TIMEOUT_MS = 90_000;
+/**
+ * Steady-state host-LIVE lease only. Longer than HOST_LEASE_TIMEOUT_MS
+ * because it sets the coordinator's self-wake cadence for the whole hosted
+ * session (one alarm + gateway probe per period, forever): the fast paths —
+ * socket-close grace (30s) and rescue-on-read — don't depend on it, so it
+ * only bounds SILENT-death detection (lid close, power cut). Startup-confirm
+ * and finalizing-stall deadlines deliberately stay on the 90s constant: the
+ * mod mirrors the startup deadline (HOST_CONFIRM_TIMEOUT_MS), and a crashed
+ * finalizer should not block the next host for the longer period.
+ */
+export const HOST_LIVE_LEASE_TIMEOUT_MS = 150_000;
 export const HANDOFF_WAITER_TIMEOUT_MS = 120_000;
 export const PLAYER_PRESENCE_HEARTBEAT_INTERVAL_MS = 15_000;
 export const PLAYER_PRESENCE_TIMEOUT_MS = 45_000;
@@ -116,6 +127,13 @@ export interface WorldSettings {
   difficulty?: WorldDifficulty;
   defaultGameMode?: WorldDefaultGameMode;
   gamerules?: Partial<Record<WorldGameRule, boolean>>;
+  /**
+   * 0.4.2: hard cap on retained backups (applied after the age policy, the
+   * latest always kept). null/absent = age policy only. Owner-set storage
+   * control — meaningful since chain self-containment (S1) made retention
+   * deletions real.
+   */
+  maxBackups?: number | null;
 }
 
 export interface UpdateWorldSettingsRequest {
@@ -475,6 +493,23 @@ export interface PackedManifestFile {
   contentType: string;
 }
 
+/**
+ * One materialization step of a pack's delta chain: the anchor full blob
+ * (baseHash null) or a delta blob applied onto the previous step's result.
+ * Carries everything a download-plan step needs, so plans build from the
+ * recipe alone — no base snapshot rows required.
+ */
+export interface PackChainStep {
+  storageKey: string;
+  /** Hash of the pack CONTENT after applying this step (early-stop key). */
+  hash: string;
+  baseHash: string | null;
+  transferMode: FileTransferMode;
+  /** Logical pack size at this chain position (client progress display). */
+  size: number;
+  deltaFormatVersion: number | null;
+}
+
 export interface SnapshotPack {
   packId: string;
   hash: string;
@@ -490,6 +525,15 @@ export interface SnapshotPack {
   deltaBlobSize?: number | null;
   /** Server-accumulated delta bytes since the chain's last full artifact. */
   chainDeltaBytes?: number | null;
+  /**
+   * Server-stamped self-contained materialization recipe: anchor full first,
+   * ending with this pack itself. Makes snapshots independent of the
+   * snapshot rows their deltas were built against — download plans read the
+   * steps instead of walking base snapshots, so retention and manual delete
+   * can drop any other snapshot freely. Never trusted from clients; null on
+   * legacy (pre-stamping) snapshots, which keep the walk-based plan path.
+   */
+  chainSteps?: PackChainStep[] | null;
   files: PackedManifestFile[];
 }
 

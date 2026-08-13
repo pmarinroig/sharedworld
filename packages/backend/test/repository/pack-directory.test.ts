@@ -84,6 +84,11 @@ describe("snapshot pack directory (0026)", () => {
     expect(directoryB[0]).toMatchObject({ membersSnapshotId: "snap-a", memberCount: 2, memberTotalSize: 40 });
 
     // The repository over the migrated DB serves both manifests intact.
+    // Deploys apply every migration before the new worker serves, so the
+    // remaining ones (0027+) land here too.
+    for (const fileName of migrationFiles.filter((name) => name >= "0027")) {
+      db.exec(readFileSync(join(backendRoot, "migrations", fileName), "utf8"));
+    }
     const repository = new D1SharedWorldRepository(new SqliteD1Database(db));
     const manifestB = await repository.getSnapshot("world-1", "snap-b");
     expect(manifestB?.packs[0]?.files.map((file) => file.path)).toEqual(["level.dat", "session.lock"]);

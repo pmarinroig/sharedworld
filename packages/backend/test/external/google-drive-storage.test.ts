@@ -180,7 +180,11 @@ describe("GoogleDriveStorageProvider", () => {
       caught = error;
     }
     expect(caught).toBeInstanceOf(HttpError);
-    expect((caught as HttpError).code).toBe("drive_upload_failed");
+    // B4: quota exhaustion is classified as its own terminal, actionable
+    // code (403 = never retried by any shipped client's transport policy).
+    expect((caught as HttpError).code).toBe("drive_storage_full");
+    expect((caught as HttpError).status).toBe(403);
+    expect((caught as HttpError).message).toContain("Google Drive is full");
     expect((caught as HttpError).upstreamStatus).toBe(403);
     expect(requests).toHaveLength(1);
   });

@@ -92,6 +92,12 @@ CREATE TABLE IF NOT EXISTS snapshots (
   -- 0026 finalize-time aggregates over the snapshot's loose (non-pack) files.
   loose_file_count INTEGER,
   loose_total_size INTEGER,
+  -- 0027 manifest-as-document: pointer to the content-addressed JSON doc
+  -- (manifests/<hash[0:2]>/<hash>.json) holding this snapshot's pack MEMBER
+  -- lists in the world's storage provider. NULL = legacy row-based snapshot
+  -- (readers fall back to snapshot_files rows). Non-null implies zero
+  -- pack-member rows and membersSnapshotId null in every packs_json entry.
+  manifest_storage_key TEXT,
   FOREIGN KEY (world_id) REFERENCES worlds(id),
   FOREIGN KEY (created_by_uuid) REFERENCES users(player_uuid)
 );
@@ -230,3 +236,21 @@ CREATE INDEX IF NOT EXISTS idx_storage_upload_sessions_account_created
 CREATE INDEX IF NOT EXISTS idx_snapshot_packs_members_donor
   ON snapshot_packs (members_snapshot_id)
   WHERE members_snapshot_id IS NOT NULL;
+
+-- 0027 manifest-doc reference leg: GC's referenced-key checks look up
+-- specific doc keys account-wide (docs are shared across snapshots).
+CREATE INDEX IF NOT EXISTS idx_snapshots_manifest_storage_key
+  ON snapshots (manifest_storage_key)
+  WHERE manifest_storage_key IS NOT NULL;
+
+-- 0028: GC retry queue — failed provider deletes retried by bounded
+-- opportunistic sweeps (rows dropped without deleting if re-referenced).
+CREATE TABLE IF NOT EXISTS pending_blob_deletes (
+  provider TEXT NOT NULL,
+  storage_account_id TEXT NOT NULL,
+  storage_key TEXT NOT NULL,
+  enqueued_at TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_attempt_at TEXT,
+  PRIMARY KEY (provider, storage_account_id, storage_key)
+);

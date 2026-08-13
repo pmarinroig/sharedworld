@@ -13,6 +13,7 @@ import type { Env, R2Bucket } from "../../src/env.ts";
 import { createSqliteRepository } from "./sqlite-d1.ts";
 import { LocalRealtimeService } from "./realtime-local.ts";
 import type { RequestContext, SharedWorldRepository } from "../../src/repository.ts";
+import { providerManifestDocumentReader } from "../../src/manifest-doc.ts";
 import { R2StorageProvider } from "../../src/storage.ts";
 import { SharedWorldService, type BlobUrlSigner } from "../../src/service.ts";
 import type { StorageProvider } from "../../src/storage.ts";
@@ -155,6 +156,8 @@ export class TestDriverSharedWorldService extends SharedWorldService {
     maybeEnv?: Env
   ) {
     const [storageProvider, env] = resolveStorageProviderAndEnv(storageProviderOrEnv, maybeEnv);
+    // 0027: same post-construction reader attachment as production index.ts.
+    runtimeRepository.attachManifestDocumentReader(providerManifestDocumentReader(storageProvider));
     const realtimeLocal = new LocalRealtimeService(runtimeRepository);
     super(
       runtimeRepository,
@@ -416,27 +419,53 @@ export function createStorageProviderSpy(
 ) {
   const deleted: string[] = [];
   const failDeletesFor = new Set(options.failDeletesFor ?? []);
+  // Map-backed so doc-mode snapshots (0027 manifest documents) round-trip:
+  // a no-op put would mint pointer-only snapshots whose documents can never
+  // load again.
+  const objects = new Map<string, Uint8Array>();
   const storageProvider: StorageProvider = {
     provider,
-    async exists() {
-      return false;
+    async exists(_binding, storageKey) {
+      return objects.has(storageKey);
     },
-    async put() {
+    async put(_binding, storageKey, body) {
+      objects.set(
+        storageKey,
+        body instanceof Uint8Array
+          ? body
+          : new Uint8Array(body instanceof ArrayBuffer ? body : await new Response(body as BodyInit).arrayBuffer())
+      );
     },
-    async get() {
-      return null;
+    async get(_binding, storageKey) {
+      const bytes = objects.get(storageKey);
+      if (!bytes) {
+        return null;
+      }
+      return {
+        body: null,
+        contentType: "application/octet-stream",
+        size: bytes.byteLength,
+        status: 200 as const,
+        contentRange: null,
+        async arrayBuffer() {
+          const copy = new Uint8Array(bytes.byteLength);
+          copy.set(bytes);
+          return copy.buffer;
+        }
+      };
     },
     async delete(_binding, storageKey) {
       deleted.push(storageKey);
       if (failDeletesFor.has(storageKey)) {
         throw new Error(`delete failed for ${storageKey}`);
       }
+      objects.delete(storageKey);
     },
     async quota() {
       return { usedBytes: null, totalBytes: null };
     }
   };
-  return { storageProvider, deleted };
+  return { storageProvider, deleted, objects };
 }
 
 export async function claimHostForTest(

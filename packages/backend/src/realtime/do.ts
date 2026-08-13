@@ -163,18 +163,44 @@ export class DoCoordinatorEffects implements CoordinatorEffects {
     await this.repository().upsertRuntimeMirror(worldId, null, JSON.stringify(players));
   }
 
+  /**
+   * Per-recipient send queues for the detached fan-out below. Each player's
+   * frames stay ordered relative to each other (a stale runtime status must
+   * never arrive after a newer one), while recipients never wait on one
+   * another. Entries self-prune once their queue drains; instance state only,
+   * and a hard eviction dropping queued frames is within the lossy contract.
+   */
+  private readonly notifyTails = new Map<string, Promise<void>>();
+
   async publish(event: RealtimeEvent, recipients?: string[]): Promise<void> {
     const targets = recipients
       ?? (await this.listMemberships(event.worldId))
         .filter((member) => member.deletedAt == null)
         .map((member) => member.playerUuid);
     const frame: RealtimeServerFrame = { v: REALTIME_PROTOCOL_VERSION, type: "event", event };
-    await Promise.allSettled(targets.map(async (playerUuid) => {
-      await this.gateway(playerUuid).fetch("https://do/notify", {
-        method: "POST",
-        body: JSON.stringify({ frame })
+    const body = JSON.stringify({ frame });
+    // Detached on purpose: each recipient's gateway DO lives in that
+    // player's home colo, so awaiting the fan-out held every coordinator
+    // request — and, through the call serializer, every queued request and
+    // alarm — hostage to the slowest round trip on the planet (observed as
+    // multi-second request wall times). Delivery is best-effort and the
+    // polling fallback covers a lost frame; only per-recipient ORDER matters.
+    for (const playerUuid of targets) {
+      const tail = this.notifyTails.get(playerUuid) ?? Promise.resolve();
+      const next = tail.then(async () => {
+        try {
+          await this.gateway(playerUuid).fetch("https://do/notify", { method: "POST", body });
+        } catch {
+          // Lossy by contract; the recipient's fallback lane re-derives state.
+        }
       });
-    }));
+      this.notifyTails.set(playerUuid, next);
+      void next.finally(() => {
+        if (this.notifyTails.get(playerUuid) === next) {
+          this.notifyTails.delete(playerUuid);
+        }
+      });
+    }
   }
 
   /**

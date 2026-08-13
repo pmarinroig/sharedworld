@@ -968,12 +968,12 @@ describe("SharedWorldService storage and sync planning", () => {
     expect(coldDownloadPlan.nonRegionPackDownload?.steps[1].transferMode).toBe("pack-delta");
   });
 
-  test("a delta chain whose base snapshot is gone fails the download plan loudly instead of truncating it", async () => {
+  test("S1: a stamped chain survives its base snapshot's deletion — plan serves the recipe, chain blobs stay referenced", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
     const instance = createTestService(repository, signer, {});
     await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
-    const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Broken Chain", "broken-chain");
+    const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Free Chain", "free-chain");
     await claimHostForTest(instance, { playerUuid: "player-owner", playerName: "Owner" }, world.id);
     const owner = { playerUuid: "player-owner", playerName: "Owner" };
 
@@ -1003,12 +1003,19 @@ describe("SharedWorldService storage and sync planning", () => {
       }]
     }, new Date("2099-01-01T11:00:00.000Z"));
 
-    // Simulate legacy data where the base was pruned before retention became
-    // chain-aware: the delta survives but its base snapshot row is gone.
-    await repository.deleteSnapshots(world.id, [snapshotA.snapshotId]);
+    // The old backup is now individually deletable — and its full blob must
+    // survive, because the surviving snapshot's chain recipe references it.
+    const deletion = await repository.deleteSnapshots(world.id, [snapshotA.snapshotId]);
+    expect(deletion.deletedSnapshotIds).toEqual([snapshotA.snapshotId]);
+    expect(deletion.unreferencedStorageKeys).not.toContain("packs/full/a.pack");
 
-    await expect(instance.downloadPlan(owner, world.id, { files: [], nonRegionPack: null, regionBundles: [] }))
-      .rejects.toThrow("missing a delta base artifact");
+    // The download plan builds from the recipe: full anchor + delta, no
+    // base snapshot rows involved.
+    const plan = await instance.downloadPlan(owner, world.id, { files: [], nonRegionPack: null, regionBundles: [] });
+    expect(plan.nonRegionPackDownload?.steps.map((step) => step.storageKey))
+      .toEqual(["packs/full/a.pack", "packs/delta/a-b.bin"]);
+    expect(plan.nonRegionPackDownload?.steps[0]?.transferMode).toBe("pack-full");
+    expect(plan.nonRegionPackDownload?.steps[1]?.baseHash).toBe("pack-a");
   });
 
   test("an old client's unchanged-pack resend inherits member rows without changing what it sees", async () => {

@@ -225,9 +225,9 @@ describe("MojangServicesKeyProvider", () => {
   // scripts/backend-seed-mojang-keys.sh, served indefinitely regardless of age.
   test("never fetches: serves the seeded D1 row regardless of its age", async () => {
     const keys = await keysPromise;
-    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(() => {
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(((() => {
       throw new Error("the services-key provider must never make a network request");
-    });
+    }) as unknown) as typeof fetch);
     try {
       const repository = createSqliteRepository();
       // A row far older than any plausible TTL is still authoritative.
@@ -254,9 +254,9 @@ describe("MojangServicesKeyProvider", () => {
   });
 
   test("an unseeded store fails 503 instead of attempting a fetch", async () => {
-    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(() => {
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(((() => {
       throw new Error("the services-key provider must never make a network request");
-    });
+    }) as unknown) as typeof fetch);
     const warn = spyOn(console, "error").mockImplementation(() => {});
     try {
       const empty = new MojangServicesKeyProvider(createSqliteRepository(), {});

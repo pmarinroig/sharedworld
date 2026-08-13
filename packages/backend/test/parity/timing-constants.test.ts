@@ -47,6 +47,9 @@ const JAVA_ONLY_CONSTANTS = new Set([
 
 /** Contract constants enforced only by the backend, with no mod-side literal. */
 const TS_ONLY_CONSTANTS = new Set<keyof typeof contracts>([
+  // Host-LIVE lease/self-wake cadence; the mod mirrors only the 90s
+  // startup-confirm deadline (HOST_LEASE_TIMEOUT_MS ↔ HOST_CONFIRM_TIMEOUT_MS).
+  "HOST_LIVE_LEASE_TIMEOUT_MS",
   "HANDOFF_WAITER_TIMEOUT_MS",
   "PLAYER_PRESENCE_TIMEOUT_MS",
   "INVITE_TTL_MS",

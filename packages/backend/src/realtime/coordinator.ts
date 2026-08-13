@@ -1,6 +1,7 @@
 import {
   HANDOFF_WAITER_TIMEOUT_MS,
   HOST_LEASE_TIMEOUT_MS,
+  HOST_LIVE_LEASE_TIMEOUT_MS,
   PLAYER_PRESENCE_TIMEOUT_MS,
   type EnterSessionRequest,
   type FinalizationActionResult,
@@ -56,6 +57,22 @@ export const LEGACY_PRESENCE_RETENTION_MS = 10 * 60_000;
  * that reconnects (~1-2s backoff) inside it causes ZERO presence fan-out.
  */
 export const PRESENCE_SOCKET_GRACE_MS = 15_000;
+
+/**
+ * A waiter is ELECTABLE only while its row was refreshed this recently.
+ * Live waiting clients poll observeWaiting every 1-5s (each poll refreshes
+ * the row), so 20s means four missed polls: an abandoned/crashed waiter
+ * stops being the candidate — and stops blocking the next-freshest waiter —
+ * within ~20s instead of the full 120s row TTL. Rows are kept until the TTL
+ * so a briefly-lapsed client that resumes polling becomes electable again.
+ *
+ * Deliberately NOT presence-based: a legitimate handoff waiter has just
+ * left the dead world, so its presence withdrawal (socket frame / beat) and
+ * its waiter registration (HTTP enterSession) race with no ordering
+ * guarantee — evicting waiter rows on presence signals would cancel real
+ * handoffs. Row freshness is the one signal the waiting flow itself owns.
+ */
+export const WAITER_ELECTION_FRESHNESS_MS = 20_000;
 
 /**
  * The caller's identity plus the membership facts the Worker already checked
@@ -822,8 +839,7 @@ export class WorldCoordinator {
   private async resolve(now: Date): Promise<ResolvedRuntimeState> {
     this.expireWaiters(now);
     const memberships = await this.memberships(now);
-    const waiters = this.store.listWaiters();
-    const candidate = choosePreferredCandidate(waiters.filter((waiter) => waiter.waiting), memberships);
+    const candidate = choosePreferredCandidate(this.electableWaiters(now), memberships);
     let before = this.store.getRuntime();
     if (before != null
       && (before.phase === "host-starting" || before.phase === "host-live")
@@ -863,7 +879,9 @@ export class WorldCoordinator {
    */
   private async rescueReachableHost(runtime: WorldRuntimeRecord, now: Date): Promise<WorldRuntimeRecord | null> {
     const lastSeen = await this.effects.probeHostReachability(runtime.hostUuid ?? "");
-    const reachable = lastSeen != null && now.getTime() - lastSeen.getTime() < HOST_LEASE_TIMEOUT_MS;
+    // Staleness threshold matches the live lease: the client keepalive runs
+    // every 20s, so a healthy host's timestamp is never anywhere near this.
+    const reachable = lastSeen != null && now.getTime() - lastSeen.getTime() < HOST_LIVE_LEASE_TIMEOUT_MS;
     if (!reachable) {
       return null;
     }
@@ -959,6 +977,14 @@ export class WorldCoordinator {
     }
   }
 
+  /** Waiting waiters whose rows are fresh enough to be elected (see WAITER_ELECTION_FRESHNESS_MS). */
+  private electableWaiters(now: Date): RuntimeWaiter[] {
+    const freshCutoff = now.getTime() - WAITER_ELECTION_FRESHNESS_MS;
+    return this.store.listWaiters().filter(
+      (waiter) => waiter.waiting && new Date(waiter.updatedAt).getTime() >= freshCutoff
+    );
+  }
+
   private expireWaiters(now: Date): void {
     const cutoff = now.getTime() - HANDOFF_WAITER_TIMEOUT_MS;
     for (const waiter of this.store.listWaiters()) {
@@ -1040,10 +1066,7 @@ export class WorldCoordinator {
   private async afterStateChange(now: Date): Promise<void> {
     const runtime = this.store.getRuntime();
     const memberships = await this.memberships(now);
-    const candidate = choosePreferredCandidate(
-      this.store.listWaiters().filter((waiter) => waiter.waiting),
-      memberships
-    );
+    const candidate = choosePreferredCandidate(this.electableWaiters(now), memberships);
     const status = toRuntimeStatus(this.worldId, runtime, candidate, this.store.getWarning());
     const fingerprint = statusFingerprint(status);
     if (fingerprint !== this.store.getStatusFingerprint()) {
@@ -1072,6 +1095,12 @@ export class WorldCoordinator {
     }
     for (const waiter of this.store.listWaiters()) {
       candidates.push(new Date(waiter.updatedAt).getTime() + HANDOFF_WAITER_TIMEOUT_MS);
+      // Election freshness: when the current candidate goes stale, election
+      // must re-run promptly so the next-freshest waiter takes over.
+      const staleAt = new Date(waiter.updatedAt).getTime() + WAITER_ELECTION_FRESHNESS_MS;
+      if (staleAt > now.getTime()) {
+        candidates.push(staleAt);
+      }
     }
     for (const entry of this.store.listLegacyPresence()) {
       // Only a present, unexpired entry needs a future alarm (to republish

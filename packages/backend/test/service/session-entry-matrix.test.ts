@@ -16,7 +16,10 @@ describe("session entry decision matrix", () => {
   const GUEST_1: RequestContext = { playerUuid: "player-guest-1", playerName: "Guest One" };
   const GUEST_2: RequestContext = { playerUuid: "player-guest-2", playerName: "Guest Two" };
   const NOW = new Date("2099-01-01T12:00:00.000Z");
-  const LATER = new Date("2099-01-01T12:00:30.000Z");
+  // Within WAITER_ELECTION_FRESHNESS_MS of NOW: waiters registered at NOW
+  // must still be electable when observed at LATER (live clients poll every
+  // 1-5s, so a same-poll-cycle observation never sees a stale rival).
+  const LATER = new Date("2099-01-01T12:00:15.000Z");
 
   async function setup() {
     const repository = createSqliteRepository();

@@ -86,14 +86,15 @@ describe("delta v2 gating and size-aware re-full", () => {
       packs: [finalizePack({
         hash: "d1", size: 1000, storageKey: "packs/delta2/fu/full1-d1.bin", transferMode: "pack-delta",
         baseSnapshotId: base!.snapshotId, baseHash: "full1", chainDepth: 1,
-        deltaFormatVersion: 2, deltaBlobSize: 400
+        deltaFormatVersion: 2, deltaBlobSize: 150
       })]
     });
     await Bun.sleep(2);
     const afterFirst = await repository.getLatestSnapshot(worldId);
-    expect(afterFirst!.packs[0].chainDeltaBytes).toBe(400);
+    expect(afterFirst!.packs[0].chainDeltaBytes).toBe(150);
 
-    // A second delta pushes the accumulator to 900 <= 1000: still offered.
+    // A second delta pushes the accumulator to 350 <= 400 (0.4 × 1000):
+    // still offered.
     await instance.finalizeSnapshot(V2_OWNER, worldId, {
       ...authority,
       baseSnapshotId: afterFirst!.snapshotId,
@@ -101,7 +102,7 @@ describe("delta v2 gating and size-aware re-full", () => {
       packs: [finalizePack({
         hash: "d2", size: 1000, storageKey: "packs/delta2/d1/d1-d2.bin", transferMode: "pack-delta",
         baseSnapshotId: afterFirst!.snapshotId, baseHash: "d1", chainDepth: 2,
-        deltaFormatVersion: 2, deltaBlobSize: 500
+        deltaFormatVersion: 2, deltaBlobSize: 200
       })]
     });
     await Bun.sleep(2);
@@ -110,7 +111,7 @@ describe("delta v2 gating and size-aware re-full", () => {
     });
     expect(under.nonRegionPackUpload?.deltaStorageKey).toContain("delta2/");
 
-    // A third delta blows the budget (1600 > 1000): the slot disappears.
+    // A third delta blows the budget (450 > 400): the slot disappears.
     const secondLatest = await repository.getLatestSnapshot(worldId);
     await instance.finalizeSnapshot(V2_OWNER, worldId, {
       ...authority,
@@ -119,7 +120,7 @@ describe("delta v2 gating and size-aware re-full", () => {
       packs: [finalizePack({
         hash: "d3", size: 1000, storageKey: "packs/delta2/d2/d2-d3.bin", transferMode: "pack-delta",
         baseSnapshotId: secondLatest!.snapshotId, baseHash: "d2", chainDepth: 3,
-        deltaFormatVersion: 2, deltaBlobSize: 700
+        deltaFormatVersion: 2, deltaBlobSize: 100
       })]
     });
     await Bun.sleep(2);

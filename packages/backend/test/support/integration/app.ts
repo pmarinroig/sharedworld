@@ -9,6 +9,7 @@ import { LocalRealtimeService } from "../realtime-local.ts";
 import { SharedWorldService, WorkerSignedUrlSigner } from "../../../src/service.ts";
 import type { SharedWorldRepository } from "../../../src/repository.ts";
 import type { Env } from "../../../src/env.ts";
+import { providerManifestDocumentReader } from "../../../src/manifest-doc.ts";
 import type { BlobRange, ResumableProbe, StorageBinding, StorageProvider, StorageQuota, StoredBlob } from "../../../src/storage.ts";
 
 
@@ -470,6 +471,7 @@ function createState(publicBaseUrl: string, persistence: IntegrationPersistence 
   };
   const repository = createSqliteRepository(persistence.dbPath ?? ":memory:");
   const storageProvider = new FakeGoogleDriveStorageProvider(repository, publicBaseUrl, persistence.blobDir ?? null);
+  repository.attachManifestDocumentReader(providerManifestDocumentReader(storageProvider));
   // In-process realtime: real coordinator logic per world. The integration
   // server bridges realtime.onPublish to its WebSocket clients.
   const realtime = new LocalRealtimeService(repository, persistence.realtimeStateDir ?? null);

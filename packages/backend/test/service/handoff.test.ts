@@ -135,6 +135,48 @@ describe("SharedWorldService handoff", () => {
     expect(joinResolution.action).toBe("host");
   });
 
+  test("a lapsed waiter inside the TTL is skipped for election until it polls again", async () => {
+    const repository = createSqliteRepository();
+    const { signer } = createBlobSigner();
+    const instance = createTestService(repository, signer, {});
+    await repository.upsertUser({ playerUuid: "player-owner", playerName: "Owner", createdAt: new Date().toISOString() });
+    const world = await repository.createWorld({ playerUuid: "player-owner", playerName: "Owner" }, "Friends SMP", "friends-smp");
+    await repository.addMembership({
+      worldId: world.id,
+      playerUuid: "player-guest",
+      playerName: "Guest",
+      role: "member",
+      joinedAt: "2026-01-02T00:00:00.000Z",
+      deletedAt: null,
+      canUseCommands: false
+    });
+
+    // The owner (preferred by role) lapsed 30s ago — inside the 120s row TTL
+    // but past election freshness. The guest polled 5s ago.
+    instance.realtimeLocal.seedWaiter(world.id, {
+      playerUuid: "player-owner",
+      playerName: "Owner",
+      waiterSessionId: "wait_owner_lapsed",
+      waiting: true,
+      updatedAt: new Date(Date.now() - 30_000).toISOString()
+    });
+    instance.realtimeLocal.seedWaiter(world.id, {
+      playerUuid: "player-guest",
+      playerName: "Guest",
+      waiterSessionId: "wait_guest_fresh",
+      waiting: true,
+      updatedAt: new Date(Date.now() - 5_000).toISOString()
+    });
+
+    const lapsed = await instance.activeHost({ playerUuid: "player-guest", playerName: "Guest" }, world.id);
+    expect(lapsed.nextHostUuid).toBe("player-guest");
+
+    // The lapsed owner resumes polling: preference (owner-first) applies again.
+    await instance.handoffReady({ playerUuid: "player-owner", playerName: "Owner" }, world.id, { waiting: true }, new Date());
+    const resumed = await instance.activeHost({ playerUuid: "player-guest", playerName: "Guest" }, world.id);
+    expect(resumed.nextHostUuid).toBe("player-owner");
+  });
+
   test("graceful release keeps handoff state and elects the next host", async () => {
     const repository = createSqliteRepository();
     const { signer } = createBlobSigner();
@@ -152,7 +194,7 @@ describe("SharedWorldService handoff", () => {
     });
 
     await instance.claimHost({ playerUuid: "player-owner", playerName: "Owner" }, world.id, {}, new Date("2099-01-03T00:00:00.000Z"));
-    await instance.handoffReady({ playerUuid: "player-guest", playerName: "Guest" }, world.id, { waiting: true }, new Date("2099-01-03T00:01:00.000Z"));
+    await instance.handoffReady({ playerUuid: "player-guest", playerName: "Guest" }, world.id, { waiting: true }, new Date("2099-01-03T00:01:50.000Z"));
 
     const released = await instance.releaseHost(
       { playerUuid: "player-owner", playerName: "Owner" },
@@ -251,6 +293,9 @@ describe("SharedWorldService handoff", () => {
 
     expect(duringFinalization.result).toBe("busy");
 
+    // The waiting client keeps polling while the host finalizes — refresh so
+    // the row is election-fresh when finalization completes.
+    await instance.handoffReady({ playerUuid: "player-guest", playerName: "Guest" }, world.id, { waiting: true }, new Date("2099-01-03T00:01:55.000Z"));
     const completed = await instance.completeFinalization(
       { playerUuid: "player-owner", playerName: "Owner" },
       world.id,
@@ -387,8 +432,8 @@ describe("SharedWorldService handoff", () => {
     });
 
     await instance.claimHost({ playerUuid: "player-owner", playerName: "Owner" }, world.id, {}, new Date("2099-01-03T00:00:00.000Z"));
-    await instance.handoffReady({ playerUuid: "player-alpha", playerName: "Alpha" }, world.id, { waiting: true }, new Date("2099-01-03T00:01:00.000Z"));
-    await instance.handoffReady({ playerUuid: "player-bravo", playerName: "Bravo" }, world.id, { waiting: true }, new Date("2099-01-03T00:01:30.000Z"));
+    await instance.handoffReady({ playerUuid: "player-alpha", playerName: "Alpha" }, world.id, { waiting: true }, new Date("2099-01-03T00:01:45.000Z"));
+    await instance.handoffReady({ playerUuid: "player-bravo", playerName: "Bravo" }, world.id, { waiting: true }, new Date("2099-01-03T00:01:50.000Z"));
     await instance.releaseHost(
       { playerUuid: "player-owner", playerName: "Owner" },
       world.id,
@@ -396,6 +441,8 @@ describe("SharedWorldService handoff", () => {
       new Date("2099-01-03T00:02:00.000Z")
     );
 
+    // Alpha (the preferred candidate) keeps polling through the handoff.
+    await instance.handoffReady({ playerUuid: "player-alpha", playerName: "Alpha" }, world.id, { waiting: true }, new Date("2099-01-03T00:02:05.000Z"));
     const bravoClaim = await instance.claimHost(
       { playerUuid: "player-bravo", playerName: "Bravo" },
       world.id,
@@ -532,6 +579,13 @@ describe("SharedWorldService handoff", () => {
       world.id,
       { files: [], packs: [] },
       new Date("2099-01-03T00:01:30.000Z")
+    );
+    // The waiting owner keeps polling through the finalization window.
+    await instance.handoffReady(
+      { playerUuid: "player-owner", playerName: "Owner" },
+      world.id,
+      { waiting: true },
+      new Date("2099-01-03T00:01:35.000Z")
     );
     const finalization = await instance.completeFinalization(
       { playerUuid: "player-host", playerName: "Host" },

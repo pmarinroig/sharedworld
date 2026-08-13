@@ -51,7 +51,9 @@ import {
   requireSessionAccessAllowingRevokedHost,
   requireWorldStorageBinding
 } from "./runtime-access.ts";
-import { storageKeysExist } from "./snapshots.ts";
+import { storageKeysExist, sweepPendingBlobDeletes } from "./snapshots.ts";
+import { cachedQuota } from "./worlds.ts";
+import { driveStorageFullError } from "../storage/drive.ts";
 
 /**
  * Responsibility:
@@ -83,12 +85,22 @@ export async function prepareUploads(
   const authorizedRuntime = {
     runtime: { runtimeEpoch: request.runtimeEpoch ?? 0, runtimeToken: request.hostToken ?? null }
   };
-  const latest = await svc.repository.getLatestSnapshot(worldId);
+  // Headers-only: planning consumes pack headers and ids, never member
+  // lists — no member rows, no 0027 manifest-document fetch. This also
+  // guarantees a missing/corrupt manifest doc can never block the upload
+  // pipeline (prepare → finalize keeps working, and the next finalize
+  // becomes the new latest with a fresh doc).
+  const latest = await svc.repository.getLatestSnapshotHeaders(worldId);
   const latestPack = latest?.packs.find((pack) => pack.packId === NON_REGION_PACK_ID) ?? null;
   const latestRegionBundleById = new Map(
     (latest?.packs ?? []).filter((pack) => isRegionBundleId(pack.packId)).map((pack) => [pack.packId, pack])
   );
   const binding = await requireWorldStorageBinding(svc, worldId);
+  // Quota preflight: 0.4.x direct uploads PUT straight to Google, so a full
+  // Drive would otherwise fail client-side with an unclassifiable 403 that
+  // the autosave loop retries forever. Every upload path starts here — the
+  // one reliable backend surface for the terminal, actionable answer.
+  await failIfDriveFull(svc, binding);
   // One batched existence lookup for every candidate full/delta key: large
   // worlds carry hundreds of packs, and a per-pack query here put upload
   // prepare past the client's request timeout (same shape as the manifest
@@ -236,6 +248,15 @@ export async function downloadPlan(
   const retainedPaths: string[] = [];
   const snapshotCache = new Map<string, SnapshotManifest>();
   const supportsDeltaV2 = clientVersionAtLeast(ctx.clientVersion, 0, 4, 0);
+  // Chain recipes live only in the directory (headers path, uncached) —
+  // served manifests stay byte-stable while retention lazily upgrades
+  // legacy directories in place.
+  const latestHeaders = await svc.repository.getLatestSnapshotHeaders(worldId);
+  const chainStepsByPackId = new Map(
+    (latestHeaders?.snapshotId === latest.snapshotId ? latestHeaders.packs : [])
+      .filter((pack) => pack.chainSteps != null && pack.chainSteps.length > 0)
+      .map((pack) => [pack.packId, pack.chainSteps!] as const)
+  );
 
   let nonRegionPackDownload: DownloadPackPlan | null = null;
   const regionBundleDownloads: DownloadPackPlan[] = [];
@@ -252,6 +273,7 @@ export async function downloadPlan(
           svc,
           worldId,
           latestPack,
+          chainStepsByPackId.get(latestPack.packId) ?? null,
           request.nonRegionPack?.hash ?? null,
           ctx.requestOrigin,
           snapshotCache,
@@ -275,6 +297,7 @@ export async function downloadPlan(
           svc,
           worldId,
           bundle,
+          chainStepsByPackId.get(bundle.packId) ?? null,
           request.regionBundles?.find((entry) => entry.packId === bundle.packId)?.hash ?? null,
           ctx.requestOrigin,
           snapshotCache,
@@ -436,7 +459,9 @@ export async function createBlobUploadSession(
     throw new HttpError(400, "invalid_upload_size", "Upload size must be a positive byte count.");
   }
   const now = new Date();
+  await failIfDriveFull(svc, binding);
   await sweepExpiredUploadSessions(svc, capable, binding, now);
+  await sweepPendingBlobDeletes(svc, binding, now);
   const sessionUrl = await capable.createResumableSession(
     binding,
     request.storageKey,
@@ -733,12 +758,18 @@ async function buildPackDownloadSteps(
   svc: ServiceContext,
   worldId: string,
   latestPack: SnapshotPack,
+  chainSteps: SnapshotPack["chainSteps"],
   localPackHash: string | null,
   requestOrigin: string | undefined,
   snapshotCache: Map<string, SnapshotManifest>,
   deltaTransferMode: typeof PACK_DELTA_TRANSFER_MODE | typeof REGION_DELTA_TRANSFER_MODE,
   supportsDeltaV2: boolean
 ): Promise<DownloadPlanStep[]> {
+  if (chainSteps != null && chainSteps.length > 0) {
+    // S1 self-contained chains: the plan builds from the pack's own recipe —
+    // no base snapshot rows, no chain walk, no snapshot_chain_broken class.
+    return buildStepsFromChainRecipe(svc, worldId, chainSteps, localPackHash, requestOrigin, supportsDeltaV2);
+  }
   const steps: DownloadPlanStep[] = [];
   let cursor: SnapshotPack | null = latestPack;
   while (cursor) {
@@ -787,6 +818,53 @@ async function buildPackDownloadSteps(
   return steps.reverse();
 }
 
+/**
+ * Mirror of the legacy walk, driven by the stamped recipe: newest step
+ * backwards until the client's local hash matches an intermediate chain
+ * state or the anchor full is reached, then served oldest-first. Step
+ * baseSnapshotId is null on purpose — the recipe is snapshot-independent
+ * and no shipped client reads that field from download steps.
+ */
+async function buildStepsFromChainRecipe(
+  svc: ServiceContext,
+  worldId: string,
+  chainSteps: NonNullable<SnapshotPack["chainSteps"]>,
+  localPackHash: string | null,
+  requestOrigin: string | undefined,
+  supportsDeltaV2: boolean
+): Promise<DownloadPlanStep[]> {
+  const steps: DownloadPlanStep[] = [];
+  for (let index = chainSteps.length - 1; index >= 0; index -= 1) {
+    const step = chainSteps[index];
+    if (localPackHash != null && localPackHash === step.hash) {
+      break;
+    }
+    if (step.deltaFormatVersion != null && !supportsDeltaV2) {
+      throw new HttpError(
+        409,
+        "client_update_required",
+        "This world was uploaded by a newer SharedWorld version. Update the SharedWorld mod to download it."
+      );
+    }
+    steps.push({
+      transferMode: step.transferMode,
+      storageKey: step.storageKey,
+      artifactSize: step.size,
+      baseSnapshotId: null,
+      baseHash: step.baseHash,
+      deltaFormatVersion: step.deltaFormatVersion,
+      download: await signDownloadForWorld(svc, worldId, step.storageKey, requestOrigin)
+    });
+    if (step.baseHash == null) {
+      break;
+    }
+    if (localPackHash != null && localPackHash === step.baseHash) {
+      break;
+    }
+  }
+  return steps.reverse();
+}
+
 async function loadSnapshotPack(
   svc: ServiceContext,
   worldId: string,
@@ -803,6 +881,31 @@ async function loadSnapshotPack(
     snapshotCache.set(snapshotId, snapshot);
   }
   return snapshot.packs.find((pack) => pack.packId === packId) ?? null;
+}
+
+/**
+ * Terminal preflight for a full Drive. Uses the 15-min cached quota — the
+ * check only fires when the account is genuinely at capacity, and clears
+ * within one cache TTL of the user freeing space. Unlinked worlds and
+ * unknown quotas pass (a missing check must not block uploads).
+ */
+async function failIfDriveFull(svc: ServiceContext, binding: WorldStorageBinding): Promise<void> {
+  if (binding.provider !== "google-drive" || binding.storageAccountId == null) {
+    return;
+  }
+  try {
+    const quota = await cachedQuota(svc, binding);
+    if (quota.usedBytes != null && quota.totalBytes != null && quota.totalBytes > 0 && quota.usedBytes >= quota.totalBytes) {
+      throw driveStorageFullError();
+    }
+  } catch (error) {
+    if (error instanceof HttpError && error.code === "drive_storage_full") {
+      throw error;
+    }
+    // Quota lookups are best-effort; an unreachable /about must not block
+    // uploads (the classified 403 still catches a truly full Drive).
+    console.warn("SharedWorld quota preflight failed", { cause: String(error) });
+  }
 }
 
 export function parsePositiveInt(value: string | undefined, fallback: number): number {

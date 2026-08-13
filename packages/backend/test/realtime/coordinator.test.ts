@@ -127,17 +127,17 @@ describe("fencing", () => {
     const h = makeCoordinator();
     seedMembers(h);
     const oldAuth = await becomeLiveHost(h);
-    // Lease expires (no refresh for 91s); guest acknowledges the unclean
-    // shutdown and takes over as the epoch-2 host.
-    const reentry = await h.coordinator.enterSession(GUEST, { acknowledgeUncleanShutdown: true }, at(95));
+    // Live lease expires (no refresh for 154s); guest acknowledges the
+    // unclean shutdown and takes over as the epoch-2 host.
+    const reentry = await h.coordinator.enterSession(GUEST, { acknowledgeUncleanShutdown: true }, at(155));
     expect(reentry.action).toBe("host");
     expect(reentry.assignment?.runtimeEpoch).toBe(2);
 
     // The new host is a different player: the deposed host's error says so.
-    await expectHttpError(h.coordinator.heartbeat(OWNER, { ...oldAuth, joinTarget: null }, at(98)), "host_not_active", "replaced");
-    await expectHttpError(h.coordinator.beginFinalization(OWNER, oldAuth, at(98)), "host_not_active", "replaced");
+    await expectHttpError(h.coordinator.heartbeat(OWNER, { ...oldAuth, joinTarget: null }, at(158)), "host_not_active", "replaced");
+    await expectHttpError(h.coordinator.beginFinalization(OWNER, oldAuth, at(158)), "host_not_active", "replaced");
     await expectHttpError(
-      h.coordinator.validateHostAuthority(OWNER, oldAuth.runtimeEpoch, oldAuth.hostToken, ["host-live"], at(98)),
+      h.coordinator.validateHostAuthority(OWNER, oldAuth.runtimeEpoch, oldAuth.hostToken, ["host-live"], at(158)),
       "host_not_active",
       "replaced"
     );
@@ -148,10 +148,10 @@ describe("fencing", () => {
     const h = makeCoordinator();
     seedMembers(h);
     await becomeLiveHost(h);
-    const entry = await h.coordinator.enterSession(GUEST, {}, at(120));
+    const entry = await h.coordinator.enterSession(GUEST, {}, at(155));
     expect(entry.action).toBe("warn-host");
     expect(entry.runtime.uncleanShutdownWarning?.hostUuid).toBe(OWNER.playerUuid);
-    const acknowledged = await h.coordinator.enterSession(GUEST, { acknowledgeUncleanShutdown: true }, at(121));
+    const acknowledged = await h.coordinator.enterSession(GUEST, { acknowledgeUncleanShutdown: true }, at(156));
     expect(acknowledged.action).toBe("host");
     expect(acknowledged.assignment?.runtimeEpoch).toBe(2);
   });
@@ -173,9 +173,9 @@ describe("fencing", () => {
     const auth = await becomeLiveHost(h);
     // Expiry recorded the warning for epoch 1. No one took over: the error
     // must say the lease expired, not blame a phantom other host.
-    await h.coordinator.runtimeStatus(OWNER, at(120));
-    await expectHttpError(h.coordinator.releaseHost(OWNER, { ...auth, graceful: true }, at(121)), "host_not_active", "lease_expired");
-    await expectHttpError(h.coordinator.completeFinalization(OWNER, auth, at(121)), "not_finalizing");
+    await h.coordinator.runtimeStatus(OWNER, at(155));
+    await expectHttpError(h.coordinator.releaseHost(OWNER, { ...auth, graceful: true }, at(156)), "host_not_active", "lease_expired");
+    await expectHttpError(h.coordinator.completeFinalization(OWNER, auth, at(156)), "not_finalizing");
   });
 });
 
@@ -261,7 +261,7 @@ describe("connection-driven liveness (signal, never truth)", () => {
     expect(h.store.getRuntime()?.phase).toBe("host-live");
     expect(h.store.getHostLink()).toEqual({ connected: true, graceDeadlineAt: null });
     // With the link repaired and keepalives gone stale, expiry still works.
-    await h.coordinator.onAlarm(at(41 + 92));
+    await h.coordinator.onAlarm(at(41 + 155));
     expect(h.store.getRuntime()).toBeNull();
   });
 
@@ -272,8 +272,8 @@ describe("connection-driven liveness (signal, never truth)", () => {
     // The gateway's hostSocketConnected poke was lost (coordinator reset), so
     // link.connected stayed false while the client stretched its heartbeats;
     // the probe must still keep a reachable host alive.
-    h.effects.lastKeepaliveAt = at(85);
-    await h.coordinator.onAlarm(at(95));
+    h.effects.lastKeepaliveAt = at(145);
+    await h.coordinator.onAlarm(at(155));
     expect(h.store.getRuntime()?.phase).toBe("host-live");
     expect(h.store.getHostLink().connected).toBe(true);
   });
@@ -283,12 +283,12 @@ describe("connection-driven liveness (signal, never truth)", () => {
     seedMembers(h);
     await becomeLiveHost(h);
     await h.coordinator.hostSocketConnected(OWNER.playerUuid, at(2));
-    h.effects.lastKeepaliveAt = at(85);
-    // Lease deadline (T0+91s from the heartbeat at +1s) has passed.
-    await h.coordinator.onAlarm(at(95));
+    h.effects.lastKeepaliveAt = at(145);
+    // Live-lease deadline (T0+151s from the heartbeat at +1s) has passed.
+    await h.coordinator.onAlarm(at(155));
     expect(h.store.getRuntime()?.phase).toBe("host-live");
     // Keepalive goes stale: the next lease-deadline alarm forfeits.
-    await h.coordinator.onAlarm(at(95 + 91));
+    await h.coordinator.onAlarm(at(155 + 155));
     expect(h.store.getRuntime()).toBeNull();
   });
 
@@ -300,13 +300,13 @@ describe("connection-driven liveness (signal, never truth)", () => {
     // authority check) lands after the lease deadline while the host's socket
     // keepalive is fresh. The host must be rescued, not expired with a false
     // unclean-shutdown warning.
-    h.effects.lastKeepaliveAt = at(85);
-    const status = await h.coordinator.runtimeStatus(OWNER, at(95));
+    h.effects.lastKeepaliveAt = at(145);
+    const status = await h.coordinator.runtimeStatus(OWNER, at(155));
     expect(status.phase).toBe("host-live");
     expect(h.store.getWarning()).toBeNull();
-    await h.coordinator.validateHostAuthority(OWNER, auth.runtimeEpoch, auth.hostToken, ["host-live"], at(96));
+    await h.coordinator.validateHostAuthority(OWNER, auth.runtimeEpoch, auth.hostToken, ["host-live"], at(156));
     // With the keepalive stale, the same path still expires the lease.
-    await h.coordinator.runtimeStatus(OWNER, at(96 + 92));
+    await h.coordinator.runtimeStatus(OWNER, at(156 + 155));
     expect(h.store.getRuntime()).toBeNull();
     expect(h.store.getWarning()?.hostUuid).toBe(OWNER.playerUuid);
   });
@@ -333,7 +333,7 @@ describe("connection-driven liveness (signal, never truth)", () => {
     seedMembers(h);
     await becomeLiveHost(h);
     h.effects.published = [];
-    await h.coordinator.onAlarm(at(120));
+    await h.coordinator.onAlarm(at(155));
     const runtimeEvents = h.effects.eventsOfKind("runtime-changed");
     expect(runtimeEvents.length).toBeGreaterThan(0);
     expect(runtimeEvents.at(-1)?.runtime?.phase).toBe("idle");

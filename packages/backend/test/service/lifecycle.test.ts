@@ -341,7 +341,7 @@ describe("SharedWorldService lifecycle", () => {
     const runtime = await instance.runtimeStatus(
       { playerUuid: "player-guest", playerName: "Guest" },
       world.id,
-      new Date("2099-01-03T00:01:41.000Z")
+      new Date("2099-01-03T00:02:41.000Z")
     );
 
     expect(runtime.phase).toBe("idle");
@@ -350,7 +350,7 @@ describe("SharedWorldService lifecycle", () => {
       hostPlayerName: "Owner",
       phase: "host-live",
       runtimeEpoch: entered.assignment!.runtimeEpoch,
-      recordedAt: "2099-01-03T00:01:41.000Z"
+      recordedAt: "2099-01-03T00:02:41.000Z"
     });
     expect(instance.realtimeLocal.runtimeRecord(world.id)).toBeNull();
     expect(instance.realtimeLocal.waiters(world.id)).toEqual([]);
@@ -763,6 +763,9 @@ describe("SharedWorldService lifecycle", () => {
       new Date("2099-01-03T00:01:10.000Z")
     )).rejects.toMatchObject({ status: 403 });
 
+    // The waiting guest keeps polling — the row must be election-fresh when
+    // the owner abandons for the guest to come out as next host.
+    await instance.handoffReady({ playerUuid: "player-guest", playerName: "Guest" }, world.id, { waiting: true }, new Date("2099-01-03T00:01:15.000Z"));
     const abandoned = await instance.abandonFinalization(
       { playerUuid: "player-owner", playerName: "Owner" },
       world.id,

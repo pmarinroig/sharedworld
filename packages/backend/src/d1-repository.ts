@@ -30,6 +30,7 @@ import type {
   WorldUpdateRecord
 } from "./repository.ts";
 import type { SnapshotManifestCache } from "./manifest-cache.ts";
+import { manifestUnavailable, type SnapshotManifestDocumentReader } from "./manifest-doc.ts";
 import { runtimePhaseToWorldStatus } from "./runtime-protocol.ts";
 import {
   mapInvite,
@@ -47,10 +48,22 @@ import {
 } from "./repository/d1-support.ts";
 
 export class D1SharedWorldRepository implements SharedWorldRepository {
+  /**
+   * Resolves 0027 manifest documents from the world's storage provider.
+   * Attached after construction (the provider itself is built over this
+   * repository, so constructor injection would be a cycle). Null in
+   * contexts that never read doc snapshots.
+   */
+  private manifestDocumentReader: SnapshotManifestDocumentReader | null = null;
+
   constructor(
     private readonly db: D1Database,
     private readonly manifestCache: SnapshotManifestCache | null = null
   ) {}
+
+  attachManifestDocumentReader(reader: SnapshotManifestDocumentReader): void {
+    this.manifestDocumentReader = reader;
+  }
 
   async createChallenge(challenge: AuthChallengeRecord): Promise<void> {
     // Piggybacked bounded sweep: challenges are 5-minute one-shots and there
@@ -522,6 +535,27 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     if (directoryReference) {
       return true;
     }
+    // S1 chain recipes: a surviving snapshot's steps may reference blobs
+    // whose original snapshot rows are long gone.
+    const chainStepReference = await this.first<Row>(
+      `SELECT 1 AS found
+       FROM snapshots, json_each(COALESCE(snapshots.packs_json, '[]')) AS pack,
+            json_each(COALESCE(json_extract(pack.value, '$.chainSteps'), '[]')) AS step
+       WHERE json_extract(step.value, '$.storageKey') = ?
+       LIMIT 1`,
+      storageKey
+    );
+    if (chainStepReference) {
+      return true;
+    }
+    // 0027 manifest documents (partial index idx_snapshots_manifest_storage_key).
+    const manifestDocReference = await this.first<Row>(
+      "SELECT 1 AS found FROM snapshots WHERE manifest_storage_key = ? LIMIT 1",
+      storageKey
+    );
+    if (manifestDocReference) {
+      return true;
+    }
     const iconReference = await this.first<Row>(
       "SELECT 1 AS found FROM worlds WHERE custom_icon_storage_key = ? AND deleted_at IS NULL LIMIT 1",
       storageKey
@@ -567,6 +601,15 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
          FROM snapshots s, json_each(COALESCE(s.packs_json, '[]')) AS pack
          WHERE s.world_id = ?
          UNION
+         SELECT json_extract(step.value, '$.storageKey') AS storage_key
+         FROM snapshots s, json_each(COALESCE(s.packs_json, '[]')) AS pack,
+              json_each(COALESCE(json_extract(pack.value, '$.chainSteps'), '[]')) AS step
+         WHERE s.world_id = ?
+         UNION
+         SELECT s.manifest_storage_key AS storage_key
+         FROM snapshots s
+         WHERE s.world_id = ? AND s.manifest_storage_key IS NOT NULL
+         UNION
          SELECT w.custom_icon_storage_key AS storage_key
          FROM worlds w
          WHERE w.id = ? AND w.deleted_at IS NULL AND w.custom_icon_storage_key IS NOT NULL
@@ -577,6 +620,8 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
          ON so.provider = ?
         AND so.storage_account_id = ?
         AND so.storage_key = rk.storage_key`,
+      worldId,
+      worldId,
       worldId,
       worldId,
       worldId,
@@ -885,6 +930,53 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     );
   }
 
+  async enqueuePendingBlobDelete(provider: StorageProviderType, storageAccountId: string, storageKey: string, enqueuedAt: string): Promise<void> {
+    await this.run(
+      `INSERT INTO pending_blob_deletes (provider, storage_account_id, storage_key, enqueued_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT (provider, storage_account_id, storage_key) DO NOTHING`,
+      provider,
+      storageAccountId,
+      storageKey,
+      enqueuedAt
+    );
+  }
+
+  async listPendingBlobDeletes(provider: StorageProviderType, storageAccountId: string, limit: number): Promise<Array<{ storageKey: string; attempts: number }>> {
+    const rows = await this.all<Row>(
+      `SELECT storage_key, attempts
+       FROM pending_blob_deletes
+       WHERE provider = ? AND storage_account_id = ?
+       ORDER BY enqueued_at ASC
+       LIMIT ?`,
+      provider,
+      storageAccountId,
+      limit
+    );
+    return rows.map((row) => ({ storageKey: String(row.storage_key), attempts: Number(row.attempts) }));
+  }
+
+  async deletePendingBlobDelete(provider: StorageProviderType, storageAccountId: string, storageKey: string): Promise<void> {
+    await this.run(
+      "DELETE FROM pending_blob_deletes WHERE provider = ? AND storage_account_id = ? AND storage_key = ?",
+      provider,
+      storageAccountId,
+      storageKey
+    );
+  }
+
+  async bumpPendingBlobDeleteAttempt(provider: StorageProviderType, storageAccountId: string, storageKey: string, attemptedAt: string): Promise<void> {
+    await this.run(
+      `UPDATE pending_blob_deletes
+       SET attempts = attempts + 1, last_attempt_at = ?
+       WHERE provider = ? AND storage_account_id = ? AND storage_key = ?`,
+      attemptedAt,
+      provider,
+      storageAccountId,
+      storageKey
+    );
+  }
+
   async createInvite(worldId: string, _ctx: RequestContext, invite: InviteCode): Promise<InviteCode> {
     // Physical expiry of stale rows happens here, on the write path —
     // getActiveInvite filters them out in its WHERE clause instead of
@@ -1120,6 +1212,66 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     return this.loadSnapshotCached(String(row.id), String(row.world_id), String(row.created_at), String(row.created_by_uuid));
   }
 
+  async getLatestSnapshotHeaders(worldId: string): Promise<SnapshotManifest | null> {
+    const snapshot = await this.latestSnapshotRow(worldId);
+    if (!snapshot) {
+      return null;
+    }
+    return this.loadSnapshotHeaders(String(snapshot.id), worldId, String(snapshot.created_at), String(snapshot.created_by_uuid));
+  }
+
+  async getSnapshotHeaders(worldId: string, snapshotId: string): Promise<SnapshotManifest | null> {
+    const row = await this.first<Row>(
+      `SELECT id, world_id, created_at, created_by_uuid
+       FROM snapshots
+       WHERE world_id = ? AND id = ?`,
+      worldId,
+      snapshotId
+    );
+    if (!row) {
+      return null;
+    }
+    return this.loadSnapshotHeaders(String(row.id), String(row.world_id), String(row.created_at), String(row.created_by_uuid));
+  }
+
+  /**
+   * Headers-only manifest: loose files + pack headers with EMPTY member
+   * lists — no member rows, no manifest document, no cache (an
+   * empty-membered manifest must never pollute the real manifest cache).
+   * For callers that consume only headers (upload planning, finalize delta
+   * validation, chainDeltaBytes): keeping them doc-free means a missing
+   * manifest document can never block the next finalize — the world always
+   * heals by snapshotting again.
+   */
+  private async loadSnapshotHeaders(snapshotId: string, worldId: string, createdAt: string, createdByUuid: string): Promise<SnapshotManifest> {
+    const rows = await this.all<Row>(
+      `SELECT path, hash, size, compressed_size, storage_key, content_type, transfer_mode, base_snapshot_id, base_hash, chain_depth
+       FROM snapshot_files
+       WHERE snapshot_id = ? AND pack_id IS NULL
+       ORDER BY path ASC`,
+      snapshotId
+    );
+    return {
+      worldId,
+      snapshotId,
+      createdAt,
+      createdByUuid,
+      files: rows.map((row) => ({
+        path: String(row.path),
+        hash: String(row.hash),
+        size: Number(row.size),
+        compressedSize: Number(row.compressed_size),
+        storageKey: String(row.storage_key),
+        contentType: String(row.content_type),
+        transferMode: String(row.transfer_mode ?? "whole-gzip") as FileTransferMode,
+        baseSnapshotId: asNullableString(row.base_snapshot_id),
+        baseHash: asNullableString(row.base_hash),
+        chainDepth: row.chain_depth == null ? null : Number(row.chain_depth)
+      })),
+      packs: assembleSnapshotPacks(await this.packDirectoryOf(snapshotId), () => [], { includeChainSteps: true })
+    };
+  }
+
   /**
    * Manifest content is immutable per snapshot id, so a cache hit skips the
    * file/pack row loads entirely — the difference between ~2 and several
@@ -1322,15 +1474,74 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
        WHERE s.world_id = ? AND json_extract(pack.value, '$.baseSnapshotId') IS NOT NULL`,
       worldId
     );
+    // S1 self-containment: a snapshot whose every delta pack carries a
+    // chainSteps recipe (and which has no loose delta rows) needs NO base
+    // snapshot rows — its download plan builds from the recipe and its blob
+    // references are covered by the chainSteps GC legs. Such referrers
+    // contribute no edges, which is what lets retention and manual delete
+    // actually drop old snapshots. Partially-stamped snapshots stay
+    // conservative: all their edges remain.
+    const selfContainedRows = await this.all<Row>(
+      `SELECT s.id
+       FROM snapshots s
+       WHERE s.world_id = ?
+         AND s.packs_json IS NOT NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM json_each(COALESCE(s.packs_json, '[]')) AS pack
+           WHERE json_extract(pack.value, '$.baseSnapshotId') IS NOT NULL
+             AND json_extract(pack.value, '$.chainSteps') IS NULL
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM snapshot_files sf
+           WHERE sf.snapshot_id = s.id AND sf.pack_id IS NULL AND sf.base_snapshot_id IS NOT NULL
+         )`,
+      worldId
+    );
+    const selfContained = new Set(selfContainedRows.map((row) => String(row.id)));
     // Member-donor pointers (membersSnapshotId) are deliberately NOT edges
     // here: deleteSnapshots promotes inherited member rows to a surviving
     // heir, so donors never need to be kept alive for retention or deletion.
     const edges = new Map<string, { snapshotId: string; baseSnapshotId: string }>();
     for (const row of [...fileRows, ...packRows, ...directoryRows]) {
       const edge = { snapshotId: String(row.snapshot_id), baseSnapshotId: String(row.base_snapshot_id) };
+      if (selfContained.has(edge.snapshotId)) {
+        continue;
+      }
       edges.set(`${edge.snapshotId}->${edge.baseSnapshotId}`, edge);
     }
     return [...edges.values()];
+  }
+
+  /**
+   * S1 lazy upgrade: merge chainSteps recipes into an existing snapshot's
+   * pack directory. Directory-only — cached/served manifests never include
+   * chainSteps, so rewriting packs_json here cannot violate the manifest
+   * cache's bytes-per-snapshot-id immutability.
+   */
+  async stampSnapshotChainSteps(
+    snapshotId: string,
+    stepsByPackId: ReadonlyMap<string, import("../../shared/src/index.ts").PackChainStep[]>
+  ): Promise<void> {
+    if (stepsByPackId.size === 0) {
+      return;
+    }
+    const row = await this.first<Row>("SELECT packs_json FROM snapshots WHERE id = ?", snapshotId);
+    const raw = asNullableString(row?.packs_json);
+    if (raw == null) {
+      return;
+    }
+    const directory = JSON.parse(raw) as PackDirectoryEntry[];
+    let changed = false;
+    for (const entry of directory) {
+      const steps = stepsByPackId.get(entry.packId);
+      if (steps != null && entry.chainSteps == null) {
+        entry.chainSteps = steps;
+        changed = true;
+      }
+    }
+    if (changed) {
+      await this.run("UPDATE snapshots SET packs_json = ? WHERE id = ?", JSON.stringify(directory), snapshotId);
+    }
   }
 
   /**
@@ -1342,20 +1553,36 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     // The world scoping the legacy query enforced via a join is preserved:
     // a base snapshot from another world simply yields no directory here.
     const owned = await this.first<Row>(
-      "SELECT 1 AS found FROM snapshots WHERE id = ? AND world_id = ?",
+      "SELECT manifest_storage_key FROM snapshots WHERE id = ? AND world_id = ?",
       baseSnapshotId,
       worldId
     );
     if (!owned) {
       return new Map();
     }
+    if (asNullableString(owned.manifest_storage_key) != null) {
+      // 0027 guard: a doc-format base has NO member rows, so a legacy-mode
+      // finalize (doc write unavailable) must materialize every member from
+      // the request instead of "inheriting" from a row-less snapshot —
+      // which would yield permanently empty manifests.
+      return new Map();
+    }
     const directory = await this.packDirectoryOf(baseSnapshotId);
     return new Map(directory.map((entry) => [entry.packId, entry]));
   }
 
-  async finalizeSnapshot(worldId: string, ctx: RequestContext, request: FinalizeSnapshotRequest, now: Date): Promise<SnapshotManifest> {
+  async finalizeSnapshot(
+    worldId: string,
+    ctx: RequestContext,
+    request: FinalizeSnapshotRequest,
+    now: Date,
+    options?: { manifestStorageKey?: string | null }
+  ): Promise<SnapshotManifest> {
     const snapshotId = `snapshot_${crypto.randomUUID().replace(/-/g, "")}`;
-    const basePacks = request.baseSnapshotId != null
+    const manifestStorageKey = options?.manifestStorageKey ?? null;
+    // Doc mode needs no inheritance lookup: member lists live in the
+    // document, so no member rows are written and nothing is inherited.
+    const basePacks = manifestStorageKey == null && request.baseSnapshotId != null
       ? await this.basePackRowsForInheritance(worldId, request.baseSnapshotId)
       : null;
     // Pack HEADERS live in the snapshots row's JSON directory (0026): an
@@ -1420,9 +1647,16 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
         // packs — the aggregates cost nothing here and make snapshot
         // listing O(snapshots).
         memberCount: pack.files.length,
-        memberTotalSize: pack.files.reduce((total, file) => total + file.size, 0)
+        memberTotalSize: pack.files.reduce((total, file) => total + file.size, 0),
+        // Server-stamped upstream (never client-supplied); null when the
+        // stamping pass could not synthesize a legacy base's chain.
+        chainSteps: pack.chainSteps ?? null
       });
-      if (inheritFrom != null) {
+      if (inheritFrom != null || manifestStorageKey != null) {
+        // Doc mode: member lists live in the manifest document — no member
+        // rows at all (inheritFrom is always null here since basePacks is
+        // skipped, keeping membersSnapshotId null: the 0027 invariant that
+        // makes doc snapshots invisible to the promotion machinery).
         continue;
       }
       for (const file of pack.files) {
@@ -1444,12 +1678,18 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       }
     }
     directory.sort((a, b) => a.packId.localeCompare(b.packId));
+    const directoryJson = JSON.stringify(directory);
+    if (directoryJson.length > 1_000_000) {
+      // chainSteps are bounded by the delta depth ceilings; a directory this
+      // large means the budget/depth levers need tightening, not a failure.
+      console.warn("SharedWorld pack directory unusually large", { worldId, bytes: directoryJson.length, packs: directory.length });
+    }
     // One transactional batch: a failure mid-write must not leave a partial
     // snapshot behind, because a partial row would become the world's
     // "latest" manifest.
     statements.unshift(this.prepared(
-      `INSERT INTO snapshots (id, world_id, created_at, created_by_uuid, base_snapshot_id, data_version, minecraft_version, packs_json, loose_file_count, loose_total_size)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO snapshots (id, world_id, created_at, created_by_uuid, base_snapshot_id, data_version, minecraft_version, packs_json, loose_file_count, loose_total_size, manifest_storage_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       snapshotId,
       worldId,
       now.toISOString(),
@@ -1457,9 +1697,10 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       request.baseSnapshotId ?? null,
       request.dataVersion ?? null,
       request.minecraftVersion ?? null,
-      JSON.stringify(directory),
+      directoryJson,
       request.files.length,
-      request.files.reduce((total, file) => total + file.size, 0)
+      request.files.reduce((total, file) => total + file.size, 0),
+      manifestStorageKey
     ));
     await this.batch(statements);
     // Cached loader on purpose: a freshly finalized snapshot id cannot be in
@@ -1477,13 +1718,16 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
 
     const requestedPlaceholders = sqlPlaceholders(snapshotIds.length);
     const deletedRows = await this.all<Row>(
-      `SELECT id
+      `SELECT id, manifest_storage_key
        FROM snapshots
        WHERE world_id = ? AND id IN (${requestedPlaceholders})`,
       worldId,
       ...snapshotIds
     );
     const deletedSnapshotIds = deletedRows.map((row) => String(row.id));
+    const doomedManifestDocKeys = deletedRows
+      .map((row) => asNullableString(row.manifest_storage_key))
+      .filter((key): key is string => key != null);
     if (deletedSnapshotIds.length === 0) {
       return {
         deletedSnapshotIds: [],
@@ -1523,7 +1767,15 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     const candidateStorageKeys = [...new Set([
       ...candidateRows.map((row) => String(row.storage_key)),
       ...packCandidateRows.map((row) => String(row.storage_key)),
-      ...deletedSnapshotIds.flatMap((id) => (directories.get(id) ?? []).map((entry) => entry.storageKey))
+      ...deletedSnapshotIds.flatMap((id) => (directories.get(id) ?? []).map((entry) => entry.storageKey)),
+      // S1 chain recipes: doomed snapshots' steps reference the chain blobs
+      // behind their packs — candidates unless a survivor's recipe shares them.
+      ...deletedSnapshotIds.flatMap((id) =>
+        (directories.get(id) ?? []).flatMap((entry) => (entry.chainSteps ?? []).map((step) => step.storageKey))
+      ),
+      // 0027 manifest documents are content-addressed and shared across
+      // snapshots (restore); reclaimed only when the last referencer dies.
+      ...doomedManifestDocKeys
     ])];
 
     // Member-row promotion: surviving packs that inherit their member rows
@@ -1659,8 +1911,25 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
          WHERE json_extract(pack.value, '$.storageKey') IN (${keyPlaceholders})`,
         ...candidateStorageKeys
       );
+      // 0027 leg: surviving snapshots' manifest documents (partial index).
+      const referencedManifestDocRows = await this.all<Row>(
+        `SELECT DISTINCT manifest_storage_key AS storage_key
+         FROM snapshots
+         WHERE manifest_storage_key IN (${keyPlaceholders})`,
+        ...candidateStorageKeys
+      );
+      // S1 leg: surviving snapshots' chain recipes (account-wide, like the
+      // other legs — content-addressed keys are shared cross-world).
+      const referencedChainStepRows = await this.all<Row>(
+        `SELECT DISTINCT json_extract(step.value, '$.storageKey') AS storage_key
+         FROM snapshots, json_each(COALESCE(snapshots.packs_json, '[]')) AS pack,
+              json_each(COALESCE(json_extract(pack.value, '$.chainSteps'), '[]')) AS step
+         WHERE json_extract(step.value, '$.storageKey') IN (${keyPlaceholders})`,
+        ...candidateStorageKeys
+      );
       const stillReferenced = new Set(
-        [...referencedRows, ...referencedPackRows, ...referencedDirectoryRows].map((row) => String(row.storage_key))
+        [...referencedRows, ...referencedPackRows, ...referencedDirectoryRows, ...referencedManifestDocRows, ...referencedChainStepRows]
+          .map((row) => String(row.storage_key))
       );
       unreferencedStorageKeys = candidateStorageKeys.filter((key) => !stillReferenced.has(key)).sort();
     }
@@ -1846,8 +2115,21 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
         baseHash: asNullableString(row.base_hash),
         chainDepth: row.chain_depth == null ? null : Number(row.chain_depth)
       })),
-      packs: await this.loadSnapshotPacks(snapshotId, await this.packDirectoryOf(snapshotId))
+      packs: await this.loadPacksForManifest(snapshotId, worldId)
     };
+  }
+
+  private async loadPacksForManifest(snapshotId: string, worldId: string): Promise<SnapshotManifest["packs"]> {
+    const row = await this.first<Row>(
+      "SELECT packs_json, manifest_storage_key FROM snapshots WHERE id = ?",
+      snapshotId
+    );
+    const directory = await this.packDirectory(snapshotId, asNullableString(row?.packs_json));
+    const manifestStorageKey = asNullableString(row?.manifest_storage_key);
+    if (manifestStorageKey != null) {
+      return this.loadSnapshotPacksFromDocument(worldId, snapshotId, manifestStorageKey, directory);
+    }
+    return this.loadSnapshotPacks(snapshotId, directory);
   }
 
   /**
@@ -1859,9 +2141,12 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
    */
   private async packDirectoryOf(snapshotId: string): Promise<PackDirectoryEntry[]> {
     const row = await this.first<Row>("SELECT packs_json FROM snapshots WHERE id = ?", snapshotId);
-    const raw = asNullableString(row?.packs_json);
-    if (raw != null) {
-      const parsed = JSON.parse(raw) as PackDirectoryEntry[];
+    return this.packDirectory(snapshotId, asNullableString(row?.packs_json));
+  }
+
+  private async packDirectory(snapshotId: string, rawPacksJson: string | null): Promise<PackDirectoryEntry[]> {
+    if (rawPacksJson != null) {
+      const parsed = JSON.parse(rawPacksJson) as PackDirectoryEntry[];
       return parsed.sort((a, b) => a.packId.localeCompare(b.packId));
     }
     const packRows = await this.all<Row>(
@@ -1873,6 +2158,49 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       snapshotId
     );
     return packRows.map((packRow) => legacyPackRowToDirectoryEntry(packRow));
+  }
+
+  /**
+   * 0027 read path: member lists come from the snapshot's manifest document.
+   * Failures are LOUD (502 snapshot_manifest_unavailable) — assembling a
+   * pack with an empty member list would silently corrupt download plans
+   * (packChanged compares member hashes), which is strictly worse than an
+   * error the client retries. The Workers manifest cache fronts this, so
+   * steady-state readers rarely reach the provider fetch.
+   */
+  private async loadSnapshotPacksFromDocument(
+    worldId: string,
+    snapshotId: string,
+    storageKey: string,
+    directory: PackDirectoryEntry[]
+  ): Promise<SnapshotManifest["packs"]> {
+    if (directory.length === 0) {
+      return [];
+    }
+    const reader = this.manifestDocumentReader;
+    if (reader == null) {
+      throw manifestUnavailable("Snapshot manifest document reader is not configured.");
+    }
+    const binding = await this.getWorldStorageBinding(worldId);
+    if (binding == null) {
+      throw manifestUnavailable("Snapshot manifest document storage is unavailable for this world.");
+    }
+    const document = await reader.load(binding, storageKey);
+    if (document == null) {
+      console.warn("SharedWorld snapshot manifest document missing from storage", { worldId, snapshotId, storageKey });
+      throw manifestUnavailable("Snapshot manifest document is missing from storage.");
+    }
+    const membersByPack = new Map(document.packs.map((pack) => [pack.packId, pack.files]));
+    return assembleSnapshotPacks(directory, (entry) => {
+      const members = membersByPack.get(entry.packId);
+      if (members == null) {
+        console.warn("SharedWorld snapshot manifest document lacks a directory pack", { worldId, snapshotId, storageKey, packId: entry.packId });
+        throw manifestUnavailable("Snapshot manifest document does not match the snapshot's pack directory.");
+      }
+      // Defensive re-sort: assembled manifests must stay byte-identical to
+      // the row-built shape regardless of document byte order.
+      return [...members].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    });
   }
 
   /**
@@ -1910,7 +2238,7 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
         contentType: String(fileRow.content_type)
       });
     }
-    return directory.map((entry) => {
+    return assembleSnapshotPacks(directory, (entry) => {
       const membersSnapshotId = entry.membersSnapshotId ?? snapshotId;
       const members = membersByPack.get(`${membersSnapshotId}\u0000${entry.packId}`) ?? [];
       if (members.length === 0 && membersSnapshotId !== snapshotId) {
@@ -1920,20 +2248,7 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
           membersSnapshotId
         });
       }
-      return {
-        packId: entry.packId,
-        hash: entry.hash,
-        size: entry.size,
-        storageKey: entry.storageKey,
-        transferMode: entry.transferMode as FileTransferMode,
-        baseSnapshotId: entry.baseSnapshotId,
-        baseHash: entry.baseHash,
-        chainDepth: entry.chainDepth,
-        deltaFormatVersion: entry.deltaFormatVersion,
-        deltaBlobSize: entry.deltaBlobSize,
-        chainDeltaBytes: entry.chainDeltaBytes,
-        files: members
-      };
+      return members;
     });
   }
 
@@ -1998,7 +2313,40 @@ type PackDirectoryEntry = {
   chainDeltaBytes: number | null;
   memberCount: number | null;
   memberTotalSize: number | null;
+  /** Absent on legacy entries — omitted (not null) so their manifests stay byte-identical. */
+  chainSteps?: import("../../shared/src/index.ts").PackChainStep[] | null;
 };
+
+/**
+ * The single directory→SnapshotPack mapper shared by the row-based and
+ * document-based member sources: whatever produced the members, the
+ * assembled pack must be shape- and order-identical (the Workers manifest
+ * cache assumes content per snapshot id never changes).
+ */
+function assembleSnapshotPacks(
+  directory: PackDirectoryEntry[],
+  membersFor: (entry: PackDirectoryEntry) => Array<{ path: string; hash: string; size: number; contentType: string }>,
+  options?: { includeChainSteps?: boolean }
+): SnapshotManifest["packs"] {
+  return directory.map((entry) => ({
+    packId: entry.packId,
+    hash: entry.hash,
+    size: entry.size,
+    storageKey: entry.storageKey,
+    transferMode: entry.transferMode as FileTransferMode,
+    baseSnapshotId: entry.baseSnapshotId,
+    baseHash: entry.baseHash,
+    chainDepth: entry.chainDepth,
+    deltaFormatVersion: entry.deltaFormatVersion,
+    deltaBlobSize: entry.deltaBlobSize,
+    chainDeltaBytes: entry.chainDeltaBytes,
+    // chainSteps are backend-internal (headers path only, never cached or
+    // served): retention's lazy upgrade rewrites directories in place, and
+    // cached manifest BYTES per snapshot id must never change.
+    ...(options?.includeChainSteps && entry.chainSteps != null ? { chainSteps: entry.chainSteps } : {}),
+    files: membersFor(entry)
+  }));
+}
 
 function legacyPackRowToDirectoryEntry(packRow: Row): PackDirectoryEntry {
   return {

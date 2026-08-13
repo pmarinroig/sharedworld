@@ -301,7 +301,7 @@ async function legacyCachedStorageUsage(svc: ServiceContext, world: WorldDetails
 }
 
 /** Account quota with the Workers-Cache front: one Drive `/about` per TTL, not per poll. */
-async function cachedQuota(
+export async function cachedQuota(
   svc: ServiceContext,
   binding: Awaited<ReturnType<typeof requireWorldStorageBinding>>
 ): Promise<{ usedBytes: number | null; totalBytes: number | null }> {
@@ -406,7 +406,7 @@ function validateWorldSettings(raw: WorldSettings | undefined): WorldSettings {
   }
   const settings: WorldSettings = {};
   for (const key of Object.keys(raw)) {
-    if (key !== "difficulty" && key !== "defaultGameMode" && key !== "gamerules") {
+    if (key !== "difficulty" && key !== "defaultGameMode" && key !== "gamerules" && key !== "maxBackups") {
       throw new HttpError(400, "invalid_world_settings", `Unknown world setting "${key}".`);
     }
   }
@@ -424,6 +424,12 @@ function validateWorldSettings(raw: WorldSettings | undefined): WorldSettings {
   }
   if (raw.gamerules !== undefined) {
     settings.gamerules = validateGameRules(raw.gamerules);
+  }
+  if (raw.maxBackups !== undefined) {
+    if (raw.maxBackups !== null && (!Number.isInteger(raw.maxBackups) || raw.maxBackups < 3 || raw.maxBackups > 1000)) {
+      throw new HttpError(400, "invalid_world_settings", "maxBackups must be null or an integer between 3 and 1000.");
+    }
+    settings.maxBackups = raw.maxBackups;
   }
   return settings;
 }

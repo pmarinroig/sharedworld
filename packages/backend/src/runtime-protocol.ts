@@ -1,5 +1,6 @@
 import {
   HOST_LEASE_TIMEOUT_MS,
+  HOST_LIVE_LEASE_TIMEOUT_MS,
   type HostAssignment,
   type HostStartupProgress,
   type UncleanShutdownWarning,
@@ -203,7 +204,7 @@ export function moveToLive(runtime: WorldRuntimeRecord, joinTarget: string | nul
     ...runtime,
     phase: "host-live",
     joinTarget: joinTarget ?? runtime.joinTarget,
-    expiresAt: new Date(now.getTime() + HOST_LEASE_TIMEOUT_MS).toISOString(),
+    expiresAt: new Date(now.getTime() + HOST_LIVE_LEASE_TIMEOUT_MS).toISOString(),
     startupDeadlineAt: null,
     updatedAt: now.toISOString()
   };
@@ -242,7 +243,7 @@ export function refreshLiveRuntime(runtime: WorldRuntimeRecord, joinTarget: stri
   return {
     ...runtime,
     joinTarget: joinTarget ?? runtime.joinTarget,
-    expiresAt: new Date(now.getTime() + HOST_LEASE_TIMEOUT_MS).toISOString(),
+    expiresAt: new Date(now.getTime() + HOST_LIVE_LEASE_TIMEOUT_MS).toISOString(),
     updatedAt: now.toISOString()
   };
 }

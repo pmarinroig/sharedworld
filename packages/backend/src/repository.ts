@@ -2,6 +2,7 @@ import type {
   FinalizeSnapshotRequest,
   InviteCode,
   KickMemberResponse,
+  PackChainStep,
   SessionToken,
   SnapshotManifest,
   StorageLinkSession,
@@ -15,6 +16,8 @@ import type {
   WorldSnapshotSummary,
   WorldSummary
 } from "../../shared/src/index.ts";
+
+import type { SnapshotManifestDocumentReader } from "./manifest-doc.ts";
 
 export interface AuthChallengeRecord {
   serverId: string;
@@ -187,6 +190,12 @@ export interface StorageRepository {
   listUnconfirmedUploadSessionsBefore(provider: StorageProviderType, storageAccountId: string, createdBefore: string, limit: number): Promise<StorageUploadSessionRecord[]>;
   /** Bounded delete of confirmed sessions past their idempotent-retry window. */
   deleteConfirmedUploadSessionsBefore(provider: StorageProviderType, storageAccountId: string, confirmedBefore: string, limit: number): Promise<void>;
+  /** 0028 GC retry queue: a provider delete that failed, to be retried by the bounded sweep. */
+  enqueuePendingBlobDelete(provider: StorageProviderType, storageAccountId: string, storageKey: string, enqueuedAt: string): Promise<void>;
+  /** Oldest pending deletes for the account, up to limit. */
+  listPendingBlobDeletes(provider: StorageProviderType, storageAccountId: string, limit: number): Promise<Array<{ storageKey: string; attempts: number }>>;
+  deletePendingBlobDelete(provider: StorageProviderType, storageAccountId: string, storageKey: string): Promise<void>;
+  bumpPendingBlobDeleteAttempt(provider: StorageProviderType, storageAccountId: string, storageKey: string, attemptedAt: string): Promise<void>;
 }
 
 export interface MembershipRepository {
@@ -222,12 +231,35 @@ export interface SnapshotRepository {
   /** CAS claim of the world's retention slot; true = this caller runs retention. */
   claimRetentionSlot(worldId: string, now: Date, intervalMs: number): Promise<boolean>;
   getSnapshot(worldId: string, snapshotId: string): Promise<SnapshotManifest | null>;
+  /**
+   * Headers-only manifests (loose files + pack headers, EMPTY member lists;
+   * uncached, never touches the 0027 manifest document). For consumers that
+   * only read headers — upload planning and finalize validation — so the
+   * write pipeline stays independent of document availability.
+   */
+  getLatestSnapshotHeaders(worldId: string): Promise<SnapshotManifest | null>;
+  getSnapshotHeaders(worldId: string, snapshotId: string): Promise<SnapshotManifest | null>;
   listSnapshotSummaries(worldId: string): Promise<WorldSnapshotSummary[]>;
   listSnapshotsForWorld(worldId: string): Promise<SnapshotRecord[]>;
   getSnapshotGameVersions(worldId: string, snapshotId: string): Promise<{ dataVersion: number | null; minecraftVersion: string | null } | null>;
   listSnapshotDeltaBases(worldId: string): Promise<Array<{ snapshotId: string; baseSnapshotId: string }>>;
-  finalizeSnapshot(worldId: string, ctx: RequestContext, request: FinalizeSnapshotRequest, now: Date): Promise<SnapshotManifest>;
+  /**
+   * options.manifestStorageKey (0027): the snapshot's pack member lists live
+   * in the pointed-at manifest document — write zero member rows. Absent =
+   * legacy row-based snapshot.
+   */
+  finalizeSnapshot(
+    worldId: string,
+    ctx: RequestContext,
+    request: FinalizeSnapshotRequest,
+    now: Date,
+    options?: { manifestStorageKey?: string | null }
+  ): Promise<SnapshotManifest>;
   deleteSnapshots(worldId: string, snapshotIds: string[]): Promise<SnapshotDeletionResult>;
+  /** S1 lazy upgrade: merge chainSteps recipes into an existing snapshot's pack directory (directory-only, cache-safe). */
+  stampSnapshotChainSteps(snapshotId: string, stepsByPackId: ReadonlyMap<string, PackChainStep[]>): Promise<void>;
+  /** 0027: resolver for manifest documents; attached post-construction (provider is built over this repository). */
+  attachManifestDocumentReader(reader: SnapshotManifestDocumentReader): void;
 }
 
 export interface SharedWorldRepository extends

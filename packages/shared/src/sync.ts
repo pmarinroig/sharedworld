@@ -25,7 +25,12 @@ export const NON_REGION_PACK_ID = "non-region";
  */
 export const DELTA_V2_FORMAT_VERSION = 2;
 export const DELTA_V2_MAX_CHAIN_DEPTH = 64;
-export const DELTA_CHAIN_BUDGET_FRACTION = 1.0;
+// 0.4: a generation then stores at most ~1.4× the artifact (1 full + 0.4×
+// of deltas) before re-anchoring — the dominant lever on how many bytes a
+// kept backup pins in the owner's Drive (was 1.0, which doubled every
+// generation's footprint and let chains grow far past what retention could
+// ever reclaim).
+export const DELTA_CHAIN_BUDGET_FRACTION = 0.4;
 
 export function isRegionBundleId(id: string): boolean {
   return id.startsWith("region-bundle:");

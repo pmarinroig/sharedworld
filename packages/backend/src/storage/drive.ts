@@ -80,6 +80,11 @@ export class GoogleDriveStorageProvider implements StorageProvider, ResumableUpl
     });
     if (response.status !== 200 && response.status !== 201) {
       const text = await response.text().catch(() => "");
+      if (response.status === 403 && isStorageQuotaExceededBody(text)) {
+        // Terminal user condition — a 502 here made shipped clients burn
+        // their transport retries against a full Drive.
+        throw driveStorageFullError(403);
+      }
       throw new HttpError(502, "drive_upload_failed", `Google Drive upload failed (HTTP ${response.status}).${text ? ` ${text.slice(0, 200)}` : ""}`);
     }
     const payload = await response.json().catch(() => ({})) as { id?: string; size?: string | number };
@@ -511,8 +516,25 @@ export class GoogleDriveStorageProvider implements StorageProvider, ResumableUpl
       reauth.upstreamStatus = 403;
       return reauth;
     }
+    if (status === 403 && isStorageQuotaExceededBody(bodyHead)) {
+      // Permanent user condition, not a gateway problem: shipped clients
+      // treat 403 as terminal (no retry) and render this message verbatim.
+      return driveStorageFullError(status);
+    }
     return error;
   }
+}
+
+export function driveStorageFullError(upstreamStatus: number | null = null): HttpError {
+  const error = new HttpError(
+    403,
+    "drive_storage_full",
+    "Your Google Drive is full. Free up space in Drive or delete old SharedWorld backups, then try again."
+  );
+  if (upstreamStatus != null) {
+    error.upstreamStatus = upstreamStatus;
+  }
+  return error;
 }
 
 function requireAccountId(binding: StorageBinding): string {
@@ -600,6 +622,16 @@ function isRetryableDriveFailure(error: unknown): boolean {
   }
   const body = (error instanceof HttpError ? error.upstreamBody ?? "" : "").toLowerCase();
   return body.includes("ratelimitexceeded");
+}
+
+/**
+ * Matches ONLY the storage-quota reason: Google also uses
+ * "rateLimitExceeded"/"userRateLimitExceeded" (retryable) and a bare
+ * "quotaExceeded" for API-call quotas — those must keep their existing
+ * classification.
+ */
+function isStorageQuotaExceededBody(bodyHead: string | undefined): boolean {
+  return (bodyHead ?? "").toLowerCase().includes("storagequotaexceeded");
 }
 
 function isInsufficientScopeBody(bodyHead: string | undefined): boolean {
