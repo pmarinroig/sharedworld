@@ -52,6 +52,18 @@ public final class ResumableBlobUploader {
         }
     }
 
+    /**
+     * Thrown when Google refuses the bytes because the Drive is FULL — a
+     * terminal user condition. Retrying cannot help (pre-0.4.2 this burned
+     * the whole 5-attempt ladder against it), so it aborts the transfer
+     * immediately and carries a code the autosave classifier recognizes.
+     */
+    public static final class DriveStorageFullException extends IOException {
+        public DriveStorageFullException() {
+            super("Google Drive is full (storageQuotaExceeded).");
+        }
+    }
+
     public void upload(Path bodyFile, String contentType, UploadProgressListener progressListener) throws IOException, InterruptedException {
         long total = Files.size(bodyFile);
         long offset = 0L;
@@ -65,6 +77,8 @@ public final class ResumableBlobUploader {
                     failures = 0;
                 } catch (SessionGoneException gone) {
                     throw gone;
+                } catch (DriveStorageFullException full) {
+                    throw full;
                 } catch (IOException failure) {
                     failures += 1;
                     if (!CHUNK_RETRY_POLICY.shouldRetry(failures)) {
@@ -123,6 +137,9 @@ public final class ResumableBlobUploader {
             }
             if (status == 404 || status == 410) {
                 throw new SessionGoneException("Upload session is gone (HTTP " + status + ").");
+            }
+            if (status == 403 && response.body() != null && response.body().toLowerCase(java.util.Locale.ROOT).contains("storagequotaexceeded")) {
+                throw new DriveStorageFullException();
             }
             // 429/5xx and everything else: an IOException here re-enters the
             // chunk retry loop, which probes and resumes.

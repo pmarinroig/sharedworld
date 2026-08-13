@@ -396,6 +396,30 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         this.drawKeyValue(guiGraphics, left + 14, top + 40, Component.translatable("screen.sharedworld.storage_account"), formatStorageAccount(this.details, this.storageUsage), 108, storageValueWidth);
         this.drawKeyValue(guiGraphics, left + 14, top + 62, Component.translatable("screen.sharedworld.storage_used_by_world"), formatUsedByWorld(this.storageUsage), 108, storageValueWidth);
         this.drawKeyValue(guiGraphics, left + 14, top + 84, Component.translatable("screen.sharedworld.storage_quota"), formatQuota(this.storageUsage), 108, storageValueWidth);
+        renderQuotaBar(guiGraphics, left + 14, top + 100, width - 28);
+    }
+
+    /**
+     * C4: the quota as a bar, because "13.8 / 15.0 GB" reads as fine while
+     * 92% reads as a problem. Warns at >=90% and shouts when the Drive is
+     * effectively full — the state that silently stopped a real user's
+     * backups.
+     */
+    private void renderQuotaBar(GuiGraphics guiGraphics, int left, int top, int width) {
+        Double fraction = EditScreenFormats.quotaFraction(this.storageUsage);
+        if (fraction == null) {
+            return;
+        }
+        int filled = (int) Math.round(Math.min(1.0, fraction) * (width - 2));
+        int fillColor = fraction >= 0.99 ? 0xFFE04040 : fraction >= 0.9 ? 0xFFE0A030 : 0xFF4C9A4C;
+        guiGraphics.fill(left, top, left + width, top + 8, 0xFF3A3A3A);
+        guiGraphics.fill(left + 1, top + 1, left + 1 + filled, top + 7, fillColor);
+        if (fraction >= 0.9) {
+            String warningKey = fraction >= 0.99
+                    ? "screen.sharedworld.storage_quota_full"
+                    : "screen.sharedworld.storage_quota_near_full";
+            this.drawWrappedText(guiGraphics, Component.translatable(warningKey), left, top + 14, width, fraction >= 0.99 ? 0xFFFF6A6A : 0xFFFFD37A);
+        }
     }
 
     private void updateButtons() {

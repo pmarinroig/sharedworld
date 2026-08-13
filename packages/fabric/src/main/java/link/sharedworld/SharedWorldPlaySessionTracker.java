@@ -1,8 +1,25 @@
 package link.sharedworld;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.function.LongSupplier;
 
+/**
+ * Responsibility:
+ * Own the client's notion of "which SharedWorld session am I in right now".
+ *
+ * Authority rule (the zombie-session invariant):
+ * A tracked session must always describe the CURRENT connection. The fabric
+ * PLAY DISCONNECT event is a best-effort input, not the authority — on relayed
+ * transports (e4mc dialtone, observed on 26.x) the underlying channel can stay
+ * open after a manual quit and the event never fires. Every lifecycle boundary
+ * therefore re-establishes the invariant itself: a new PLAY join evicts any
+ * guest session bound to a different connection, and a hosting startup evicts
+ * any guest session outright (hosting and guesting are mutually exclusive).
+ */
 public final class SharedWorldPlaySessionTracker {
+    private static final Logger LOGGER = LoggerFactory.getLogger("sharedworld-session");
     /** A pending guest connect that has not reached PLAY within this window is considered abandoned. */
     static final long PENDING_GUEST_SESSION_TTL_MS = 90_000L;
 
@@ -54,6 +71,20 @@ public final class SharedWorldPlaySessionTracker {
     public synchronized void onPlayJoin(Object connectionKey, boolean localServer) {
         this.currentConnectionKey = connectionKey;
         this.currentConnectionKeyBound = true;
+        if (this.activeSession != null
+                && this.activeSession.role() == SessionRole.GUEST
+                && !this.activeSession.matchesConnectionKey(connectionKey)) {
+            // A new PLAY connection is proof the tracked guest session's own
+            // connection is history, whether or not its disconnect event ever
+            // fired. Without this eviction the stale session survives into the
+            // new world and lets a runtime push hijack it (e.g. tearing down a
+            // freshly started hosting via a phantom "host changed" rejoin).
+            LOGGER.warn(
+                    "SharedWorld guest session for {} was still tracked when a new connection reached PLAY; evicting the stale session.",
+                    this.activeSession.worldId()
+            );
+            this.activeSession = null;
+        }
         if (this.pendingGuestSession != null
                 && (localServer || this.clock.getAsLong() - this.pendingGuestSession.armedAtMillis() > PENDING_GUEST_SESSION_TTL_MS)) {
             // A guest connect that never reached PLAY (cancelled ConnectScreen, dead target) leaves its
@@ -131,6 +162,24 @@ public final class SharedWorldPlaySessionTracker {
         this.pendingRecoverySession = null;
         if (this.activeSession != null) {
             this.activeSession = this.activeSession.withUserInitiatedDisconnect(true);
+        }
+    }
+
+    /**
+     * Hosting and guesting are mutually exclusive by definition: the moment a
+     * hosting startup begins, any tracked guest session is stale no matter how
+     * its connection ended. Called from the hosting startup boundary; pending
+     * recovery is preserved (it belongs to the unexpected-disconnect flow, not
+     * to this session slot).
+     */
+    public synchronized void clearGuestSessionForHostStartup() {
+        this.pendingGuestSession = null;
+        if (this.activeSession != null && this.activeSession.role() == SessionRole.GUEST) {
+            LOGGER.warn(
+                    "SharedWorld guest session for {} was still tracked when a hosting startup began; evicting the stale session.",
+                    this.activeSession.worldId()
+            );
+            this.activeSession = null;
         }
     }
 

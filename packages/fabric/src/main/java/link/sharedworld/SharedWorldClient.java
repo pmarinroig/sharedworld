@@ -167,6 +167,7 @@ public final class SharedWorldClient implements ClientModInitializer {
         // client left behind; off the render thread since it walks world dirs.
         IO_EXECUTOR.execute(() -> new link.sharedworld.sync.ManagedWorldStore().pruneTransientArtifacts());
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            reconcileTrackedGuestSession(client);
             hostingManager.tick(client);
             releaseCoordinator.tick(client);
             presenceManager.tick(client);
@@ -213,16 +214,102 @@ public final class SharedWorldClient implements ClientModInitializer {
             ClientPacketListener handler,
             SharedWorldPlaySessionTracker.ActiveWorldSession activeSession
     ) {
-        presenceManager.onDisconnect(activeSession);
-        guestRuntimeWatcher.onDisconnect(activeSession);
-        guestCacheWarmer.onDisconnect(activeSession);
+        SharedWorldPlaySessionTracker.ActiveWorldSession session = activeSession;
+        boolean connectionKeyMatched = session != null;
+        if (session == null && client.getConnection() != null && PLAY_SESSION_TRACKER.currentSession() != null) {
+            LOGGER.warn(
+                    "SharedWorld PLAY disconnect did not match the tracked session and a live connection blocks the unkeyed fallback; the tick reconciler owns the cleanup if the session is stale."
+            );
+        }
+        if (session == null && client.getConnection() == null) {
+            // The keyed lookup missed (connection-key mismatch on a deferred
+            // DISCONNECT), but no newer connection took over — so whatever
+            // session the tracker still holds belongs to the world that just
+            // closed. Without this fallback that session became a ZOMBIE:
+            // presence was never withdrawn (the player stayed on rosters)
+            // and a later runtime-changed push could auto-host the player
+            // from the world list screen. The key guard's real purpose —
+            // an old connection's disconnect must not tear down a NEW live
+            // session — is preserved by the getConnection() == null check.
+            session = PLAY_SESSION_TRACKER.currentSession();
+        }
+        presenceManager.onDisconnect(session);
+        guestRuntimeWatcher.onDisconnect(session);
+        guestCacheWarmer.onDisconnect(session);
         SharedWorldReleaseCoordinator.ReleaseDisplay releaseDisplay = releaseCoordinator.onClientDisconnectReturnDisplay(client);
-        SharedWorldPlaySessionTracker.RecoverySession recoverySession = PLAY_SESSION_TRACKER.onDisconnect(handler);
+        SharedWorldPlaySessionTracker.RecoverySession recoverySession = connectionKeyMatched
+                ? PLAY_SESSION_TRACKER.onDisconnect(handler)
+                : session != null ? PLAY_SESSION_TRACKER.onDisconnect() : PLAY_SESSION_TRACKER.onDisconnect(handler);
         SharedWorldDevSessionBridge.clearHostingSession();
         sessionCoordinator.onUnexpectedGuestDisconnect(recoverySession);
         if (releaseDisplay != null) {
             SharedWorldClientLifecycleRouter.ensureLifecycleScreenVisible(client, releaseCoordinator);
         }
+    }
+
+    /**
+     * Authoritative teardown for an INTENTIONAL guest leave, invoked from the
+     * per-bucket disconnect mixins at the moment the player chooses to leave.
+     * Session lifecycle must not depend on the fabric PLAY DISCONNECT event:
+     * on relayed transports (e4mc dialtone, observed on 26.x) the underlying
+     * channel can stay open after a manual quit, so that event never fires and
+     * everything keyed on it leaks the session. The user's intent IS the
+     * disconnect; presence, watcher, warmer and tracker all end here. A later
+     * PLAY DISCONNECT for the same connection finds no session and no-ops.
+     */
+    static void onUserInitiatedGuestLeave() {
+        SharedWorldPlaySessionTracker.ActiveWorldSession session = PLAY_SESSION_TRACKER.currentSession();
+        if (session == null || session.role() != SharedWorldPlaySessionTracker.SessionRole.GUEST) {
+            return;
+        }
+        presenceManager.onDisconnect(session);
+        guestRuntimeWatcher.onDisconnect(session);
+        guestCacheWarmer.onDisconnect(session);
+        // markUserInitiatedDisconnect already ran in the disconnect hook, so
+        // this teardown produces no recovery session.
+        PLAY_SESSION_TRACKER.onDisconnect();
+    }
+
+    /**
+     * Ticks the session slot must survive without a connection before the
+     * reconciler declares the disconnect event lost. One tick would race the
+     * legitimate teardown that runs inside the same tick as the world close.
+     */
+    private static final int GUEST_SESSION_RECONCILE_TICKS = 40;
+    private static int guestSessionConnectionlessTicks;
+
+    /**
+     * Safety net for guest-session ends that fire NO event at all (neither
+     * the intent mixin nor the PLAY disconnect — e.g. the host dying behind a
+     * relay that never closes the local channel). The client is the authority
+     * on whether a connection exists; a tracked guest session with no
+     * connection and no level for two seconds is dead, and it ends through
+     * the exact same path an observed disconnect would have taken, recovery
+     * semantics included.
+     */
+    private static void reconcileTrackedGuestSession(Minecraft client) {
+        SharedWorldPlaySessionTracker.ActiveWorldSession session = PLAY_SESSION_TRACKER.currentSession();
+        if (session == null
+                || session.role() != SharedWorldPlaySessionTracker.SessionRole.GUEST
+                || client.getConnection() != null
+                || client.level != null) {
+            guestSessionConnectionlessTicks = 0;
+            return;
+        }
+        guestSessionConnectionlessTicks += 1;
+        if (guestSessionConnectionlessTicks < GUEST_SESSION_RECONCILE_TICKS) {
+            return;
+        }
+        guestSessionConnectionlessTicks = 0;
+        LOGGER.warn(
+                "SharedWorld guest session for {} outlived its connection without any disconnect event; reconciling the teardown now.",
+                session.worldId()
+        );
+        presenceManager.onDisconnect(session);
+        guestRuntimeWatcher.onDisconnect(session);
+        guestCacheWarmer.onDisconnect(session);
+        SharedWorldPlaySessionTracker.RecoverySession recoverySession = PLAY_SESSION_TRACKER.onDisconnect();
+        sessionCoordinator.onUnexpectedGuestDisconnect(recoverySession);
     }
 
     public static SharedWorldApiClient apiClient() {
@@ -369,6 +456,12 @@ public final class SharedWorldClient implements ClientModInitializer {
         @Override
         public void onHostStartupBegan(String worldId) {
             guestCacheWarmer.pauseWorld(worldId);
+            // Hosting and guesting are mutually exclusive: any guest session
+            // still tracked at this boundary is stale by definition and must
+            // not survive into the startup window, where a runtime push could
+            // read it as "I am a guest whose host just changed" and tear the
+            // new hosting straight back down.
+            PLAY_SESSION_TRACKER.clearGuestSessionForHostStartup();
         }
 
         @Override

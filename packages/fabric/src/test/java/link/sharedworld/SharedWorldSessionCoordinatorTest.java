@@ -741,6 +741,10 @@ final class SharedWorldSessionCoordinatorTest {
         try {
             var world = SharedWorldCoordinatorHarness.world("world-1", "World", "player-owner");
             harness.clientShell.setLocalServerState(false, true, false);
+            // C1 guard: a departure rejoin requires a live GUEST session for
+            // that exact world (the player is inside it right now).
+            harness.clientShell.setCurrentPlaySession(new link.sharedworld.SharedWorldPlaySessionTracker.ActiveWorldSession(
+                    "world-1", "World", link.sharedworld.SharedWorldPlaySessionTracker.SessionRole.GUEST, "join.old", 4L));
             harness.sessionBackend.enqueueEnterResponse(SharedWorldCoordinatorHarness.waitResponse(world));
 
             harness.sessionCoordinator.beginHostDepartureRejoin(harness.parentScreen(), "world-1", "World", "join.old");
@@ -764,6 +768,8 @@ final class SharedWorldSessionCoordinatorTest {
         try {
             var world = SharedWorldCoordinatorHarness.world("world-1", "World", "player-owner");
             harness.clientShell.setLocalServerState(false, true, false);
+            harness.clientShell.setCurrentPlaySession(new link.sharedworld.SharedWorldPlaySessionTracker.ActiveWorldSession(
+                    "world-1", "World", link.sharedworld.SharedWorldPlaySessionTracker.SessionRole.GUEST, "join.old", 4L));
             harness.sessionBackend.enqueueEnterResponse(SharedWorldCoordinatorHarness.connectResponse(world, 9L, "join.new"));
 
             harness.sessionCoordinator.beginHostDepartureRejoin(harness.parentScreen(), "world-1", "World", "join.old");
@@ -772,6 +778,108 @@ final class SharedWorldSessionCoordinatorTest {
             assertTrue(harness.clientShell.actions().contains("connect:join.new"));
             assertEquals(9L, harness.clientShell.lastConnectRuntimeEpoch());
             assertNull(harness.sessionCoordinator.waitingView());
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
+    void hostDepartureRejoinRefusesWithoutALiveGuestSessionForThatWorld() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            harness.clientShell.setLocalServerState(false, true, false);
+            // No session at all: refused (this is the zombie/stale-push case).
+            assertFalse(harness.sessionCoordinator.beginHostDepartureRejoin(harness.parentScreen(), "world-1", "World", "join.old"));
+            // Session for a DIFFERENT world: refused.
+            harness.clientShell.setCurrentPlaySession(new link.sharedworld.SharedWorldPlaySessionTracker.ActiveWorldSession(
+                    "world-2", "Other", link.sharedworld.SharedWorldPlaySessionTracker.SessionRole.GUEST, "join.other", 4L));
+            assertFalse(harness.sessionCoordinator.beginHostDepartureRejoin(harness.parentScreen(), "world-1", "World", "join.old"));
+            // Right world but no level open (player already left): refused.
+            harness.clientShell.setCurrentPlaySession(new link.sharedworld.SharedWorldPlaySessionTracker.ActiveWorldSession(
+                    "world-1", "World", link.sharedworld.SharedWorldPlaySessionTracker.SessionRole.GUEST, "join.old", 4L));
+            harness.clientShell.setLocalServerState(false, false, false);
+            assertFalse(harness.sessionCoordinator.beginHostDepartureRejoin(harness.parentScreen(), "world-1", "World", "join.old"));
+            assertEquals(0, harness.clientShell.disconnectCalls());
+            assertEquals(0, harness.sessionBackend.enterCalls());
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
+    void hostDepartureRejoinHostsAutomaticallyWithoutConfirmation() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            var world = SharedWorldCoordinatorHarness.world("world-1", "World", "player-owner");
+            harness.clientShell.setLocalServerState(false, true, false);
+            harness.clientShell.setCurrentPlaySession(new link.sharedworld.SharedWorldPlaySessionTracker.ActiveWorldSession(
+                    "world-1", "World", link.sharedworld.SharedWorldPlaySessionTracker.SessionRole.GUEST, "join.old", 4L));
+            harness.autoAcceptTakeover = false;
+            harness.sessionBackend.enqueueEnterResponse(SharedWorldCoordinatorHarness.hostResponse(world, 7L, "token-7"));
+
+            harness.sessionCoordinator.beginHostDepartureRejoin(harness.parentScreen(), "world-1", "World", "join.old");
+            harness.runUntilIdle();
+
+            // Continuity is the feature: the player was in this world seconds
+            // ago and sat on the (cancellable) waiting screen — no dialog.
+            assertEquals(0, harness.takeoverConfirmations);
+            assertTrue(harness.clientShell.actions().contains("setScreen:host-acquired"));
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
+    void crashResumedWaitingConfirmsBeforeHostingAndDeclineReleasesTheLease() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            var world = SharedWorldCoordinatorHarness.world("world-1", "World", "player-owner");
+            harness.autoAcceptTakeover = false;
+            harness.recoveryStore.save(new link.sharedworld.SharedWorldRecoveryStore.RecoveryRecord(
+                    "world-1", "World", 4L, "waiting", "join.old", "wait_resume"));
+
+            assertTrue(harness.sessionCoordinator.openRecoveryScreenIfPresent(harness.parentScreen()));
+            harness.runUntilIdle();
+
+            harness.sessionBackend.setCurrentObserve(SharedWorldCoordinatorHarness.observeRestart(
+                    "world-1",
+                    new link.sharedworld.api.SharedWorldModels.WorldRuntimeStatusDto("world-1", "host-starting", 7L, "player-host", "Host", "player-host", "Host", null, null, null, null, null)
+            ));
+            harness.sessionBackend.enqueueEnterResponse(SharedWorldCoordinatorHarness.hostResponse(world, 7L, "token-7"));
+            harness.advanceTime(1_000L);
+            harness.tickSession();
+            harness.runUntilIdle();
+
+            // A crash-resumed wait may be days old: it must ask before
+            // hosting, and nothing starts until the player answers.
+            assertEquals(1, harness.takeoverConfirmations);
+            assertTrue(harness.clientShell.actions().contains("setScreen:confirm-takeover"));
+            assertTrue(harness.sessionBackend.releaseHostCalls.isEmpty());
+
+            // Declining hands the lease back gracefully with the assignment's
+            // epoch/token and lands on the main screen.
+            harness.lastTakeoverDecline.run();
+            harness.runUntilIdle();
+            assertEquals(java.util.List.of("world-1:true:7"), harness.sessionBackend.releaseHostCalls);
+            assertTrue(harness.clientShell.actions().contains("openMain"));
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
+    void userInitiatedJoinHostsWithoutConfirmation() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            var world = SharedWorldCoordinatorHarness.world("world-1", "World", "player-owner");
+            harness.autoAcceptTakeover = false;
+            harness.sessionBackend.enqueueEnterResponse(SharedWorldCoordinatorHarness.hostResponse(world, 7L, "token-7"));
+
+            harness.sessionCoordinator.beginJoin(harness.parentScreen(), world);
+            harness.runUntilIdle();
+
+            assertEquals(0, harness.takeoverConfirmations);
+            assertTrue(harness.clientShell.actions().contains("setScreen:host-acquired"));
         } finally {
             harness.close();
         }

@@ -82,6 +82,9 @@ public final class SharedWorldGuestRuntimeWatcher implements link.sharedworld.re
         if (session == null || session.role() != SharedWorldPlaySessionTracker.SessionRole.GUEST) {
             return;
         }
+        if (!guestWorldIsOpen()) {
+            return;
+        }
         if (SharedWorldClient.hostingManager().phase() != link.sharedworld.host.SharedWorldHostingManager.Phase.IDLE) {
             return;
         }
@@ -89,6 +92,19 @@ public final class SharedWorldGuestRuntimeWatcher implements link.sharedworld.re
             return;
         }
         observeForSession(session, worldId, status);
+    }
+
+    /**
+     * The 0.4.1 socket-native rewrite moved observations off the poll tick,
+     * and this gate did not come with it: a departure observation only means
+     * anything while the player is actually INSIDE a world. Without it, a
+     * zombie session (see SharedWorldPlaySessionTracker keyed-disconnect
+     * handling) let a runtime-changed push convert a player idling on the
+     * world LIST screen straight into hosting.
+     */
+    private static boolean guestWorldIsOpen() {
+        Minecraft client = Minecraft.getInstance();
+        return client.level != null && client.getConnection() != null;
     }
 
     /**
@@ -120,6 +136,20 @@ public final class SharedWorldGuestRuntimeWatcher implements link.sharedworld.re
         }
         SharedWorldPlaySessionTracker.ActiveWorldSession session = SharedWorldClient.playSessionTracker().currentSession();
         if (session == null || session.role() != SharedWorldPlaySessionTracker.SessionRole.GUEST) {
+            return;
+        }
+        if (!guestWorldIsOpen()) {
+            return;
+        }
+        // Same gates as the merged-beat lane: the two entry paths carry the
+        // same kind of observation and MUST be equally guarded. A push that
+        // lands while a hosting startup or a release owns the client would
+        // otherwise convert a stale guest reading into a rejoin that tears
+        // the client's own hosting down.
+        if (SharedWorldClient.hostingManager().phase() != link.sharedworld.host.SharedWorldHostingManager.Phase.IDLE) {
+            return;
+        }
+        if (SharedWorldClient.releaseCoordinator().isActive()) {
             return;
         }
         observeForSession(session, event.worldId(), event.runtime());

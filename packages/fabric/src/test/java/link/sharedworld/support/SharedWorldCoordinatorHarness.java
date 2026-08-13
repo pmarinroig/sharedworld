@@ -47,6 +47,11 @@ public final class SharedWorldCoordinatorHarness {
     public final TempdirSnapshotDriver snapshotDriver;
     public final FakeHostControl hostControl;
     public SharedWorldHostingManager.StartupMode lastHostStartupMode = SharedWorldHostingManager.StartupMode.NORMAL;
+    /** C1 takeover confirmation: auto-accept keeps legacy flow tests unchanged; set false to drive the decision. */
+    public boolean autoAcceptTakeover = true;
+    public int takeoverConfirmations;
+    public Runnable lastTakeoverAccept;
+    public Runnable lastTakeoverDecline;
     public final SharedWorldSessionCoordinator sessionCoordinator;
     public final SharedWorldReleaseCoordinator releaseCoordinator;
 
@@ -121,6 +126,18 @@ public final class SharedWorldCoordinatorHarness {
                     @Override
                     public Screen uncleanShutdownWarning(Screen parent, String worldId, String worldName, WorldRuntimeStatusDto runtimeStatus) {
                         clientShell.markNextScreen("unclean-shutdown-warning");
+                        return null;
+                    }
+
+                    @Override
+                    public Screen confirmTakeover(Screen parent, String worldName, Runnable accept, Runnable decline) {
+                        clientShell.markNextScreen("confirm-takeover");
+                        takeoverConfirmations++;
+                        lastTakeoverAccept = accept;
+                        lastTakeoverDecline = decline;
+                        if (autoAcceptTakeover) {
+                            accept.run();
+                        }
                         return null;
                     }
                 }
@@ -351,6 +368,7 @@ public final class SharedWorldCoordinatorHarness {
         private Boolean managedWorldOpen;
         private boolean renderThread = true;
         private Screen currentScreen;
+        private link.sharedworld.SharedWorldPlaySessionTracker.ActiveWorldSession currentPlaySession;
         private final List<String> actions = new ArrayList<>();
         private final Deque<Runnable> renderThreadTasks = new ArrayDeque<>();
         private int disconnectCalls;
@@ -445,6 +463,15 @@ public final class SharedWorldCoordinatorHarness {
         @Override
         public void clearPlaySession() {
             this.actions.add("clearPlaySession");
+        }
+
+        @Override
+        public link.sharedworld.SharedWorldPlaySessionTracker.ActiveWorldSession currentPlaySession() {
+            return this.currentPlaySession;
+        }
+
+        public void setCurrentPlaySession(link.sharedworld.SharedWorldPlaySessionTracker.ActiveWorldSession session) {
+            this.currentPlaySession = session;
         }
 
         public void setLocalServerState(boolean hasSingleplayerServer, boolean hasLevel, boolean localServer) {
@@ -561,6 +588,7 @@ public final class SharedWorldCoordinatorHarness {
         private int enterCalls;
         private int waitingCalls;
         private int abandonFinalizationCalls;
+        public final java.util.List<String> releaseHostCalls = new java.util.ArrayList<>();
 
         @Override
         public EnterSessionResponseDto enterSession(String worldId, String waiterSessionId, boolean acknowledgeUncleanShutdown) throws Exception {
@@ -590,6 +618,12 @@ public final class SharedWorldCoordinatorHarness {
             this.abandonFinalizationCalls += 1;
             this.failures.throwIfNeeded("abandonFinalization");
             return new SharedWorldModels.FinalizationActionResultDto(worldId, null, null, "idle");
+        }
+
+        @Override
+        public void releaseHost(String worldId, boolean graceful, long runtimeEpoch, String hostToken) throws Exception {
+            this.failures.throwIfNeeded("releaseHost");
+            this.releaseHostCalls.add(worldId + ":" + graceful + ":" + runtimeEpoch);
         }
 
         public void enqueueEnterResponse(EnterSessionResponseDto response) {

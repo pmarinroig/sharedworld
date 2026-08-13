@@ -298,5 +298,18 @@
   "screen.sharedworld.replace_blocked_busy": "This world is open right now. Ask the host to leave first, then try again.",
   "screen.sharedworld.replace_blocked_hosting": "Stop hosting this world before replacing it.",
   "screen.sharedworld.replace_blocked_playing": "Leave this world before replacing it.",
-  "screen.sharedworld.delete_progress_backups": "Removing backups... (%s of %s)"
+  "screen.sharedworld.delete_progress_backups": "Removing backups... (%s of %s)",
+  "screen.sharedworld.takeover_title": "The host left",
+  "screen.sharedworld.takeover_body": "You're next in line to host '%s'. Hosting downloads the latest world state and opens it on your computer. Take over hosting?",
+  "screen.sharedworld.takeover_host": "Host the world",
+  "screen.sharedworld.takeover_decline": "No thanks",
+  "sharedworld.autosave_failed_storage_full": "SharedWorld: autosave failed — your Google Drive is full. Free up Drive space or delete old backups from the SharedWorld screen. Your world keeps playing but is NOT being backed up.",
+  "sharedworld.autosave_failed_generic": "SharedWorld: autosave is failing — %s",
+  "sharedworld.autosave_recovered": "SharedWorld: backups are working again.",
+  "screen.sharedworld.hosting_autosave_failing": "Hosting — backups are FAILING",
+  "screen.sharedworld.storage_quota_near_full": "Google Drive is almost full. Free up space or delete old backups so saves keep working.",
+  "screen.sharedworld.storage_quota_full": "Google Drive is FULL — backups cannot be saved. Free up Drive space or delete old backups now.",
+  "screen.sharedworld.settings_max_backups": "Backups kept: %s",
+  "screen.sharedworld.settings_max_backups_auto": "Automatic",
+  "screen.sharedworld.takeover_countdown": "Passing to the next player in %ss..."
 }

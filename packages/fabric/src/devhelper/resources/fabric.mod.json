@@ -8,6 +8,11 @@
     "pau"
   ],
   "environment": "client",
+  "entrypoints": {
+    "client": [
+      "link.sharedworld.devhelper.DevHelperClient"
+    ]
+  },
   "mixins": [
     "sharedworld-dev-helper.mixins.json"
   ],

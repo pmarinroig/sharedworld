@@ -66,6 +66,11 @@ public final class SharedWorldSessionCoordinator {
                     public FinalizationActionResultDto abandonFinalization(String worldId) throws Exception {
                         return apiClient.abandonFinalization(worldId);
                     }
+
+                    @Override
+                    public void releaseHost(String worldId, boolean graceful, long runtimeEpoch, String hostToken) throws Exception {
+                        apiClient.releaseHost(worldId, graceful, runtimeEpoch, hostToken);
+                    }
                 },
                 new SharedWorldRecoveryStore(),
                 SharedWorldCoordinatorSupport.asyncBridge(SharedWorldClient.ioExecutor(), runnable -> Minecraft.getInstance().execute(runnable)),
@@ -105,6 +110,11 @@ public final class SharedWorldSessionCoordinator {
                     @Override
                     public Screen uncleanShutdownWarning(Screen parent, String worldId, String worldName, WorldRuntimeStatusDto runtimeStatus) {
                         return new link.sharedworld.screen.UncleanShutdownWarningScreen(parent, worldId, worldName, runtimeStatus);
+                    }
+
+                    @Override
+                    public Screen confirmTakeover(Screen parent, String worldName, Runnable accept, Runnable decline) {
+                        return new link.sharedworld.screen.ConfirmHostTakeoverScreen(parent, worldName, accept, decline);
                     }
                 }
         );
@@ -177,11 +187,16 @@ public final class SharedWorldSessionCoordinator {
      * The backend enter-session response.
      */
     private void beginJoinAttempt(Screen parent, String worldId, String worldName, String ownerUuid, String previousJoinTarget, boolean hostChangeFlow, boolean returnToSharedWorldMenu, boolean acknowledgeUncleanShutdown, RecoveryFingerprint resumedRecoveryFingerprint, SharedWorldHostingManager.StartupMode startupMode) {
+        beginJoinAttempt(parent, worldId, worldName, ownerUuid, previousJoinTarget, hostChangeFlow, returnToSharedWorldMenu, acknowledgeUncleanShutdown, resumedRecoveryFingerprint, startupMode, false);
+    }
+
+    private void beginJoinAttempt(Screen parent, String worldId, String worldName, String ownerUuid, String previousJoinTarget, boolean hostChangeFlow, boolean returnToSharedWorldMenu, boolean acknowledgeUncleanShutdown, RecoveryFingerprint resumedRecoveryFingerprint, SharedWorldHostingManager.StartupMode startupMode, boolean automaticTakeover) {
         PendingJoinAttempt attempt = new PendingJoinAttempt(
                 ++this.joinAttemptCounter,
                 worldId,
                 resumedRecoveryFingerprint,
-                startupMode == null ? SharedWorldHostingManager.StartupMode.NORMAL : startupMode
+                startupMode == null ? SharedWorldHostingManager.StartupMode.NORMAL : startupMode,
+                automaticTakeover
         );
         this.pendingJoinAttempt = attempt;
         this.asyncBridge.supply(
@@ -220,7 +235,7 @@ public final class SharedWorldSessionCoordinator {
                         this.clientShell.setScreen(this.sessionUi.joinError(parent, error));
                         return;
                     }
-                    this.handleEnterSession(parent, ownerUuid, worldName, previousJoinTarget, result, hostChangeFlow, returnToSharedWorldMenu, attempt.recoveryFingerprint(), attempt.startupMode());
+                    this.handleEnterSession(parent, ownerUuid, worldName, previousJoinTarget, result, hostChangeFlow, returnToSharedWorldMenu, attempt.recoveryFingerprint(), attempt.startupMode(), attempt.automaticTakeover());
                 }
         );
     }
@@ -421,9 +436,25 @@ public final class SharedWorldSessionCoordinator {
         if (this.waitingState != null || this.pendingJoinAttempt != null) {
             return false;
         }
+        // A departure rejoin only makes sense for a player who is INSIDE the
+        // departed world right now. Without this, a stale observation (zombie
+        // session, deferred push) yanked players off whatever screen they
+        // were on — and could convert straight into hosting.
+        SharedWorldPlaySessionTracker.ActiveWorldSession current = this.clientShell.currentPlaySession();
+        if (current == null
+                || current.role() != SharedWorldPlaySessionTracker.SessionRole.GUEST
+                || !worldId.equals(current.worldId())
+                || !this.clientShell.hasLevel()) {
+            return false;
+        }
         this.clientShell.disconnectFromWorld();
         this.clientShell.clearPlaySession();
         this.clientShell.setScreen(this.sessionUi.waiting(parent, worldId, worldName, null));
+        // No takeover confirmation on this path: the player was IN the world
+        // seconds ago and is now on the visible (cancellable) waiting screen
+        // — continuity is the feature. The guards above are what prevent the
+        // auto-host-from-the-menu bug; the confirmation is reserved for
+        // crash-RESUMED waits, where the intent may be days old.
         beginJoinAttempt(
                 parent,
                 worldId,
@@ -434,7 +465,8 @@ public final class SharedWorldSessionCoordinator {
                 true,
                 false,
                 null,
-                SharedWorldHostingManager.StartupMode.NORMAL
+                SharedWorldHostingManager.StartupMode.NORMAL,
+                false
         );
         return true;
     }
@@ -498,6 +530,9 @@ public final class SharedWorldSessionCoordinator {
                 record.previousJoinTarget(),
                 record.waiterSessionId(),
                 true,
+                true,
+                // A crash-resumed WAITING flow was never a user decision to
+                // host — keep the takeover confirmation in front of it.
                 true
         );
     }
@@ -529,7 +564,7 @@ public final class SharedWorldSessionCoordinator {
      * Authority source:
      * The backend enter-session response.
      */
-    private void handleEnterSession(Screen parent, String ownerUuid, String worldName, String previousJoinTarget, EnterSessionResponseDto result, boolean hostChangeFlow, boolean returnToSharedWorldMenu, RecoveryFingerprint resumedRecoveryFingerprint, SharedWorldHostingManager.StartupMode startupMode) {
+    private void handleEnterSession(Screen parent, String ownerUuid, String worldName, String previousJoinTarget, EnterSessionResponseDto result, boolean hostChangeFlow, boolean returnToSharedWorldMenu, RecoveryFingerprint resumedRecoveryFingerprint, SharedWorldHostingManager.StartupMode startupMode, boolean automaticTakeover) {
         if ("connect".equals(result.action())) {
             String target = result.runtime() != null ? result.runtime().joinTarget() : null;
             if (target != null && !target.isBlank()) {
@@ -564,6 +599,22 @@ public final class SharedWorldSessionCoordinator {
                 return;
             }
             clearPersistedRecoveryIfMatches(resumedRecoveryFingerprint);
+            if (automaticTakeover) {
+                // The player never asked to host — they were pulled here by a
+                // host-departure rejoin. The backend has already assigned the
+                // lease, so this is a real decision: host, or hand the lease
+                // back (gracefully, so the next waiter is elected).
+                this.clientShell.setScreen(this.sessionUi.confirmTakeover(
+                        parent,
+                        worldName,
+                        () -> {
+                            this.hostStartupOwner.beginHosting(parent, result, startupMode);
+                            this.clientShell.setScreen(this.sessionUi.hostAcquired(parent, result));
+                        },
+                        () -> declineTakeover(parent, result)
+                ));
+                return;
+            }
             this.hostStartupOwner.beginHosting(parent, result, startupMode);
             this.clientShell.setScreen(this.sessionUi.hostAcquired(parent, result));
             return;
@@ -580,11 +631,34 @@ public final class SharedWorldSessionCoordinator {
             ));
             return;
         }
-        startWaitingFlow(parent, result.world().id(), worldName, ownerUuid, previousJoinTarget, result.waiterSessionId(), hostChangeFlow, returnToSharedWorldMenu);
+        startWaitingFlow(parent, result.world().id(), worldName, ownerUuid, previousJoinTarget, result.waiterSessionId(), hostChangeFlow, returnToSharedWorldMenu, automaticTakeover);
+    }
+
+    /**
+     * Declining an automatic takeover hands the freshly-assigned lease back
+     * gracefully (electing the next waiter, if any) and returns to the menu.
+     */
+    private void declineTakeover(Screen parent, EnterSessionResponseDto result) {
+        String worldId = result.world().id();
+        long runtimeEpoch = result.assignment().runtimeEpoch();
+        String hostToken = result.assignment().hostToken();
+        this.asyncBridge.run(
+                () -> this.backend.releaseHost(worldId, true, runtimeEpoch, hostToken),
+                (error) -> {
+                    if (error != null) {
+                        LOGGER.warn("SharedWorld declined-takeover release failed for {}", worldId, error);
+                    }
+                    this.clientShell.openMainScreen(parent);
+                }
+        );
     }
 
     private void startWaitingFlow(Screen parent, String worldId, String worldName, String ownerUuid, String previousJoinTarget, String waiterSessionId, boolean hostChangeFlow, boolean returnToSharedWorldMenu) {
-        this.waitingState = new WaitingFlowState(++this.joinAttemptCounter, parent, worldId, worldName, ownerUuid, previousJoinTarget, waiterSessionId, hostChangeFlow, returnToSharedWorldMenu);
+        startWaitingFlow(parent, worldId, worldName, ownerUuid, previousJoinTarget, waiterSessionId, hostChangeFlow, returnToSharedWorldMenu, false);
+    }
+
+    private void startWaitingFlow(Screen parent, String worldId, String worldName, String ownerUuid, String previousJoinTarget, String waiterSessionId, boolean hostChangeFlow, boolean returnToSharedWorldMenu, boolean automaticTakeover) {
+        this.waitingState = new WaitingFlowState(++this.joinAttemptCounter, parent, worldId, worldName, ownerUuid, previousJoinTarget, waiterSessionId, hostChangeFlow, returnToSharedWorldMenu, automaticTakeover);
         this.waitingState.waitingStartedAt = this.clock.nowMillis();
         this.waitingState.progressState = progress(hostChangeFlow, Component.translatable("screen.sharedworld.progress.waiting_for_host"), null);
         if (waiterSessionId != null && !waiterSessionId.isBlank()) {
@@ -722,7 +796,8 @@ public final class SharedWorldSessionCoordinator {
                 state.returnToSharedWorldMenu,
                 false,
                 null,
-                SharedWorldHostingManager.StartupMode.NORMAL
+                SharedWorldHostingManager.StartupMode.NORMAL,
+                state.automaticTakeover
         );
     }
 
@@ -862,6 +937,7 @@ public final class SharedWorldSessionCoordinator {
         private String waiterSessionId;
         private final boolean hostChangeFlow;
         private final boolean returnToSharedWorldMenu;
+        private final boolean automaticTakeover;
         private long lastPollAt;
         private long waitingStartedAt;
         private boolean requestInFlight;
@@ -873,7 +949,7 @@ public final class SharedWorldSessionCoordinator {
         private SharedWorldProgressState progressState;
         private WorldRuntimeStatusDto lastRuntimeStatus;
 
-        private WaitingFlowState(long attemptId, Screen parent, String worldId, String worldName, String ownerUuid, String previousJoinTarget, String waiterSessionId, boolean hostChangeFlow, boolean returnToSharedWorldMenu) {
+        private WaitingFlowState(long attemptId, Screen parent, String worldId, String worldName, String ownerUuid, String previousJoinTarget, String waiterSessionId, boolean hostChangeFlow, boolean returnToSharedWorldMenu, boolean automaticTakeover) {
             this.attemptId = attemptId;
             this.parent = parent;
             this.worldId = worldId;
@@ -883,10 +959,11 @@ public final class SharedWorldSessionCoordinator {
             this.waiterSessionId = waiterSessionId;
             this.hostChangeFlow = hostChangeFlow;
             this.returnToSharedWorldMenu = returnToSharedWorldMenu;
+            this.automaticTakeover = automaticTakeover;
         }
     }
 
-    private record PendingJoinAttempt(long attemptId, String worldId, RecoveryFingerprint recoveryFingerprint, SharedWorldHostingManager.StartupMode startupMode) {
+    private record PendingJoinAttempt(long attemptId, String worldId, RecoveryFingerprint recoveryFingerprint, SharedWorldHostingManager.StartupMode startupMode, boolean automaticTakeover) {
     }
 
     private record RecoveryFingerprint(
@@ -907,6 +984,9 @@ public final class SharedWorldSessionCoordinator {
         WorldRuntimeStatusDto cancelWaiting(String worldId, String waiterSessionId) throws Exception;
 
         FinalizationActionResultDto abandonFinalization(String worldId) throws Exception;
+
+        /** Hands a freshly-assigned lease back (declined automatic takeover). */
+        void releaseHost(String worldId, boolean graceful, long runtimeEpoch, String hostToken) throws Exception;
     }
 
     public interface RecoveryPersistence {
@@ -927,6 +1007,9 @@ public final class SharedWorldSessionCoordinator {
         Screen deleted(Screen parent);
 
         Screen uncleanShutdownWarning(Screen parent, String worldId, String worldName, WorldRuntimeStatusDto runtimeStatus);
+
+        /** "The host left — take over hosting?" decision for automatic takeovers. */
+        Screen confirmTakeover(Screen parent, String worldName, Runnable accept, Runnable decline);
     }
 
     @FunctionalInterface

@@ -50,6 +50,14 @@ final class EditScreenFormats {
         return SharedWorldText.string("screen.sharedworld.size_b", value);
     }
 
+    /** Quota fill fraction (0..1+), or null when the provider reported no quota. */
+    static Double quotaFraction(StorageUsageSummaryDto usage) {
+        if (usage == null || usage.quotaTotalBytes() == null || usage.quotaTotalBytes() <= 0 || usage.quotaUsedBytes() == null) {
+            return null;
+        }
+        return usage.quotaUsedBytes() / (double) usage.quotaTotalBytes();
+    }
+
     static String formatQuota(StorageUsageSummaryDto usage) {
         if (usage == null || usage.quotaTotalBytes() == null || usage.quotaTotalBytes() <= 0) {
             return SharedWorldText.string("screen.sharedworld.unknown");

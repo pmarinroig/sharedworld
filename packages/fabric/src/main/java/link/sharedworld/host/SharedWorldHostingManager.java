@@ -95,6 +95,9 @@ public final class SharedWorldHostingManager {
     private volatile long lastHeartbeatAttemptAt;
     private volatile int consecutiveHeartbeatFailures;
     private volatile long lastAutosaveAt;
+    /** C2 sticky autosave error: non-null while saves are failing; cleared by the next SUCCESSFUL save. */
+    private volatile String autosaveErrorMessage;
+    private boolean autosaveFailureAnnounced;
     private volatile long heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS;
     private volatile long autosaveIntervalMs = AUTOSAVE_INTERVAL_MS;
     private volatile long startupAttemptId;
@@ -1062,6 +1065,7 @@ public final class SharedWorldHostingManager {
                         return;
                     }
                     this.lastAutosaveAt = System.currentTimeMillis();
+                    clearAutosaveError();
                     // A release that began while this save was in flight owns the
                     // phase now; stomping RELEASING back to RUNNING would tear
                     // down the finalization progress guests are watching.
@@ -1098,9 +1102,22 @@ public final class SharedWorldHostingManager {
                     return;
                 }
                 LOGGER.warn("SharedWorld autosave failed", exception);
+                // Sticky error state (C2): pre-0.4.2 a failing autosave loop
+                // was one log line and a phase snap back to RUNNING — players
+                // lost hours before learning nothing was saving. The state
+                // survives until a save SUCCEEDS, and a full Drive gets an
+                // in-game announcement the moment it is first detected.
+                boolean driveFull = isDriveStorageFullFailure(exception);
+                String stickyMessage = driveFull
+                        ? SharedWorldText.string("sharedworld.autosave_failed_storage_full")
+                        : SharedWorldText.string("sharedworld.autosave_failed_generic", SharedWorldApiClient.friendlyErrorMessage(exception));
                 dispatchToMainThread(() -> {
-                    if (isCurrentAttempt(context) && this.coordinatedRelease == CoordinatedRelease.NONE) {
-                        setPhase(Phase.RUNNING, HostLifecyclePolicy.runningStatusMessage(this.publishedJoinTarget));
+                    if (!isCurrentAttempt(context)) {
+                        return;
+                    }
+                    recordAutosaveError(stickyMessage, driveFull);
+                    if (this.coordinatedRelease == CoordinatedRelease.NONE) {
+                        setPhase(Phase.RUNNING, SharedWorldText.string("screen.sharedworld.hosting_autosave_failing"));
                     }
                 });
             } finally {
@@ -1114,6 +1131,47 @@ public final class SharedWorldHostingManager {
                 dispatchToMainThread(() -> clearSaveInFlight(context));
             }
         }, this.backgroundExecutor);
+    }
+
+    /** The sticky autosave failure message, or null while saves are healthy (SharedWorld screen warning line). */
+    public String autosaveErrorMessage() {
+        return this.autosaveErrorMessage;
+    }
+
+    private static boolean isDriveStorageFullFailure(Throwable exception) {
+        if ("drive_storage_full".equals(SharedWorldApiClient.errorCode(exception))) {
+            return true;
+        }
+        for (Throwable cause = exception; cause != null; cause = cause.getCause()) {
+            if (cause instanceof link.sharedworld.api.ResumableBlobUploader.DriveStorageFullException) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Main thread. Announces in chat once per failure episode; a full Drive is always announced loudly. */
+    private void recordAutosaveError(String message, boolean driveFull) {
+        this.autosaveErrorMessage = message;
+        if (driveFull && !this.autosaveFailureAnnounced) {
+            this.autosaveFailureAnnounced = true;
+            announceInChat(message);
+        }
+    }
+
+    /** Main thread. Clears the sticky state; announces recovery only if the failure had been announced. */
+    private void clearAutosaveError() {
+        boolean wasAnnounced = this.autosaveFailureAnnounced;
+        boolean hadError = this.autosaveErrorMessage != null;
+        this.autosaveErrorMessage = null;
+        this.autosaveFailureAnnounced = false;
+        if (hadError && wasAnnounced) {
+            announceInChat(SharedWorldText.string("sharedworld.autosave_recovered"));
+        }
+    }
+
+    private static void announceInChat(String message) {
+        link.sharedworld.versioned.ClientCompat.showChatMessage(Minecraft.getInstance(), Component.literal(message));
     }
 
     private void fail(String message, Throwable throwable) {

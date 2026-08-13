@@ -82,4 +82,11 @@ public final class ClientCompat {
             || screen instanceof net.minecraft.client.gui.screens.ProgressScreen
             || screen instanceof net.minecraft.client.gui.screens.GenericMessageScreen;
     }
+
+    /** Show a system chat line on the local client (autosave health warnings). */
+    public static void showChatMessage(Minecraft minecraft, net.minecraft.network.chat.Component message) {
+        if (minecraft.player != null) {
+            minecraft.player.displayClientMessage(message, false);
+        }
+    }
 }

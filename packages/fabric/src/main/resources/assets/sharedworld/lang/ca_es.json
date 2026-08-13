@@ -298,5 +298,18 @@
   "screen.sharedworld.replace_blocked_busy": "Aquest món és obert ara mateix. Demana a l'amfitrió que en surti primer i torna-ho a provar.",
   "screen.sharedworld.replace_blocked_hosting": "Deixa d'hostatjar aquest món abans de substituir-lo.",
   "screen.sharedworld.replace_blocked_playing": "Surt d'aquest món abans de substituir-lo.",
-  "screen.sharedworld.delete_progress_backups": "S'estan eliminant les còpies de seguretat... (%s de %s)"
+  "screen.sharedworld.delete_progress_backups": "S'estan eliminant les còpies de seguretat... (%s de %s)",
+  "screen.sharedworld.takeover_title": "L'amfitrió ha marxat",
+  "screen.sharedworld.takeover_body": "Ets el següent per allotjar '%s'. Allotjar descarrega l'últim estat del món i l'obre al teu ordinador. Vols agafar el relleu?",
+  "screen.sharedworld.takeover_host": "Allotjar el món",
+  "screen.sharedworld.takeover_decline": "No, gràcies",
+  "sharedworld.autosave_failed_storage_full": "SharedWorld: el desat automàtic ha fallat — el teu Google Drive és ple. Allibera espai a Drive o elimina còpies antigues des de la pantalla de SharedWorld. El teu món continua funcionant però NO s'està copiant.",
+  "sharedworld.autosave_failed_generic": "SharedWorld: el desat automàtic està fallant — %s",
+  "sharedworld.autosave_recovered": "SharedWorld: les còpies de seguretat tornen a funcionar.",
+  "screen.sharedworld.hosting_autosave_failing": "Allotjant — les còpies estan FALLANT",
+  "screen.sharedworld.storage_quota_near_full": "Google Drive és gairebé ple. Allibera espai o elimina còpies antigues perquè el desat continuï funcionant.",
+  "screen.sharedworld.storage_quota_full": "Google Drive és PLE — no es poden desar còpies. Allibera espai a Drive o elimina còpies antigues ara.",
+  "screen.sharedworld.settings_max_backups": "Còpies desades: %s",
+  "screen.sharedworld.settings_max_backups_auto": "Automàtic",
+  "screen.sharedworld.takeover_countdown": "Passant al següent jugador en %ss..."
 }

@@ -27,8 +27,14 @@ public final class SharedWorldDisconnectHook {
         switch (action) {
             case IGNORE_PASS_THROUGH -> LOGGER.info("Skipping SharedWorld disconnect detection because release pass-through is armed.");
             case GUEST_ONLY -> {
-                LOGGER.info("Observed SharedWorld guest disconnect; marking the session as user-initiated.");
+                LOGGER.info("Observed SharedWorld guest disconnect; tearing the session down as user-initiated.");
                 SharedWorldClient.playSessionTracker().markUserInitiatedDisconnect();
+                // The intent hook is the teardown authority — the fabric PLAY
+                // DISCONNECT event is unreliable on relayed transports (e4mc
+                // dialtone never closes the local channel on a manual quit),
+                // and a session that survives its own leave later hijacks
+                // fresh sessions of the same world.
+                SharedWorldClient.onUserInitiatedGuestLeave();
             }
             case HOST_GRACEFUL_RELEASE -> {
                 LOGGER.info("Observed SharedWorld host disconnect on a local server; starting graceful release.");

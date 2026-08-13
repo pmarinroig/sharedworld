@@ -218,8 +218,14 @@ public final class SharedWorldModels {
     public record WorldSettingsDto(
             String difficulty,
             String defaultGameMode,
-            java.util.Map<String, Boolean> gamerules
+            java.util.Map<String, Boolean> gamerules,
+            /** 0.4.2: retained-backup cap; null = age policy only. */
+            Integer maxBackups
     ) {
+        /** Pre-0.4.2 shape (host gamerules sync and older payloads carry no cap). */
+        public WorldSettingsDto(String difficulty, String defaultGameMode, java.util.Map<String, Boolean> gamerules) {
+            this(difficulty, defaultGameMode, gamerules, null);
+        }
     }
 
     /** The caller's reusable linked storage account (GET /storage/account). */

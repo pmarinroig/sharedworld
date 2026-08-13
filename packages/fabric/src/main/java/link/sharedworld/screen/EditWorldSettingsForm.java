@@ -34,12 +34,16 @@ final class EditWorldSettingsForm {
 
     private String difficulty = "normal";
     private String gameMode = "survival";
+    /** C3: retained-backup cap cycle; null = age policy only. */
+    private static final Integer[] MAX_BACKUPS_STEPS = { null, 10, 25, 50, 100 };
+    private Integer maxBackups;
     private final EnumMap<SharedWorldGameRule, Boolean> rules = new EnumMap<>(SharedWorldGameRule.class);
     private WorldSettingsDto loadedSettings;
     private boolean prefillFailed;
 
     private Button difficultyButton;
     private Button gameModeButton;
+    private Button maxBackupsButton;
     private final EnumMap<SharedWorldGameRule, Button> ruleButtons = new EnumMap<>(SharedWorldGameRule.class);
 
     EditWorldSettingsForm(ManagedWorldStore worldStore, String worldId, BooleanSupplier editableByPlayer, Runnable onChanged) {
@@ -58,6 +62,7 @@ final class EditWorldSettingsForm {
     void createWidgets() {
         this.difficultyButton = Button.builder(Component.empty(), ignored -> this.cycleDifficulty()).width(170).build();
         this.gameModeButton = Button.builder(Component.empty(), ignored -> this.cycleGameMode()).width(170).build();
+        this.maxBackupsButton = Button.builder(Component.empty(), ignored -> this.cycleMaxBackups()).width(170).build();
         this.ruleButtons.clear();
         for (SharedWorldGameRule rule : SharedWorldGameRule.values()) {
             this.ruleButtons.put(rule, Button.builder(Component.empty(), ignored -> this.toggleRule(rule)).width(170).build());
@@ -67,6 +72,7 @@ final class EditWorldSettingsForm {
     void visitWidgets(Consumer<AbstractWidget> consumer) {
         consumer.accept(this.difficultyButton);
         consumer.accept(this.gameModeButton);
+        consumer.accept(this.maxBackupsButton);
         for (Button button : this.ruleButtons.values()) {
             consumer.accept(button);
         }
@@ -82,6 +88,8 @@ final class EditWorldSettingsForm {
         this.difficultyButton.setPosition(leftColumn, top);
         this.gameModeButton.setWidth(columnWidth);
         this.gameModeButton.setPosition(leftColumn, top + 24);
+        this.maxBackupsButton.setWidth(columnWidth);
+        this.maxBackupsButton.setPosition(leftColumn, top + 48);
 
         int y = top;
         for (Button button : this.ruleButtons.values()) {
@@ -107,6 +115,7 @@ final class EditWorldSettingsForm {
             if (saved.defaultGameMode() != null) {
                 this.gameMode = saved.defaultGameMode();
             }
+            this.maxBackups = saved.maxBackups();
             if (saved.gamerules() != null) {
                 for (var entry : saved.gamerules().entrySet()) {
                     SharedWorldGameRule rule = SharedWorldGameRule.byId(entry.getKey());
@@ -159,7 +168,22 @@ final class EditWorldSettingsForm {
         for (var entry : this.rules.entrySet()) {
             gamerules.put(entry.getKey().id(), entry.getValue());
         }
-        return new WorldSettingsDto(this.difficulty, this.gameMode, gamerules);
+        return new WorldSettingsDto(this.difficulty, this.gameMode, gamerules, this.maxBackups);
+    }
+
+    private void cycleMaxBackups() {
+        if (!this.editableByPlayer.getAsBoolean()) {
+            return;
+        }
+        int index = 0;
+        for (int i = 0; i < MAX_BACKUPS_STEPS.length; i += 1) {
+            if (java.util.Objects.equals(MAX_BACKUPS_STEPS[i], this.maxBackups)) {
+                index = i;
+                break;
+            }
+        }
+        this.maxBackups = MAX_BACKUPS_STEPS[(index + 1) % MAX_BACKUPS_STEPS.length];
+        this.onChanged.run();
     }
 
     boolean dirty() {
@@ -212,6 +236,12 @@ final class EditWorldSettingsForm {
                 "screen.sharedworld.settings_game_mode",
                 Component.translatable(gameModeValueKey(this.gameMode))));
         this.gameModeButton.active = editable;
+        this.maxBackupsButton.setMessage(Component.translatable(
+                "screen.sharedworld.settings_max_backups",
+                this.maxBackups == null
+                        ? Component.translatable("screen.sharedworld.settings_max_backups_auto")
+                        : Component.literal(String.valueOf(this.maxBackups))));
+        this.maxBackupsButton.active = editable;
         for (var entry : this.ruleButtons.entrySet()) {
             boolean value = Boolean.TRUE.equals(this.rules.get(entry.getKey()));
             entry.getValue().setMessage(Component.translatable(

@@ -123,6 +123,14 @@ final class BackendModHandoffHostStartupIntegrationTest {
                         }
 
                         @Override
+                        public Screen confirmTakeover(Screen parent, String worldName, Runnable accept, Runnable decline) {
+                            clientShell.markNextScreen("confirm-takeover");
+                            // Integration flows keep pre-confirmation behavior: auto-accept.
+                            accept.run();
+                            return null;
+                        }
+
+                        @Override
                         public Screen deleted(Screen parent) {
                             clientShell.markNextScreen("deleted");
                             return null;
@@ -223,6 +231,11 @@ final class BackendModHandoffHostStartupIntegrationTest {
         @Override
         public SharedWorldModels.ObserveWaitingResponseDto observeWaiting(String worldId, String waiterSessionId) throws Exception {
             return this.client.observeWaiting(worldId, waiterSessionId);
+        }
+
+        @Override
+        public void releaseHost(String worldId, boolean graceful, long runtimeEpoch, String hostToken) throws Exception {
+            this.client.releaseHost(worldId, graceful, runtimeEpoch, hostToken);
         }
 
         @Override
