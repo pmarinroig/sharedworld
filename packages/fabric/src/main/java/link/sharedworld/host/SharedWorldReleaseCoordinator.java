@@ -708,6 +708,12 @@ public final class SharedWorldReleaseCoordinator {
                 SharedWorldReleasePolicy.blockingProgress(Component.translatable("screen.sharedworld.progress.uploading_world")),
                 null
         );
+        if (record.phase == SharedWorldReleasePhase.ERROR_RECOVERABLE) {
+            // errorKind lives only in memory, so a record persisted mid-retry
+            // comes back without one; without it retry() and auto-retry are
+            // both dead ends and the release could never resume.
+            this.state.errorKind = SharedWorldTerminalReasonKind.RECOVERABLE_REMOTE_FAILURE;
+        }
         scheduleRuntimeReconciliation(this.state.record.releaseAttemptId);
     }
 
@@ -1044,7 +1050,6 @@ public final class SharedWorldReleaseCoordinator {
                     if (shouldIgnoreAsyncCompletion(latest, attemptId)) {
                         return;
                     }
-                    latest.taskInFlight = false;
                     if (error != null) {
                         if (SharedWorldApiClient.isDeletedWorldError(error)) {
                             transitionTerminal(SharedWorldReleasePhase.TERMINATED_DELETED, null);
@@ -1136,7 +1141,6 @@ public final class SharedWorldReleaseCoordinator {
             if (shouldIgnoreAsyncCompletion(latest, attemptId)) {
                 return;
             }
-            latest.taskInFlight = false;
             if (error != null) {
                 if (SharedWorldApiClient.isDeletedWorldError(error)) {
                     transitionTerminal(SharedWorldReleasePhase.TERMINATED_DELETED, null);
@@ -1231,7 +1235,6 @@ public final class SharedWorldReleaseCoordinator {
                     if (shouldIgnoreAsyncCompletion(latest, attemptId)) {
                         return;
                     }
-                    latest.taskInFlight = false;
                     if (error != null) {
                         if (SharedWorldApiClient.isDeletedWorldError(error)) {
                             transitionTerminal(SharedWorldReleasePhase.TERMINATED_DELETED, null);
@@ -1270,7 +1273,6 @@ public final class SharedWorldReleaseCoordinator {
             if (shouldIgnoreAsyncCompletion(latest, attemptId)) {
                 return;
             }
-            latest.taskInFlight = false;
             if (error != null) {
                 if (SharedWorldApiClient.isDeletedWorldError(error)) {
                     transitionTerminal(SharedWorldReleasePhase.TERMINATED_DELETED, null);
@@ -1433,10 +1435,21 @@ public final class SharedWorldReleaseCoordinator {
                 + hostUuid.substring(20);
     }
 
+    /**
+     * Completes the attempt's single in-flight task and reports whether its
+     * result must be dropped. Releasing the taskInFlight mutex is NOT part of
+     * that staleness decision: a parked (ERROR_RECOVERABLE) or closed attempt
+     * only ignores the task's effects. Holding the mutex there would wedge the
+     * attempt with no task in flight and no way to schedule another — a
+     * restored ERROR_RECOVERABLE record's activation-time reconciliation
+     * always completes while parked, so it would freeze retry forever.
+     */
     private static boolean shouldIgnoreAsyncCompletion(ReleaseState latest, long attemptId) {
-        return latest == null
-                || latest.record.releaseAttemptId != attemptId
-                || SharedWorldReleasePolicy.isClosedTerminal(latest.record.phase)
+        if (latest == null || latest.record.releaseAttemptId != attemptId) {
+            return true;
+        }
+        latest.taskInFlight = false;
+        return SharedWorldReleasePolicy.isClosedTerminal(latest.record.phase)
                 || latest.record.phase == SharedWorldReleasePhase.ERROR_RECOVERABLE;
     }
 

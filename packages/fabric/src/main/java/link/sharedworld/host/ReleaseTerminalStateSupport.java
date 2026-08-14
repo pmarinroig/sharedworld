@@ -56,11 +56,17 @@ final class ReleaseTerminalStateSupport {
         };
     }
 
+    /**
+     * Must never return null: a release view's errorKind feeds screen routing
+     * directly, and a persisted ERROR_RECOVERABLE record restored after a client
+     * restart has no in-memory kind to fall back on. Absent specifics, an
+     * interrupted release IS a recoverable remote failure.
+     */
     static SharedWorldTerminalReasonKind reasonKindForPhase(SharedWorldReleasePhase phase) {
         return switch (phase) {
             case TERMINATED_DELETED -> SharedWorldTerminalReasonKind.TERMINATED_DELETED;
             case TERMINATED_REVOKED -> SharedWorldTerminalReasonKind.TERMINATED_REVOKED;
-            default -> null;
+            default -> SharedWorldTerminalReasonKind.RECOVERABLE_REMOTE_FAILURE;
         };
     }
 

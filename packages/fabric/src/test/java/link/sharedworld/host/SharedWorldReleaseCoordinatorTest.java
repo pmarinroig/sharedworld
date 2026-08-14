@@ -815,6 +815,95 @@ final class SharedWorldReleaseCoordinatorTest {
         }
     }
 
+    /**
+     * Field crash loop (0.4.2): alt-F4 while parked on the upload-failed retry
+     * screen persists an ERROR_RECOVERABLE record, but errorKind lives only in
+     * memory. On the next launch the restored view surfaced a null errorKind,
+     * which NPE'd the lifecycle router's screen switch on the first menu tick —
+     * on every launch, until config/sharedworld-release.json was deleted.
+     */
+    @Test
+    void restartWhileParkedOnRecoverableErrorRestoresARetryableViewWithAnErrorKind() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            harness.hostControl.setActiveHostSession("world-1", "World", 7L, "token-7", "join.example");
+            harness.releaseBackend.setRuntime(SharedWorldCoordinatorHarness.runtime("world-1", "host-live", 7L, null, "join.example"));
+            harness.hostControl.failures().add("upload", new IOException("network down"));
+
+            beginGracefulVanillaDisconnect(harness);
+            driveRelease(harness);
+            assertEquals(SharedWorldReleasePhase.ERROR_RECOVERABLE, harness.releaseCoordinator.view().phase());
+
+            SharedWorldCoordinatorHarness restarted = harness.restart();
+            restarted.clientShell.setLocalServerState(false, false, false);
+            restarted.releaseBackend.setRuntime(SharedWorldCoordinatorHarness.runtime("world-1", "host-finalizing", 7L, null, null));
+
+            // Step only as far as record activation: the crash window is the
+            // menu tick between activation and runtime reconciliation.
+            restarted.tickRelease();
+            restarted.runNextAsync();
+            restarted.flushMainThread();
+
+            SharedWorldReleaseCoordinator.ReleaseView restored = restarted.releaseCoordinator.view();
+            assertNotNull(restored);
+            assertEquals(SharedWorldReleasePhase.ERROR_RECOVERABLE, restored.phase());
+            assertFalse(restored.blocking());
+            assertEquals(SharedWorldTerminalReasonKind.RECOVERABLE_REMOTE_FAILURE, restored.errorKind());
+            assertTrue(restored.canRetry());
+
+            // And the restored Retry button actually works: pre-fix the null
+            // errorKind made retry() a dead end, and the ignored activation
+            // reconciliation leaked taskInFlight so nothing could ever run.
+            driveRelease(restarted);
+            assertTrue(restarted.releaseCoordinator.retry());
+            driveRelease(restarted);
+            assertEquals(SharedWorldReleasePhase.COMPLETE, restarted.releaseCoordinator.view().phase());
+            assertEquals(1, restarted.snapshotDriver.uploads().size());
+            assertNull(restarted.releaseStore.load());
+
+            restarted.close();
+        } finally {
+            harness.close();
+        }
+    }
+
+    /** Same restart-while-parked lane, but resumed by the automatic retry backoff instead of a human. */
+    @Test
+    void restartWhileParkedOnRecoverableErrorAutoRetriesToCompletionWithoutAClick() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            harness.hostControl.setActiveHostSession("world-1", "World", 7L, "token-7", "join.example");
+            harness.releaseBackend.setRuntime(SharedWorldCoordinatorHarness.runtime("world-1", "host-live", 7L, null, "join.example"));
+            harness.hostControl.failures().add("upload", new IOException("network down"));
+
+            beginGracefulVanillaDisconnect(harness);
+            driveRelease(harness);
+            assertEquals(SharedWorldReleasePhase.ERROR_RECOVERABLE, harness.releaseCoordinator.view().phase());
+
+            SharedWorldCoordinatorHarness restarted = harness.restart();
+            restarted.clientShell.setLocalServerState(false, false, false);
+            restarted.releaseBackend.setRuntime(SharedWorldCoordinatorHarness.runtime("world-1", "host-finalizing", 7L, null, null));
+
+            driveRelease(restarted);
+            assertEquals(SharedWorldReleasePhase.ERROR_RECOVERABLE, restarted.releaseCoordinator.view().phase());
+
+            // First tick arms the backoff deadline; after it elapses the
+            // restored release resumes and completes with no interaction.
+            restarted.tickRelease();
+            restarted.runUntilIdle();
+            restarted.advanceTime(61_000L);
+            driveRelease(restarted);
+
+            assertEquals(SharedWorldReleasePhase.COMPLETE, restarted.releaseCoordinator.view().phase());
+            assertEquals(1, restarted.snapshotDriver.uploads().size());
+            assertNull(restarted.releaseStore.load());
+
+            restarted.close();
+        } finally {
+            harness.close();
+        }
+    }
+
     @Test
     void clientStoppingShortlyAfterLeaveStillPersistsAndResumesRelease() throws Exception {
         SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();

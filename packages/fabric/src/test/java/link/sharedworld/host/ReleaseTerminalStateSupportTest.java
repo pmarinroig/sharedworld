@@ -29,6 +29,16 @@ final class ReleaseTerminalStateSupportTest {
                 SharedWorldTerminalReasonKind.TERMINATED_REVOKED,
                 ReleaseTerminalStateSupport.reasonKindForPhase(SharedWorldReleasePhase.TERMINATED_REVOKED)
         );
-        assertNull(ReleaseTerminalStateSupport.reasonKindForPhase(SharedWorldReleasePhase.COMPLETE));
+        // Never null: the lifecycle router switches on this kind, and a
+        // restored ERROR_RECOVERABLE record has no in-memory kind to fall
+        // back on (the 0.4.2 launch crash-loop).
+        assertEquals(
+                SharedWorldTerminalReasonKind.RECOVERABLE_REMOTE_FAILURE,
+                ReleaseTerminalStateSupport.reasonKindForPhase(SharedWorldReleasePhase.ERROR_RECOVERABLE)
+        );
+        assertEquals(
+                SharedWorldTerminalReasonKind.RECOVERABLE_REMOTE_FAILURE,
+                ReleaseTerminalStateSupport.reasonKindForPhase(SharedWorldReleasePhase.COMPLETE)
+        );
     }
 }
