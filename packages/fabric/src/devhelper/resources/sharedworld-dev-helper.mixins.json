@@ -3,7 +3,8 @@
   "package": "link.sharedworld.devhelper.mixin",
   "compatibilityLevel": "${mixinCompatibilityLevel}",
   "client": [
-    "ServerLoginPacketListenerDevHelperMixin"
+    "ServerLoginPacketListenerDevHelperMixin",
+    "WindowDevHelperMixin"
   ],
   "injectors": {
     "defaultRequire": 1
