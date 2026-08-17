@@ -248,6 +248,8 @@ export interface SnapshotRepository {
    */
   getLatestSnapshotHeaders(worldId: string): Promise<SnapshotManifest | null>;
   getSnapshotHeaders(worldId: string, snapshotId: string): Promise<SnapshotManifest | null>;
+  /** Which of the given snapshot ids still exist for this world (one query). */
+  existingSnapshotIds(worldId: string, snapshotIds: readonly string[]): Promise<Set<string>>;
   /** Headers for many snapshot ids of one world in a fixed number of queries; unknown ids are absent. */
   getSnapshotHeadersBatch(worldId: string, snapshotIds: readonly string[]): Promise<Map<string, SnapshotManifest>>;
   listSnapshotSummaries(worldId: string): Promise<WorldSnapshotSummary[]>;

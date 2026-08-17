@@ -513,7 +513,7 @@ async function validateFinalizeSnapshotRequest(
       }
       seenPaths.add(file.path);
     }
-    await validateSnapshotPackBase(svc, worldId, pack, snapshotCache);
+    await validateSnapshotPackBase(svc, worldId, pack, snapshotCache, request);
   }
 }
 
@@ -583,12 +583,54 @@ async function validateManifestFileBase(
   }, snapshotCache);
 }
 
+/**
+ * The parent snapshot's copy of a pack the request carries forward
+ * unchanged (same id, artifact hash, storage key and transfer mode). The
+ * upload plan echoes such packs' headers verbatim from the latest snapshot,
+ * base references included — and since S1 those base snapshot ROWS are
+ * legitimately deletable (self-contained recipes and the GC legs keep the
+ * bytes). So a carried-forward pack must be judged by its parent's already-
+ * validated header, never by whether its original base row still exists:
+ * demanding the row turned any deleted base into a world that could not
+ * finalize again ("Snapshot base ... was not found for this world").
+ */
+async function carriedForwardParentPack(
+  svc: ServiceContext,
+  worldId: string,
+  request: FinalizeSnapshotRequest,
+  pack: SnapshotPack,
+  snapshotCache: SnapshotHeadersCache
+): Promise<SnapshotPack | null> {
+  if (request.baseSnapshotId == null) {
+    return null;
+  }
+  const parent = await snapshotHeadersCached(svc, worldId, request.baseSnapshotId, snapshotCache);
+  const parentPack = parent?.packs.find((entry) => entry.packId === pack.packId) ?? null;
+  if (parentPack == null
+      || parentPack.hash !== pack.hash
+      || parentPack.storageKey !== pack.storageKey
+      || parentPack.transferMode !== pack.transferMode
+      || (parentPack.baseSnapshotId ?? null) !== (pack.baseSnapshotId ?? null)
+      || (parentPack.baseHash ?? null) !== (pack.baseHash ?? null)
+      || (parentPack.chainDepth ?? null) !== (pack.chainDepth ?? null)) {
+    return null;
+  }
+  return parentPack;
+}
+
 async function validateSnapshotPackBase(
   svc: ServiceContext,
   worldId: string,
   pack: SnapshotPack,
-  snapshotCache: Map<string, SnapshotManifest | null>
+  snapshotCache: Map<string, SnapshotManifest | null>,
+  request: FinalizeSnapshotRequest
 ): Promise<void> {
+  if (isDeltaPackTransferMode(pack.transferMode) && await carriedForwardParentPack(svc, worldId, request, pack, snapshotCache) != null) {
+    // Inherited verbatim from the parent snapshot, whose header already
+    // passed this validation when it was written.
+    validateSnapshotPackDeltaV2Fields(pack);
+    return;
+  }
   await validateDeltaArtifactBase(svc, worldId, {
     kind: "pack",
     ref: `'${pack.packId}'`,
@@ -626,6 +668,11 @@ async function computeChainDeltaBytes(
     }
     if ((pack.deltaFormatVersion ?? null) !== DELTA_V2_FORMAT_VERSION) {
       pack.chainDeltaBytes = null;
+      continue;
+    }
+    const parentPack = await carriedForwardParentPack(svc, worldId, request, pack, snapshotCache);
+    if (parentPack != null) {
+      pack.chainDeltaBytes = parentPack.chainDeltaBytes ?? null;
       continue;
     }
     const baseSnapshot = await requireSnapshotForValidation(svc, worldId, pack.baseSnapshotId as string, snapshotCache);
@@ -687,6 +734,12 @@ async function stampChainSteps(
   for (const pack of request.packs ?? []) {
     if (!isDeltaPackTransferMode(pack.transferMode)) {
       pack.chainSteps = [selfChainStep(pack, null)];
+      continue;
+    }
+    const parentPack = await carriedForwardParentPack(svc, worldId, request, pack, headersCache);
+    if (parentPack?.chainSteps != null && parentPack.chainSteps.length > 0) {
+      // Same artifact, same chain: the parent's recipe IS this pack's recipe.
+      pack.chainSteps = parentPack.chainSteps;
       continue;
     }
     const baseSteps = await chainStepsOfBasePack(svc, worldId, pack, headersCache);

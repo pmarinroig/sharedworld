@@ -52,7 +52,7 @@ import {
   requireSessionAccessAllowingRevokedHost,
   requireWorldStorageBinding
 } from "./runtime-access.ts";
-import { storageKeysExist, sweepPendingBlobDeletes } from "./snapshots.ts";
+import { isDeltaPackTransferMode, storageKeysExist, sweepPendingBlobDeletes } from "./snapshots.ts";
 import { cachedQuota } from "./worlds.ts";
 import { driveStorageFullError } from "../storage/drive.ts";
 
@@ -92,9 +92,17 @@ export async function prepareUploads(
   // pipeline (prepare → finalize keeps working, and the next finalize
   // becomes the new latest with a fresh doc).
   const latest = await svc.repository.getLatestSnapshotHeaders(worldId);
-  const latestPack = latest?.packs.find((pack) => pack.packId === NON_REGION_PACK_ID) ?? null;
+  // Packs whose latest header can no longer be honoured (unstamped delta
+  // whose base snapshot row is gone) are planned as if the world had never
+  // stored them: the host re-uploads the full artifact and the next
+  // snapshot is whole again. Stamped packs over a missing base are fine —
+  // their recipe is self-contained and finalize inherits it.
+  const unreconstructable = await unreconstructablePackIds(svc, worldId, latest);
+  const latestPack = latest?.packs.find((pack) => pack.packId === NON_REGION_PACK_ID && !unreconstructable.has(pack.packId)) ?? null;
   const latestRegionBundleById = new Map(
-    (latest?.packs ?? []).filter((pack) => isRegionBundleId(pack.packId)).map((pack) => [pack.packId, pack])
+    (latest?.packs ?? [])
+      .filter((pack) => isRegionBundleId(pack.packId) && !unreconstructable.has(pack.packId))
+      .map((pack) => [pack.packId, pack])
   );
   const binding = await requireWorldStorageBinding(svc, worldId);
   // Quota preflight: 0.4.x direct uploads PUT straight to Google, so a full
@@ -179,6 +187,39 @@ export async function prepareUploads(
       ? { chunkSizeBytes: DIRECT_UPLOAD_CHUNK_BYTES, maxUploadBytes: null }
       : null
   };
+}
+
+/**
+ * Latest-snapshot packs that are delta artifacts with NO chainSteps recipe
+ * AND whose base snapshot row no longer exists: nothing can rebuild them
+ * (downloads would report snapshot_chain_broken, and a finalize carrying
+ * them forward used to fail with snapshot_base_not_found). Bases become
+ * deletable by design since S1, so this state is reachable through a manual
+ * backup delete or retention on a legacy (pre-stamping) chain.
+ */
+async function unreconstructablePackIds(
+  svc: ServiceContext,
+  worldId: string,
+  latest: SnapshotManifest | null
+): Promise<Set<string>> {
+  const candidates = (latest?.packs ?? []).filter((pack) =>
+    isDeltaPackTransferMode(pack.transferMode)
+    && pack.baseSnapshotId != null
+    && (pack.chainSteps == null || pack.chainSteps.length === 0));
+  if (candidates.length === 0) {
+    return new Set();
+  }
+  const existing = await svc.repository.existingSnapshotIds(worldId, candidates.map((pack) => pack.baseSnapshotId as string));
+  const broken = new Set<string>();
+  for (const pack of candidates) {
+    if (!existing.has(pack.baseSnapshotId as string)) {
+      broken.add(pack.packId);
+    }
+  }
+  if (broken.size > 0) {
+    console.warn("SharedWorld upload plan forcing full re-upload of unreconstructable packs", { worldId, packs: [...broken] });
+  }
+  return broken;
 }
 
 /**

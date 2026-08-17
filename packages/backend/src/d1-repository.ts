@@ -1290,6 +1290,19 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
    * simply absent from the result. Ids ride in as one JSON array (D1 caps
    * bound parameters, and a delta-heavy world can reference many bases).
    */
+  async existingSnapshotIds(worldId: string, snapshotIds: readonly string[]): Promise<Set<string>> {
+    const ids = [...new Set(snapshotIds)];
+    if (ids.length === 0) {
+      return new Set();
+    }
+    const rows = await this.all<Row>(
+      `SELECT id FROM snapshots WHERE world_id = ? AND id IN (SELECT value FROM json_each(?))`,
+      worldId,
+      JSON.stringify(ids)
+    );
+    return new Set(rows.map((row) => String(row.id)));
+  }
+
   async getSnapshotHeadersBatch(worldId: string, snapshotIds: readonly string[]): Promise<Map<string, SnapshotManifest>> {
     const result = new Map<string, SnapshotManifest>();
     const ids = [...new Set(snapshotIds)];
