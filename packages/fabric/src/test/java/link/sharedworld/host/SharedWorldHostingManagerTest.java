@@ -39,6 +39,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -67,6 +68,174 @@ final class SharedWorldHostingManagerTest {
         assertEquals(HOST_UUID, syncAccess.hostPlayerUuid);
         assertEquals(1, worldOpenController.openExistingCalls);
         assertEquals(syncAccess.preparedWorldDirectory, worldOpenController.openedWorldDirectory);
+    }
+
+    // ---- no-silent-rollback guard (0.4.4): local-changes marker at host start
+
+    private static void primeUnreleasedWorkingCopy(ManagedWorldStore worldStore, String worldId, String baselineSnapshotId) throws Exception {
+        Files.createDirectories(worldStore.workingCopy(worldId));
+        Files.createDirectories(worldStore.worldContainer(worldId));
+        Files.writeString(worldStore.packBaselineSnapshotFile(worldId), baselineSnapshotId);
+        worldStore.markLocalChanges(worldId, HOST_UUID, "2026-08-17T10:00:00Z");
+    }
+
+    @Test
+    void openingTheWorldWritesTheLocalChangesMarker() throws Exception {
+        ManagedWorldStore worldStore = new ManagedWorldStore(this.tempDir.resolve("managed-marker"));
+        RecordingSyncAccess syncAccess = new RecordingSyncAccess(this.tempDir.resolve("prepared-world"));
+        SharedWorldHostingManager manager = manager(worldStore, syncAccess, new RecordingWorldOpenController(), new InMemoryHostRecoveryStore(), worldId -> false);
+
+        assertNull(worldStore.localChanges("world-1"));
+        primeStartup(manager, world("world-1", "Handoff World"), 7L, SharedWorldHostingManager.StartupMode.NORMAL);
+        invokePrepareAndOpen(manager, 7L);
+
+        ManagedWorldStore.LocalChangesMarker marker = worldStore.localChanges("world-1");
+        assertNotNull(marker);
+        assertEquals(HOST_UUID, marker.hostPlayerUuid());
+        assertEquals(1, syncAccess.ensureCalls);
+        assertEquals(0, syncAccess.uploadCalls);
+    }
+
+    @Test
+    void unreleasedWorkingCopyWithUnchangedSharedCopyIsPublishedBeforeTheSync() throws Exception {
+        ManagedWorldStore worldStore = new ManagedWorldStore(this.tempDir.resolve("managed-publish-first"));
+        primeUnreleasedWorkingCopy(worldStore, "world-1", "snapshot-1");
+        RecordingSyncAccess syncAccess = new RecordingSyncAccess(this.tempDir.resolve("prepared-world"));
+        RecordingWorldOpenController worldOpenController = new RecordingWorldOpenController();
+        SharedWorldHostingManager manager = manager(worldStore, syncAccess, worldOpenController, new InMemoryHostRecoveryStore(), worldId -> false);
+
+        // world("world-1", ...) reports lastSnapshotId "snapshot-1" == the local baseline.
+        primeStartup(manager, world("world-1", "Handoff World"), 7L, SharedWorldHostingManager.StartupMode.NORMAL);
+        invokePrepareAndOpen(manager, 7L);
+
+        assertEquals(java.util.List.of("upload", "ensure"), syncAccess.callOrder);
+        assertEquals(worldStore.workingCopy("world-1"), syncAccess.uploadedWorldDirectory);
+        assertEquals(0, syncAccess.localChangesChecks);
+        assertEquals(1, worldOpenController.openExistingCalls);
+        assertNull(manager.startupView().localChangesPrompt());
+    }
+
+    @Test
+    void publishFirstFailureStopsStartupWithTheWorkingCopyAndMarkerIntact() throws Exception {
+        ManagedWorldStore worldStore = new ManagedWorldStore(this.tempDir.resolve("managed-publish-fail"));
+        primeUnreleasedWorkingCopy(worldStore, "world-1", "snapshot-1");
+        RecordingSyncAccess syncAccess = new RecordingSyncAccess(this.tempDir.resolve("prepared-world"));
+        syncAccess.failUpload = true;
+        RecordingWorldOpenController worldOpenController = new RecordingWorldOpenController();
+        SharedWorldHostingManager manager = manager(worldStore, syncAccess, worldOpenController, new InMemoryHostRecoveryStore(), worldId -> false);
+
+        primeStartup(manager, world("world-1", "Handoff World"), 7L, SharedWorldHostingManager.StartupMode.NORMAL);
+        assertThrows(Exception.class, () -> invokePrepareAndOpen(manager, 7L));
+
+        assertEquals(1, syncAccess.uploadCalls);
+        assertEquals(0, syncAccess.ensureCalls);
+        assertEquals(0, worldOpenController.openExistingCalls);
+        assertNotNull(worldStore.localChanges("world-1"));
+    }
+
+    @Test
+    void unreleasedWorkingCopyBehindAMovedSharedCopyAsksBeforeTouchingAnything() throws Exception {
+        ManagedWorldStore worldStore = new ManagedWorldStore(this.tempDir.resolve("managed-conflict"));
+        primeUnreleasedWorkingCopy(worldStore, "world-1", "snapshot-1");
+        RecordingSyncAccess syncAccess = new RecordingSyncAccess(this.tempDir.resolve("prepared-world"));
+        syncAccess.localChanges = true;
+        RecordingWorldOpenController worldOpenController = new RecordingWorldOpenController();
+        SharedWorldHostingManager manager = manager(worldStore, syncAccess, worldOpenController, new InMemoryHostRecoveryStore(), worldId -> false);
+
+        primeStartup(manager, world("world-1", "Handoff World", "snapshot-2"), 7L, SharedWorldHostingManager.StartupMode.NORMAL);
+        invokePrepareAndOpen(manager, 7L);
+
+        SharedWorldHostingManager.LocalChangesPrompt prompt = manager.startupView().localChangesPrompt();
+        assertNotNull(prompt);
+        assertEquals(7L, prompt.startupAttemptId());
+        assertEquals("snapshot-1", prompt.localSnapshotId());
+        assertEquals("snapshot-2", prompt.remoteSnapshotId());
+        assertEquals("2026-08-17T10:00:00Z", prompt.since());
+        assertEquals(java.util.List.of("check"), syncAccess.callOrder);
+        assertEquals(0, worldOpenController.openExistingCalls);
+        assertNotNull(worldStore.localChanges("world-1"));
+
+        // Upload mine: the local copy becomes the newest backup, then the normal sync/open.
+        manager.resolveLocalChanges(SharedWorldHostingManager.LocalChangesDecision.UPLOAD_LOCAL);
+        assertNull(manager.startupView().localChangesPrompt());
+        assertEquals(java.util.List.of("check", "upload", "ensure"), syncAccess.callOrder);
+        assertEquals(worldStore.workingCopy("world-1"), syncAccess.uploadedWorldDirectory);
+        assertEquals(1, worldOpenController.openExistingCalls);
+    }
+
+    @Test
+    void discardingLocalChangesClearsTheMarkerAndSyncsFromTheSharedCopy() throws Exception {
+        ManagedWorldStore worldStore = new ManagedWorldStore(this.tempDir.resolve("managed-discard"));
+        primeUnreleasedWorkingCopy(worldStore, "world-1", "snapshot-1");
+        RecordingSyncAccess syncAccess = new RecordingSyncAccess(this.tempDir.resolve("prepared-world"));
+        RecordingWorldOpenController worldOpenController = new RecordingWorldOpenController();
+        SharedWorldHostingManager manager = manager(worldStore, syncAccess, worldOpenController, new InMemoryHostRecoveryStore(), worldId -> false);
+
+        primeStartup(manager, world("world-1", "Handoff World", "snapshot-2"), 7L, SharedWorldHostingManager.StartupMode.NORMAL);
+        invokePrepareAndOpen(manager, 7L);
+        assertNotNull(manager.startupView().localChangesPrompt());
+
+        manager.resolveLocalChanges(SharedWorldHostingManager.LocalChangesDecision.DISCARD_LOCAL);
+        assertEquals(java.util.List.of("check", "ensure"), syncAccess.callOrder);
+        assertEquals(0, syncAccess.uploadCalls);
+        assertEquals(1, worldOpenController.openExistingCalls);
+        // Re-marked by the open itself (a fresh session), but the discard did clear the old claim first:
+        ManagedWorldStore.LocalChangesMarker marker = worldStore.localChanges("world-1");
+        assertNotNull(marker);
+        assertNotEquals("2026-08-17T10:00:00Z", marker.since());
+    }
+
+    @Test
+    void staleMarkerWithNoRealDifferencesIsClearedAndTheSyncProceedsWithoutAsking() throws Exception {
+        ManagedWorldStore worldStore = new ManagedWorldStore(this.tempDir.resolve("managed-stale"));
+        primeUnreleasedWorkingCopy(worldStore, "world-1", "snapshot-1");
+        RecordingSyncAccess syncAccess = new RecordingSyncAccess(this.tempDir.resolve("prepared-world"));
+        syncAccess.localChanges = false;
+        RecordingWorldOpenController worldOpenController = new RecordingWorldOpenController();
+        SharedWorldHostingManager manager = manager(worldStore, syncAccess, worldOpenController, new InMemoryHostRecoveryStore(), worldId -> false);
+
+        primeStartup(manager, world("world-1", "Handoff World", "snapshot-2"), 7L, SharedWorldHostingManager.StartupMode.NORMAL);
+        invokePrepareAndOpen(manager, 7L);
+
+        assertNull(manager.startupView().localChangesPrompt());
+        assertEquals(java.util.List.of("check", "ensure"), syncAccess.callOrder);
+        assertEquals(1, worldOpenController.openExistingCalls);
+    }
+
+    @Test
+    void aStalePromptAnswerAfterCancelIsIgnored() throws Exception {
+        ManagedWorldStore worldStore = new ManagedWorldStore(this.tempDir.resolve("managed-stale-answer"));
+        primeUnreleasedWorkingCopy(worldStore, "world-1", "snapshot-1");
+        RecordingSyncAccess syncAccess = new RecordingSyncAccess(this.tempDir.resolve("prepared-world"));
+        RecordingWorldOpenController worldOpenController = new RecordingWorldOpenController();
+        SharedWorldHostingManager manager = manager(worldStore, syncAccess, worldOpenController, new InMemoryHostRecoveryStore(), worldId -> false);
+
+        primeStartup(manager, world("world-1", "Handoff World", "snapshot-2"), 7L, SharedWorldHostingManager.StartupMode.NORMAL);
+        invokePrepareAndOpen(manager, 7L);
+        assertNotNull(manager.startupView().localChangesPrompt());
+
+        // A newer attempt supersedes the prompt (as cancelStartup / a fresh beginHosting would).
+        setField(manager, "startupAttemptId", 8L);
+        manager.resolveLocalChanges(SharedWorldHostingManager.LocalChangesDecision.DISCARD_LOCAL);
+        assertEquals(java.util.List.of("check"), syncAccess.callOrder);
+        assertNotNull(worldStore.localChanges("world-1"));
+    }
+
+    @Test
+    void theFinalReleaseUploadClearsTheLocalChangesMarker() throws Exception {
+        ManagedWorldStore worldStore = new ManagedWorldStore(this.tempDir.resolve("managed-release-clear"));
+        primeUnreleasedWorkingCopy(worldStore, "world-1", "snapshot-1");
+        RecordingSyncAccess syncAccess = new RecordingSyncAccess(this.tempDir.resolve("prepared-world"));
+        SharedWorldHostingManager manager = manager(worldStore, syncAccess, new RecordingWorldOpenController(), new InMemoryHostRecoveryStore(), worldId -> false);
+
+        manager.uploadFinalReleaseSnapshot("world-1", worldStore.workingCopy("world-1"), HOST_UUID, 7L, "token-7", progress -> { });
+        assertNull(worldStore.localChanges("world-1"));
+
+        // A failed final upload keeps the claim.
+        worldStore.markLocalChanges("world-1", HOST_UUID, "2026-08-17T10:00:00Z");
+        syncAccess.failUpload = true;
+        assertThrows(java.io.IOException.class, () -> manager.uploadFinalReleaseSnapshot("world-1", worldStore.workingCopy("world-1"), HOST_UUID, 7L, "token-7", progress -> { }));
+        assertNotNull(worldStore.localChanges("world-1"));
     }
 
     @Test
@@ -1765,10 +1934,13 @@ final class SharedWorldHostingManagerTest {
         private final Path preparedWorldDirectory;
         private int ensureCalls;
         private int uploadCalls;
+        private int localChangesChecks;
         private boolean failUpload;
+        private boolean localChanges = true;
         private String worldId;
         private String hostPlayerUuid;
         private Path uploadedWorldDirectory;
+        private final java.util.List<String> callOrder = new java.util.ArrayList<>();
 
         private RecordingSyncAccess(Path preparedWorldDirectory) {
             this.preparedWorldDirectory = preparedWorldDirectory;
@@ -1777,14 +1949,23 @@ final class SharedWorldHostingManagerTest {
         @Override
         public Path ensureSynchronizedWorkingCopy(String worldId, String hostPlayerUuid, WorldSyncProgressListener progressListener) {
             this.ensureCalls += 1;
+            this.callOrder.add("ensure");
             this.worldId = worldId;
             this.hostPlayerUuid = hostPlayerUuid;
             return this.preparedWorldDirectory;
         }
 
         @Override
+        public boolean hasLocalChangesSinceBaseline(String worldId, Path worldDirectory, String hostPlayerUuid) {
+            this.localChangesChecks += 1;
+            this.callOrder.add("check");
+            return this.localChanges;
+        }
+
+        @Override
         public SharedWorldModels.SnapshotManifestDto uploadSnapshot(String worldId, Path worldDirectory, String hostPlayerUuid, long runtimeEpoch, String hostToken, WorldSyncProgressListener progressListener) throws java.io.IOException {
             this.uploadCalls += 1;
+            this.callOrder.add("upload");
             this.worldId = worldId;
             this.hostPlayerUuid = hostPlayerUuid;
             this.uploadedWorldDirectory = worldDirectory;

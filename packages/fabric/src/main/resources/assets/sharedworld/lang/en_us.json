@@ -311,5 +311,14 @@
   "screen.sharedworld.storage_quota_full": "Google Drive is FULL — backups cannot be saved. Free up Drive space or delete old backups now.",
   "screen.sharedworld.settings_max_backups": "Backups kept: %s",
   "screen.sharedworld.settings_max_backups_auto": "Automatic",
-  "screen.sharedworld.takeover_countdown": "Passing to the next player in %ss..."
+  "screen.sharedworld.takeover_countdown": "Passing to the next player in %ss...",
+  "screen.sharedworld.hosting_awaiting_local_changes": "Waiting for your decision about unsaved changes...",
+  "screen.sharedworld.progress.uploading_local_changes": "Uploading unsaved changes from your last session",
+  "screen.sharedworld.local_changes_title": "Unsaved changes on this computer",
+  "screen.sharedworld.local_changes_body": "Your last session hosting '%s' ended without uploading its changes (since %s). Since then, someone else hosted the world and the shared copy moved on.\n\nUpload mine: your changes become the newest backup; the other version stays restorable from Backups.\n\nDiscard mine: your unsaved changes are deleted and the shared copy is downloaded.",
+  "screen.sharedworld.local_changes_upload": "Upload my changes",
+  "screen.sharedworld.local_changes_discard": "Discard my changes...",
+  "screen.sharedworld.local_changes_discard_confirm": "Really discard? Click again to confirm",
+  "screen.sharedworld.local_changes_cancel": "Cancel",
+  "screen.sharedworld.local_changes_countdown": "Cancelling in %ss..."
 }

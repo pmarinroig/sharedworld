@@ -111,6 +111,8 @@ public final class SharedWorldHostingManager {
     private volatile boolean immediateHeartbeatRequested;
     private volatile long lastGameRulesLocalPollAt;
     private volatile StartupMode startupMode = StartupMode.NORMAL;
+    private volatile boolean startupPublishingLocalChanges;
+    private volatile LocalChangesPrompt pendingLocalChangesPrompt;
     private volatile boolean startupRecoveringLocalCrash;
 
     public SharedWorldHostingManager(
@@ -317,7 +319,11 @@ public final class SharedWorldHostingManager {
         E4mcDomainTracker.clear();
         setPhase(Phase.PREPARING, SharedWorldText.string("screen.sharedworld.hosting_syncing_snapshot"));
 
-        CompletableFuture.runAsync(() -> prepareAndOpen(startupAttemptId), this.backgroundExecutor)
+        launchPrepareAndOpen(startupAttemptId, null);
+    }
+
+    private void launchPrepareAndOpen(long startupAttemptId, LocalChangesDecision decision) {
+        CompletableFuture.runAsync(() -> prepareAndOpen(startupAttemptId, decision), this.backgroundExecutor)
                 .whenComplete((unused, error) -> {
                     if (!isActiveStartupAttempt(startupAttemptId)) {
                         return;
@@ -327,6 +333,21 @@ public final class SharedWorldHostingManager {
                         fail(SharedWorldText.string("screen.sharedworld.hosting_prepare_failed"), cause);
                     }
                 });
+    }
+
+    /**
+     * Answers the local-changes prompt (main thread). Ignored unless the
+     * prompt belongs to the live startup attempt; the attempt then resumes on
+     * the background executor with the decision applied.
+     */
+    public void resolveLocalChanges(LocalChangesDecision decision) {
+        LocalChangesPrompt prompt = this.pendingLocalChangesPrompt;
+        if (prompt == null || decision == null || !isActiveStartupAttempt(prompt.startupAttemptId())) {
+            return;
+        }
+        this.pendingLocalChangesPrompt = null;
+        setPhase(Phase.PREPARING, SharedWorldText.string("screen.sharedworld.hosting_syncing_snapshot"));
+        launchPrepareAndOpen(prompt.startupAttemptId(), decision);
     }
 
     /**
@@ -560,7 +581,8 @@ public final class SharedWorldHostingManager {
                 this.phase == Phase.IDLE,
                 isStartupCancelable(),
                 this.progressState,
-                this.errorMessage
+                this.errorMessage,
+                this.pendingLocalChangesPrompt
         );
     }
 
@@ -680,7 +702,7 @@ public final class SharedWorldHostingManager {
             String hostToken,
             WorldSyncProgressListener progressListener
     ) throws IOException, InterruptedException {
-        return this.syncAccess.uploadSnapshot(
+        SnapshotManifestDto manifest = this.syncAccess.uploadSnapshot(
                 worldId,
                 worldDirectory,
                 hostPlayerUuid,
@@ -688,11 +710,27 @@ public final class SharedWorldHostingManager {
                 hostToken,
                 progressListener
         );
+        // The server is stopped and the working copy now matches a published
+        // snapshot (a null manifest means the latest one already did): nothing
+        // left on this computer that a backup does not have.
+        clearLocalChangesMarker(worldId);
+        return manifest;
     }
 
     public void clearHostedSessionAfterCoordinatedRelease() {
         this.hostRecoveryStore.clear();
+        if (this.world != null) {
+            clearLocalChangesMarker(this.world.id());
+        }
         resetState();
+    }
+
+    private void clearLocalChangesMarker(String worldId) {
+        try {
+            this.worldStore.clearLocalChanges(worldId);
+        } catch (IOException exception) {
+            LOGGER.warn("SharedWorld could not clear the local-changes marker for {}", worldId, exception);
+        }
     }
 
     /**
@@ -730,6 +768,7 @@ public final class SharedWorldHostingManager {
         HostAttemptContext context = currentAttemptContext();
         this.startupCancelRequested = true;
         this.cancelDisconnectIssued.set(false);
+        this.pendingLocalChangesPrompt = null;
         this.startupAttemptId += 1L;
         invalidateAsyncOperations();
         setPhase(Phase.CANCELLING, SharedWorldText.string("screen.sharedworld.hosting_canceling"));
@@ -772,9 +811,21 @@ public final class SharedWorldHostingManager {
     }
 
     private void prepareAndOpen(long startupAttemptId) {
+        prepareAndOpen(startupAttemptId, null);
+    }
+
+    private void prepareAndOpen(long startupAttemptId, LocalChangesDecision decision) {
         try {
             HostRecoveryRecord recoveryRecord = startupRecoveryRecord();
             this.startupRecoveringLocalCrash = recoveryRecord != null;
+            boolean publishLocalChangesFirst = false;
+            if (recoveryRecord == null && !resolveLocalChangesLane(startupAttemptId, decision)) {
+                // Prompt raised; the attempt resumes from resolveLocalChanges.
+                return;
+            }
+            if (recoveryRecord == null) {
+                publishLocalChangesFirst = this.startupPublishingLocalChanges;
+            }
             this.worldBootstrap.prepareAndOpen(
                     startupAttemptId,
                     this.world,
@@ -782,6 +833,7 @@ public final class SharedWorldHostingManager {
                     this.runtimeEpoch,
                     this.hostToken,
                     recoveryRecord != null,
+                    publishLocalChangesFirst,
                     this::isActiveStartupAttempt,
                     progress -> applyStartupSyncProgress(startupAttemptId, progress),
                     () -> setPhase(Phase.OPENING_WORLD, SharedWorldText.string("screen.sharedworld.hosting_opening_world"))
@@ -789,6 +841,59 @@ public final class SharedWorldHostingManager {
         } catch (Exception exception) {
             throw new RuntimeException(exception);
         }
+    }
+
+    /**
+     * The no-silent-rollback guard. A working copy that was hosted and never
+     * released cleanly (marker present) may hold progress no backup has, so
+     * the download sync must not overwrite it unexamined:
+     * <ul>
+     *   <li>shared copy unchanged since this copy last synced → publish it
+     *       first (a no-change publish is one cheap plan request);</li>
+     *   <li>shared copy moved on AND local packs really differ → ask
+     *       (upload mine / discard mine), returning false;</li>
+     *   <li>shared copy moved on but nothing differs → stale marker, clear it
+     *       and sync normally.</li>
+     * </ul>
+     * Returns true when startup may proceed; sets
+     * {@link #startupPublishingLocalChanges} for the bootstrap.
+     */
+    private boolean resolveLocalChangesLane(long startupAttemptId, LocalChangesDecision decision) throws IOException, InterruptedException {
+        this.startupPublishingLocalChanges = false;
+        String worldId = this.world.id();
+        ManagedWorldStore.LocalChangesMarker marker = this.worldStore.localChanges(worldId);
+        Path workingCopy = this.worldStore.workingCopy(worldId);
+        if (marker == null || !Files.exists(workingCopy)) {
+            return true;
+        }
+        if (decision == LocalChangesDecision.DISCARD_LOCAL) {
+            LOGGER.info("SharedWorld discarding unpublished local changes for {} at the player's request", worldId);
+            this.worldStore.clearLocalChanges(worldId);
+            return true;
+        }
+        if (decision == LocalChangesDecision.UPLOAD_LOCAL) {
+            this.startupPublishingLocalChanges = true;
+            return true;
+        }
+        String localSnapshotId = this.worldStore.baselineSnapshotId(worldId);
+        String remoteSnapshotId = this.world.lastSnapshotId();
+        if (remoteSnapshotId == null || remoteSnapshotId.equals(localSnapshotId)) {
+            LOGGER.info("SharedWorld publishing unpublished local changes for {} before hosting (shared copy still at {})", worldId, remoteSnapshotId);
+            this.startupPublishingLocalChanges = true;
+            return true;
+        }
+        if (!this.syncAccess.hasLocalChangesSinceBaseline(worldId, workingCopy, requireHostPlayerUuid())) {
+            LOGGER.info("SharedWorld local-changes marker for {} was stale (no differences since {}); syncing normally", worldId, localSnapshotId);
+            this.worldStore.clearLocalChanges(worldId);
+            return true;
+        }
+        if (!isActiveStartupAttempt(startupAttemptId)) {
+            return false;
+        }
+        LOGGER.info("SharedWorld unpublished local changes for {} conflict with the shared copy ({} → {}); asking the player", worldId, localSnapshotId, remoteSnapshotId);
+        this.pendingLocalChangesPrompt = new LocalChangesPrompt(startupAttemptId, this.world.name(), marker.since(), localSnapshotId, remoteSnapshotId);
+        setPhase(Phase.PREPARING, SharedWorldText.string("screen.sharedworld.hosting_awaiting_local_changes"));
+        return false;
     }
 
     private void publishIfNeeded(IntegratedServer server) {
@@ -1380,6 +1485,8 @@ public final class SharedWorldHostingManager {
         this.hostToken = null;
         this.startupMode = StartupMode.NORMAL;
         this.startupRecoveringLocalCrash = false;
+        this.startupPublishingLocalChanges = false;
+        this.pendingLocalChangesPrompt = null;
         E4mcDomainTracker.clear();
         SharedWorldDevSessionBridge.clearHostingSession();
         this.events.onHostStateCleared(clearedWorldId);
@@ -1399,6 +1506,15 @@ public final class SharedWorldHostingManager {
                     progress.bytesDone(),
                     progress.bytesTotal()
             )
+                    : this.startupPublishingLocalChanges
+                    ? HostProgressStateFactory.startupDeterminate(
+                    "uploading_local_changes",
+                    Component.translatable("screen.sharedworld.progress.uploading_local_changes"),
+                    progress.fraction(),
+                    this.progressState,
+                    progress.bytesDone(),
+                    progress.bytesTotal()
+            )
                     : HostProgressStateFactory.startupIndeterminate(
                     "preparing_world",
                     Component.translatable("screen.sharedworld.progress.preparing_world"),
@@ -1408,6 +1524,12 @@ public final class SharedWorldHostingManager {
                     ? HostProgressStateFactory.startupIndeterminate(
                     "recovering_local_world",
                     Component.translatable("screen.sharedworld.progress.recovering_local_world"),
+                    this.progressState
+            )
+                    : this.startupPublishingLocalChanges
+                    ? HostProgressStateFactory.startupIndeterminate(
+                    "uploading_local_changes",
+                    Component.translatable("screen.sharedworld.progress.uploading_local_changes"),
                     this.progressState
             )
                     : HostProgressStateFactory.startupIndeterminate(
@@ -1585,8 +1707,24 @@ public final class SharedWorldHostingManager {
             boolean complete,
             boolean canCancel,
             SharedWorldProgressState progressState,
-            String errorMessage
+            String errorMessage,
+            LocalChangesPrompt localChangesPrompt
     ) {
+    }
+
+    /** Raised when unpublished local changes conflict with a shared copy that moved on; answered via {@link #resolveLocalChanges}. */
+    public record LocalChangesPrompt(
+            long startupAttemptId,
+            String worldName,
+            String since,
+            String localSnapshotId,
+            String remoteSnapshotId
+    ) {
+    }
+
+    public enum LocalChangesDecision {
+        UPLOAD_LOCAL,
+        DISCARD_LOCAL
     }
 
     public record HostRecoveryRecord(
@@ -1614,6 +1752,15 @@ public final class SharedWorldHostingManager {
 
     interface SyncAccess {
         Path ensureSynchronizedWorkingCopy(String worldId, String hostPlayerUuid, WorldSyncProgressListener progressListener) throws IOException, InterruptedException;
+
+        /**
+         * True when the working copy's packs differ from their last synced or
+         * uploaded hashes. Defaults to the conservative answer: a decision
+         * about overwriting local data must never assume "nothing to lose".
+         */
+        default boolean hasLocalChangesSinceBaseline(String worldId, Path worldDirectory, String hostPlayerUuid) throws IOException, InterruptedException {
+            return true;
+        }
 
         /** Returns null when the sync layer skipped an unchanged snapshot; the previous manifest stays valid. */
         SnapshotManifestDto uploadSnapshot(
@@ -1648,6 +1795,11 @@ public final class SharedWorldHostingManager {
         @Override
         public Path ensureSynchronizedWorkingCopy(String worldId, String hostPlayerUuid, WorldSyncProgressListener progressListener) throws IOException, InterruptedException {
             return this.coordinator.ensureSynchronizedWorkingCopy(worldId, hostPlayerUuid, progressListener);
+        }
+
+        @Override
+        public boolean hasLocalChangesSinceBaseline(String worldId, Path worldDirectory, String hostPlayerUuid) throws IOException, InterruptedException {
+            return this.coordinator.hasLocalChangesSinceBaseline(worldId, worldDirectory, hostPlayerUuid);
         }
 
         @Override

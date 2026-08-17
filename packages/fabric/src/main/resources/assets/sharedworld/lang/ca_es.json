@@ -311,5 +311,14 @@
   "screen.sharedworld.storage_quota_full": "Google Drive és PLE — no es poden desar còpies. Allibera espai a Drive o elimina còpies antigues ara.",
   "screen.sharedworld.settings_max_backups": "Còpies desades: %s",
   "screen.sharedworld.settings_max_backups_auto": "Automàtic",
-  "screen.sharedworld.takeover_countdown": "Passant al següent jugador en %ss..."
+  "screen.sharedworld.takeover_countdown": "Passant al següent jugador en %ss...",
+  "screen.sharedworld.hosting_awaiting_local_changes": "Esperant la teva decisió sobre els canvis sense desar...",
+  "screen.sharedworld.progress.uploading_local_changes": "Pujant els canvis sense desar de la teva última sessió",
+  "screen.sharedworld.local_changes_title": "Canvis sense desar en aquest ordinador",
+  "screen.sharedworld.local_changes_body": "La teva última sessió com a amfitrió de '%s' va acabar sense pujar els canvis (des de %s). Des de llavors, algú altre ha allotjat el món i la còpia compartida ha avançat.\n\nPujar els meus: els teus canvis passen a ser la còpia de seguretat més recent; l'altra versió continua disponible a Còpies de seguretat.\n\nDescartar els meus: els teus canvis sense desar s'eliminen i es descarrega la còpia compartida.",
+  "screen.sharedworld.local_changes_upload": "Pujar els meus canvis",
+  "screen.sharedworld.local_changes_discard": "Descartar els meus canvis...",
+  "screen.sharedworld.local_changes_discard_confirm": "Descartar de debò? Prem un altre cop per confirmar",
+  "screen.sharedworld.local_changes_cancel": "Cancel·lar",
+  "screen.sharedworld.local_changes_countdown": "Cancel·lant en %ss..."
 }

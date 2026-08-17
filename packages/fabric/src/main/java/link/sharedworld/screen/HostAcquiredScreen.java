@@ -14,6 +14,7 @@ public final class HostAcquiredScreen extends link.sharedworld.versioned.Version
     private final Screen parent;
     private Button actionButton;
     private boolean cancelRequested;
+    private long promptShownForAttempt = -1L;
 
     public HostAcquiredScreen(Screen parent) {
         super(Component.translatable("screen.sharedworld.host_acquired"));
@@ -38,10 +39,25 @@ public final class HostAcquiredScreen extends link.sharedworld.versioned.Version
                 .build());
     }
 
+    /** Cancels startup on behalf of a child dialog; the tick loop returns to the parent once the lease is released. */
+    void requestCancel() {
+        if (this.cancelRequested) {
+            return;
+        }
+        this.cancelRequested = true;
+        SharedWorldClient.hostingManager().cancelStartup();
+    }
+
     @Override
     public void tick() {
         SharedWorldHostingManager manager = SharedWorldClient.hostingManager();
         SharedWorldHostingManager.StartupView view = manager.startupView();
+        SharedWorldHostingManager.LocalChangesPrompt prompt = view.localChangesPrompt();
+        if (prompt != null && !this.cancelRequested && prompt.startupAttemptId() != this.promptShownForAttempt) {
+            this.promptShownForAttempt = prompt.startupAttemptId();
+            link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, new LocalChangesConflictScreen(this, prompt));
+            return;
+        }
         if (view.hasError()) {
             link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, new SharedWorldErrorScreen(
                     this.parent,

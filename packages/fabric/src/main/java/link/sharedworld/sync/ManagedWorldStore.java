@@ -151,7 +151,76 @@ public final class ManagedWorldStore {
         clearPackBaseline(worldId);
         Files.deleteIfExists(this.scanCacheFile(worldId));
         deleteRecursivelyIfExists(this.captureMirrorRoot(worldId));
+        clearLocalChanges(worldId);
         Files.createDirectories(this.worldContainer(worldId));
+    }
+
+    // ---------------------------------------------------------- local changes
+
+    /**
+     * Sidecar saying "this working copy has been hosted since it last matched
+     * a published snapshot": written when hosting opens the world, cleared
+     * once the session's final upload lands. While it exists, the working
+     * copy may hold progress that no backup has, so a later host start must
+     * publish it (or ask) before the download sync is allowed to overwrite
+     * it. Lives in the world container — never inside the working copy,
+     * which is scanned and uploaded whole — and outside the mod's config
+     * directory, so it survives reinstalls and "delete the config" advice.
+     */
+    public record LocalChangesMarker(String hostPlayerUuid, String since) {
+    }
+
+    private static final String LOCAL_CHANGES_FILE = "local-changes.json";
+
+    public Path localChangesFile(String worldId) {
+        return this.worldContainer(worldId).resolve(LOCAL_CHANGES_FILE);
+    }
+
+    /** The marker, or null when absent or unreadable (unreadable degrades to "no claim", never to a failure). */
+    public LocalChangesMarker localChanges(String worldId) {
+        Path file = this.localChangesFile(worldId);
+        if (!Files.exists(file)) {
+            return null;
+        }
+        try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+            LocalChangesMarker parsed = BASELINE_GSON.fromJson(reader, LocalChangesMarker.class);
+            return parsed == null || parsed.hostPlayerUuid() == null ? null : parsed;
+        } catch (IOException | RuntimeException exception) {
+            return null;
+        }
+    }
+
+    /** Idempotent: an existing marker keeps its original {@code since}. */
+    public void markLocalChanges(String worldId, String hostPlayerUuid, String since) throws IOException {
+        if (this.localChanges(worldId) != null) {
+            return;
+        }
+        Path file = this.localChangesFile(worldId);
+        Files.createDirectories(file.getParent());
+        Path tempFile = file.resolveSibling(file.getFileName() + ".tmp");
+        try (Writer writer = Files.newBufferedWriter(tempFile, StandardCharsets.UTF_8)) {
+            BASELINE_GSON.toJson(new LocalChangesMarker(hostPlayerUuid, since), LocalChangesMarker.class, writer);
+        }
+        moveAtomicallyOrReplace(tempFile, file);
+    }
+
+    public void clearLocalChanges(String worldId) throws IOException {
+        Files.deleteIfExists(this.localChangesFile(worldId));
+    }
+
+    /**
+     * The snapshot the working copy last converged on (upload or download):
+     * the pack marker and the region marker are written together on every
+     * sync, so either one answers; both null means never synced.
+     */
+    public String baselineSnapshotId(String worldId) throws IOException {
+        String packSnapshot = this.packBaselineSnapshotId(worldId);
+        return packSnapshot != null ? packSnapshot : this.regionBaselineSnapshotId(worldId);
+    }
+
+    /** Read-only view of the baseline sidecar: pack/bundle id → hash at the last sync. */
+    public Map<String, String> baselineHashes(String worldId) {
+        return Map.copyOf(loadBaselineHashes(worldId));
     }
 
     static final String CAPTURE_MIRROR_DIR = "capture-mirror";

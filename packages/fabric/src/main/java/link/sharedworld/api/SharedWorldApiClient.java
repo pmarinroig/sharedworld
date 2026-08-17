@@ -402,7 +402,7 @@ public final class SharedWorldApiClient {
         body.put("regionBundles", regionBundles);
         // Plan computation only — no server-side write — so a transport blip
         // is retried instead of aborting the whole create/sync.
-        return requestWithTransportRetry("POST", "/worlds/" + worldId + "/uploads/prepare", body, UploadPlanDto.class);
+        return requestWithTransportRetry("POST", "/worlds/" + worldId + "/uploads/prepare", body, UploadPlanDto.class, SNAPSHOT_REQUEST_TIMEOUT);
     }
 
     public UploadPlanDto prepareUploads(String worldId, LocalFileDescriptorDto[] files, LocalPackDescriptorDto nonRegionPack, LocalPackDescriptorDto[] regionBundles) throws IOException, InterruptedException {
@@ -427,7 +427,8 @@ public final class SharedWorldApiClient {
                 "/worlds/" + worldId + "/uploads/finalize-snapshot",
                 body,
                 SnapshotManifestDto.class,
-                true
+                true,
+                SNAPSHOT_REQUEST_TIMEOUT
         );
     }
 
@@ -1222,8 +1223,12 @@ public final class SharedWorldApiClient {
     }
 
     private <T> T request(String method, String path, Object body, Class<T> responseType, boolean authenticated) throws IOException, InterruptedException {
+        return request(method, path, body, responseType, authenticated, DEFAULT_REQUEST_TIMEOUT);
+    }
+
+    private <T> T request(String method, String path, Object body, Class<T> responseType, boolean authenticated, Duration timeout) throws IOException, InterruptedException {
         try {
-            return requestOnce(method, path, body, responseType, authenticated);
+            return requestOnce(method, path, body, responseType, authenticated, timeout);
         } catch (SharedWorldApiException exception) {
             // A rejected session token (expired server-side, wiped backend,
             // stale persisted token) is recoverable: re-authenticate once and
@@ -1233,14 +1238,14 @@ public final class SharedWorldApiClient {
                 throw exception;
             }
             invalidateSession();
-            return requestOnce(method, path, body, responseType, true);
+            return requestOnce(method, path, body, responseType, true, timeout);
         }
     }
 
-    private <T> T requestOnce(String method, String path, Object body, Class<T> responseType, boolean authenticated) throws IOException, InterruptedException {
+    private <T> T requestOnce(String method, String path, Object body, Class<T> responseType, boolean authenticated, Duration timeout) throws IOException, InterruptedException {
         HttpRequest.Builder builder = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + path))
-                .timeout(Duration.ofSeconds(20))
+                .timeout(timeout)
                 .header("accept", "application/json")
                 .header("x-sharedworld-version", modVersion());
 
@@ -1282,6 +1287,20 @@ public final class SharedWorldApiClient {
     private static final link.sharedworld.util.RetryPolicy READ_RETRY_POLICY =
             new link.sharedworld.util.RetryPolicy(3, 500L, 4_000L);
 
+    /** Ordinary JSON calls: fast or failed. */
+    static final Duration DEFAULT_REQUEST_TIMEOUT = Duration.ofSeconds(20);
+    /**
+     * Snapshot planning and finalization scale with the world (hundreds of
+     * packs, delta-chain validation, and — before the backend moved it off
+     * the response path — hourly retention). A finalize that outlives a
+     * flat 20s budget has almost always SUCCEEDED server-side; giving up
+     * early made the release lane report a transient failure, retry, and
+     * on the next attempt discover "no changes since" the snapshot it had
+     * just written. Two minutes covers the tail; a dead backend still fails
+     * fast on connect.
+     */
+    static final Duration SNAPSHOT_REQUEST_TIMEOUT = Duration.ofMinutes(2);
+
     /**
      * Bounded transport retry for safe idempotent calls only: reads, plus the
      * plan computations (uploads/prepare, downloads/plan) that write nothing
@@ -1293,7 +1312,11 @@ public final class SharedWorldApiClient {
     }
 
     private <T> T requestWithTransportRetry(String method, String path, Object body, Class<T> responseType) throws IOException, InterruptedException {
-        return withTransportRetry(() -> request(method, path, body, responseType, true));
+        return requestWithTransportRetry(method, path, body, responseType, DEFAULT_REQUEST_TIMEOUT);
+    }
+
+    private <T> T requestWithTransportRetry(String method, String path, Object body, Class<T> responseType, Duration timeout) throws IOException, InterruptedException {
+        return withTransportRetry(() -> request(method, path, body, responseType, true, timeout));
     }
 
     private interface IoCall<T> {

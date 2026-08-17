@@ -311,5 +311,14 @@
   "screen.sharedworld.storage_quota_full": "Google Drive está LLENO — no se pueden guardar copias. Libera espacio en Drive o elimina copias antiguas ahora.",
   "screen.sharedworld.settings_max_backups": "Copias guardadas: %s",
   "screen.sharedworld.settings_max_backups_auto": "Automático",
-  "screen.sharedworld.takeover_countdown": "Pasando al siguiente jugador en %ss..."
+  "screen.sharedworld.takeover_countdown": "Pasando al siguiente jugador en %ss...",
+  "screen.sharedworld.hosting_awaiting_local_changes": "Esperando tu decisión sobre los cambios sin guardar...",
+  "screen.sharedworld.progress.uploading_local_changes": "Subiendo los cambios sin guardar de tu última sesión",
+  "screen.sharedworld.local_changes_title": "Cambios sin guardar en este ordenador",
+  "screen.sharedworld.local_changes_body": "Tu última sesión como anfitrión de '%s' terminó sin subir sus cambios (desde %s). Desde entonces, otra persona ha alojado el mundo y la copia compartida ha avanzado.\n\nSubir los míos: tus cambios pasan a ser la copia de seguridad más reciente; la otra versión sigue disponible en Copias de seguridad.\n\nDescartar los míos: tus cambios sin guardar se eliminan y se descarga la copia compartida.",
+  "screen.sharedworld.local_changes_upload": "Subir mis cambios",
+  "screen.sharedworld.local_changes_discard": "Descartar mis cambios...",
+  "screen.sharedworld.local_changes_discard_confirm": "¿Descartar de verdad? Pulsa otra vez para confirmar",
+  "screen.sharedworld.local_changes_cancel": "Cancelar",
+  "screen.sharedworld.local_changes_countdown": "Cancelando en %ss..."
 }

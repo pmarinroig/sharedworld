@@ -6,6 +6,7 @@ import link.sharedworld.sync.WorldSyncProgress;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.function.LongPredicate;
@@ -33,6 +34,7 @@ final class HostWorldBootstrap {
             long runtimeEpoch,
             String hostToken,
             boolean recoverLocalCrashState,
+            boolean publishLocalChangesFirst,
             LongPredicate isActiveStartupAttempt,
             Consumer<WorldSyncProgress> progressSink,
             Runnable onOpeningWorld
@@ -57,6 +59,27 @@ final class HostWorldBootstrap {
                     progressSink::accept
             );
         } else {
+            if (publishLocalChangesFirst) {
+                // Unpublished progress from a session that never released
+                // cleanly: it becomes the newest backup BEFORE the sync below
+                // is allowed to touch the working copy. A failure here stops
+                // startup with the copy intact (never a download fallback).
+                Path workingCopy = this.worldStore.workingCopy(world.id());
+                if (!Files.exists(workingCopy)) {
+                    throw new IllegalStateException("SharedWorld cannot publish local changes without a managed working copy.");
+                }
+                this.syncAccess.uploadSnapshot(
+                        world.id(),
+                        workingCopy,
+                        resolvedHostPlayerUuid,
+                        runtimeEpoch,
+                        hostToken,
+                        progressSink::accept
+                );
+                if (!isActiveStartupAttempt.test(startupAttemptId)) {
+                    return;
+                }
+            }
             worldDirectory = this.syncAccess.ensureSynchronizedWorkingCopy(
                     world.id(),
                     resolvedHostPlayerUuid,
@@ -66,6 +89,10 @@ final class HostWorldBootstrap {
         if (!isActiveStartupAttempt.test(startupAttemptId)) {
             return;
         }
+        // From here the integrated server mutates the working copy: mark it as
+        // holding possibly-unpublished progress until the release lane's final
+        // upload clears the marker.
+        this.worldStore.markLocalChanges(world.id(), resolvedHostPlayerUuid, Instant.now().toString());
         onOpeningWorld.run();
         this.worldOpenController.openExistingWorld(this.worldStore, world, worldDirectory);
     }

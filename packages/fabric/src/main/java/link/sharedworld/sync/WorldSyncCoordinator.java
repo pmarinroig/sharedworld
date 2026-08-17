@@ -237,6 +237,53 @@ public final class WorldSyncCoordinator {
     }
 
     /**
+     * True when the working copy's packs differ from the hashes recorded at
+     * its last sync or upload — i.e. it holds progress no published snapshot
+     * has. Answered from the scan cache when nothing changed (no pack bodies
+     * are built for cached packs); a missing sidecar counts as changed, the
+     * conservative answer for a decision about overwriting local data.
+     */
+    public boolean hasLocalChangesSinceBaseline(String worldId, Path worldDirectory, String hostPlayerUuid) throws IOException, InterruptedException {
+        Map<String, String> baseline = this.worldStore.baselineHashes(worldId);
+        if (baseline.isEmpty()) {
+            return true;
+        }
+        WorldScanCache scanCache = WorldScanCache.load(this.worldStore.scanCacheFile(worldId));
+        List<WorldSyncSupport.LazyArtifact> artifacts = new ArrayList<>();
+        try {
+            List<PreparedWorldFile> canonicalFiles = WorldCanonicalizer.scanCanonical(worldDirectory, hostPlayerUuid, scanCache);
+            List<PreparedWorldFile> regionFiles = canonicalFiles.stream().filter(file -> SyncPathRules.isTerrainRegionFile(file.relativePath())).toList();
+            List<PreparedWorldFile> nonRegionFiles = canonicalFiles.stream().filter(file -> SyncPathRules.belongsInSuperpack(file.relativePath())).toList();
+            List<SyncPathRules.RegionBundleGroup> superpackShards = SyncPathRules.groupSuperpackFiles(nonRegionFiles);
+            artifacts.addAll(WorldSyncSupport.lazyRegionBundleArtifacts(regionFiles, scanCache));
+            if (superpackShards.isEmpty()) {
+                artifacts.add(new WorldSyncSupport.LazyArtifact(SharedWorldPack.PACK_ID, nonRegionFiles, scanCache));
+            } else {
+                artifacts.addAll(WorldSyncSupport.lazyGroupedArtifacts(superpackShards, scanCache));
+            }
+            Set<String> seen = new HashSet<>();
+            for (WorldSyncSupport.LazyArtifact artifact : artifacts) {
+                seen.add(artifact.packId());
+                if (!artifact.descriptor().hash().equals(baseline.get(artifact.packId()))) {
+                    return true;
+                }
+            }
+            // A pack that existed at the last sync and is gone now is a change too.
+            for (String packId : baseline.keySet()) {
+                if (!seen.contains(packId)) {
+                    return true;
+                }
+            }
+            return false;
+        } finally {
+            scanCache.save();
+            for (WorldSyncSupport.LazyArtifact artifact : artifacts) {
+                artifact.deleteBodyIfBuilt();
+            }
+        }
+    }
+
+    /**
      * Entries for files and packs that vanished from the world would otherwise
      * accumulate in the cache forever (worlds rename region tiles as they
      * grow).
