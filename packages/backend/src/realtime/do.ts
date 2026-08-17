@@ -45,27 +45,48 @@ class CallSerializer {
 
 // ------------------------------------------------------------- coordinator
 
-/** CoordinatorStore over the DO's synchronous SQLite, as JSON kv rows. */
-class SqlCoordinatorStore implements CoordinatorStore {
+/**
+ * CoordinatorStore over the DO's synchronous SQLite, as JSON kv rows, with a
+ * write-through in-memory mirror of the whole table.
+ *
+ * Every coordinator call re-reads the same dozen keys (runtime, waiters,
+ * presence lists, fingerprints…) across resolve/publish/afterStateChange/
+ * nextDeadline — ~20 SELECTs per call against DO SQLite, each a billed row
+ * read, for state that only this single-threaded object ever writes. The
+ * mirror loads the table once per DO wake and serves every read from
+ * memory; writes and deletes go to SQLite first, then the mirror, so a
+ * storage failure (which resets the object anyway) can never leave memory
+ * ahead of disk. Values are mirrored as their JSON text and re-parsed per
+ * read, so callers never share (and can never mutate) a cached object.
+ */
+export class SqlCoordinatorStore implements CoordinatorStore {
+  private readonly mirror = new Map<string, string>();
+
   constructor(private readonly sql: SqlStorage) {
     this.sql.exec("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    for (const row of this.sql.exec("SELECT key, value FROM kv").toArray()) {
+      this.mirror.set(String(row.key), String(row.value));
+    }
   }
 
   private read<T>(key: string): T | null {
-    const row = this.sql.exec("SELECT value FROM kv WHERE key = ?", key).toArray()[0];
-    return row == null ? null : (JSON.parse(String(row.value)) as T);
+    const value = this.mirror.get(key);
+    return value == null ? null : (JSON.parse(value) as T);
   }
 
   private write(key: string, value: unknown): void {
+    const text = JSON.stringify(value);
     this.sql.exec(
       "INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
       key,
-      JSON.stringify(value)
+      text
     );
+    this.mirror.set(key, text);
   }
 
   private remove(key: string): void {
     this.sql.exec("DELETE FROM kv WHERE key = ?", key);
+    this.mirror.delete(key);
   }
 
   getRuntime() { return this.read<WorldRuntimeRecord>("runtime"); }
@@ -126,7 +147,10 @@ class SqlCoordinatorStore implements CoordinatorStore {
   setStatusFingerprint(fingerprint: string) { this.write("statusFingerprint", fingerprint); }
   getPresenceFingerprint() { return this.read<string>("presenceFingerprint"); }
   setPresenceFingerprint(fingerprint: string) { this.write("presenceFingerprint", fingerprint); }
-  clearAll() { this.sql.exec("DELETE FROM kv"); }
+  clearAll() {
+    this.sql.exec("DELETE FROM kv");
+    this.mirror.clear();
+  }
 }
 
 export class DoCoordinatorEffects implements CoordinatorEffects {

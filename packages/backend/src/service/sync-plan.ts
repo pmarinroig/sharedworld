@@ -32,7 +32,7 @@ import {
 } from "../../../shared/src/index.ts";
 
 import { clientVersionAtLeast, HttpError } from "../http.ts";
-import { verifyBlobStamp } from "./blob-stamp.ts";
+import { verifyBlobStamp, verifyDownloadStamp } from "./blob-stamp.ts";
 import { parseSingleByteRange, resumableCapable, type ResumableUploadCapable } from "../storage.ts";
 import { randomId } from "../ids.ts";
 import type { RequestContext, WorldStorageBinding } from "../repository.ts";
@@ -43,6 +43,7 @@ import {
   RUNTIME_EPOCH_HEADER,
   signDownloadForWorld,
   signUploadForWorld,
+  type DownloadViewer,
   type ServiceContext
 } from "./context.ts";
 import {
@@ -247,6 +248,7 @@ export async function downloadPlan(
   const localByPath = new Map(request.files.map((file) => [file.path, file]));
   const retainedPaths: string[] = [];
   const snapshotCache = new Map<string, SnapshotManifest>();
+  const viewer: DownloadViewer = { playerUuid: ctx.playerUuid, requestOrigin: ctx.requestOrigin };
   const supportsDeltaV2 = clientVersionAtLeast(ctx.clientVersion, 0, 4, 0);
   // Chain recipes live only in the directory (headers path, uncached) —
   // served manifests stay byte-stable while retention lazily upgrades
@@ -275,7 +277,7 @@ export async function downloadPlan(
           latestPack,
           chainStepsByPackId.get(latestPack.packId) ?? null,
           request.nonRegionPack?.hash ?? null,
-          ctx.requestOrigin,
+          viewer,
           snapshotCache,
           PACK_DELTA_TRANSFER_MODE,
           supportsDeltaV2
@@ -299,7 +301,7 @@ export async function downloadPlan(
           bundle,
           chainStepsByPackId.get(bundle.packId) ?? null,
           request.regionBundles?.find((entry) => entry.packId === bundle.packId)?.hash ?? null,
-          ctx.requestOrigin,
+          viewer,
           snapshotCache,
           REGION_DELTA_TRANSFER_MODE,
           supportsDeltaV2
@@ -581,6 +583,12 @@ async function sweepExpiredUploadSessions(
   }
 }
 
+/**
+ * Blob bytes flow through the worker; read access is re-checked from the
+ * download stamp on the signed URL when present and current (no coordinator
+ * call, no membership query), else via the coordinator path with the
+ * revoked-host exception.
+ */
 export async function downloadStorageBlob(
   svc: ServiceContext,
   ctx: RequestContext,
@@ -588,7 +596,12 @@ export async function downloadStorageBlob(
   storageKey: string,
   request?: Request
 ): Promise<Response> {
-  await requireSessionAccessAllowingRevokedHost(svc, ctx, worldId);
+  const stamp = request?.headers.get(BLOB_STAMP_HEADER);
+  const stamped = stamp != null && stamp.length > 0
+    && await verifyDownloadStamp(svc.env, stamp, { worldId, storageKey, playerUuid: ctx.playerUuid }, new Date());
+  if (!stamped) {
+    await requireSessionAccessAllowingRevokedHost(svc, ctx, worldId);
+  }
   const range = parseSingleByteRange(request?.headers.get("range"));
   const blob = await svc.storageProvider.get(await requireWorldStorageBinding(svc, worldId), storageKey, range);
   if (!blob) {
@@ -760,7 +773,7 @@ async function buildPackDownloadSteps(
   latestPack: SnapshotPack,
   chainSteps: SnapshotPack["chainSteps"],
   localPackHash: string | null,
-  requestOrigin: string | undefined,
+  viewer: DownloadViewer,
   snapshotCache: Map<string, SnapshotManifest>,
   deltaTransferMode: typeof PACK_DELTA_TRANSFER_MODE | typeof REGION_DELTA_TRANSFER_MODE,
   supportsDeltaV2: boolean
@@ -768,7 +781,7 @@ async function buildPackDownloadSteps(
   if (chainSteps != null && chainSteps.length > 0) {
     // S1 self-contained chains: the plan builds from the pack's own recipe —
     // no base snapshot rows, no chain walk, no snapshot_chain_broken class.
-    return buildStepsFromChainRecipe(svc, worldId, chainSteps, localPackHash, requestOrigin, supportsDeltaV2);
+    return buildStepsFromChainRecipe(svc, worldId, chainSteps, localPackHash, viewer, supportsDeltaV2);
   }
   const steps: DownloadPlanStep[] = [];
   let cursor: SnapshotPack | null = latestPack;
@@ -794,7 +807,7 @@ async function buildPackDownloadSteps(
       baseSnapshotId: cursor.baseSnapshotId ?? null,
       baseHash: cursor.baseHash ?? null,
       deltaFormatVersion: cursor.deltaFormatVersion ?? null,
-      download: await signDownloadForWorld(svc, worldId, cursor.storageKey, requestOrigin)
+      download: await signDownloadForWorld(svc, worldId, cursor.storageKey, viewer)
     });
     if (cursor.transferMode !== deltaTransferMode || !cursor.baseSnapshotId) {
       break;
@@ -830,7 +843,7 @@ async function buildStepsFromChainRecipe(
   worldId: string,
   chainSteps: NonNullable<SnapshotPack["chainSteps"]>,
   localPackHash: string | null,
-  requestOrigin: string | undefined,
+  viewer: DownloadViewer,
   supportsDeltaV2: boolean
 ): Promise<DownloadPlanStep[]> {
   const steps: DownloadPlanStep[] = [];
@@ -853,7 +866,7 @@ async function buildStepsFromChainRecipe(
       baseSnapshotId: null,
       baseHash: step.baseHash,
       deltaFormatVersion: step.deltaFormatVersion,
-      download: await signDownloadForWorld(svc, worldId, step.storageKey, requestOrigin)
+      download: await signDownloadForWorld(svc, worldId, step.storageKey, viewer)
     });
     if (step.baseHash == null) {
       break;

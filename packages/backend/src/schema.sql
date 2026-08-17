@@ -191,7 +191,7 @@ CREATE TABLE IF NOT EXISTS storage_objects (
 
 CREATE INDEX IF NOT EXISTS idx_snapshot_files_storage_key ON snapshot_files (storage_key);
 CREATE INDEX IF NOT EXISTS idx_snapshot_packs_storage_key ON snapshot_packs (storage_key);
-CREATE INDEX IF NOT EXISTS idx_snapshots_world_created ON snapshots (world_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_snapshots_world_created_id ON snapshots (world_id, created_at, id);
 CREATE INDEX IF NOT EXISTS idx_world_memberships_player ON world_memberships (player_uuid);
 
 -- Partial indexes for the hot snapshot read paths: manifest loads split their

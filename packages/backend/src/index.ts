@@ -9,7 +9,7 @@ import { createStorageProvider } from "./storage.ts";
 
 export { UserGatewayDO, WorldCoordinatorDO } from "./realtime/do.ts";
 
-export function createApp(env: Env): { fetch(request: Request): Promise<Response> } {
+export function createApp(env: Env): { fetch(request: Request, executionContext?: { waitUntil(task: Promise<unknown>): void }): Promise<Response> } {
   if (!env.DB) {
     throw new Error("SharedWorld backend requires a D1 database binding (DB).");
   }
@@ -36,7 +36,7 @@ export function createApp(env: Env): { fetch(request: Request): Promise<Response
 }
 
 export default {
-  fetch(request: Request, env: Env) {
-    return createApp(env).fetch(request);
+  fetch(request: Request, env: Env, ctx: { waitUntil(task: Promise<unknown>): void }) {
+    return createApp(env).fetch(request, ctx);
   }
 };

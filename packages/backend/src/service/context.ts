@@ -5,7 +5,7 @@ import type { WorldRuntimeRecord } from "../runtime-protocol.ts";
 import type { StorageProvider } from "../storage.ts";
 import type { StorageUsageCache } from "../storage-usage-cache.ts";
 import type { StorageLinkDomainService } from "../storage/link-service.ts";
-import { mintBlobStamp } from "./blob-stamp.ts";
+import { mintBlobStamp, mintDownloadStamp } from "./blob-stamp.ts";
 
 export interface SignedBlobRequest<TMethod extends "PUT" | "GET" = "PUT" | "GET"> {
   method: TMethod;
@@ -67,11 +67,32 @@ export async function signUploadForWorld(
   };
 }
 
-export function signDownloadForWorld(
+/** The authenticated member a download URL is issued to. */
+export interface DownloadViewer {
+  playerUuid: string;
+  requestOrigin?: string;
+}
+
+/**
+ * Download URLs carry an HMAC download stamp bound to (world, key, viewer)
+ * so the relay GET can serve without a coordinator round-trip. Clients of
+ * every version echo signed headers verbatim (the same mechanism carries the
+ * upload stamps), so all fleets ride the fast path; a missing or expired
+ * stamp falls back to the coordinator access check.
+ */
+export async function signDownloadForWorld(
   svc: ServiceContext,
   worldId: string,
   storageKey: string,
-  requestOrigin?: string
+  viewer: DownloadViewer
 ): Promise<SignedBlobRequest<"GET">> {
-  return svc.blobSigner.signDownload(worldId, storageKey, requestOrigin);
+  const signed = await svc.blobSigner.signDownload(worldId, storageKey, viewer.requestOrigin);
+  const stamp = await mintDownloadStamp(svc.env, { worldId, storageKey, playerUuid: viewer.playerUuid }, new Date());
+  return {
+    ...signed,
+    headers: {
+      ...signed.headers,
+      ...(stamp == null ? {} : { [BLOB_STAMP_HEADER]: stamp })
+    }
+  };
 }

@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 
 import type { StorageProvider } from "../../src/storage.ts";
 
-import { BLOB_STAMP_TTL_MS, mintBlobStamp, verifyBlobStamp } from "../../src/service/blob-stamp.ts";
-import { createBlobSigner, createTestService } from "../support/service-fixtures.ts";
+import { BLOB_STAMP_TTL_MS, DOWNLOAD_STAMP_TTL_MS, mintBlobStamp, mintDownloadStamp, verifyBlobStamp, verifyDownloadStamp } from "../../src/service/blob-stamp.ts";
+import { createBlobBucket, createBlobSigner, createTestService } from "../support/service-fixtures.ts";
 import { createSqliteRepository } from "../support/sqlite-d1.ts";
 
 const NOW = new Date("2026-01-01T10:00:00.000Z");
@@ -145,5 +145,138 @@ describe("stamped relay uploads", () => {
 
     await instance.uploadStorageBlob(host, world.id, storageKey, putRequest(headers));
     expect(uploaded).toEqual([storageKey]);
+  });
+});
+
+describe("download stamp mint/verify", () => {
+  const env = { SIGNING_SECRET: "current-secret" };
+  const scope = { worldId: "world-1", storageKey: "packs/full/ab/abc.pack", playerUuid: "player-guest" };
+
+  test("round-trips and is bound to world, key and player", async () => {
+    const stamp = await mintDownloadStamp(env, scope, NOW);
+    expect(stamp).toMatch(/^v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+    expect(await verifyDownloadStamp(env, stamp!, scope, new Date(NOW.getTime() + 1000))).toBe(true);
+    expect(await verifyDownloadStamp(env, stamp!, { ...scope, worldId: "world-2" }, NOW)).toBe(false);
+    expect(await verifyDownloadStamp(env, stamp!, { ...scope, storageKey: "packs/other.pack" }, NOW)).toBe(false);
+    expect(await verifyDownloadStamp(env, stamp!, { ...scope, playerUuid: "player-other" }, NOW)).toBe(false);
+  });
+
+  test("expires after its own (longer) TTL", async () => {
+    const stamp = await mintDownloadStamp(env, scope, NOW);
+    expect(await verifyDownloadStamp(env, stamp!, scope, new Date(NOW.getTime() + DOWNLOAD_STAMP_TTL_MS - 1000))).toBe(true);
+    expect(await verifyDownloadStamp(env, stamp!, scope, new Date(NOW.getTime() + DOWNLOAD_STAMP_TTL_MS + 1000))).toBe(false);
+  });
+
+  test("the two stamp kinds never verify as each other", async () => {
+    const download = await mintDownloadStamp(env, scope, NOW);
+    const upload = await mintBlobStamp(env, CLAIMS, NOW);
+    expect(await verifyBlobStamp(env, download!, SCOPE, NOW)).toBeNull();
+    expect(await verifyDownloadStamp(env, upload!, scope, NOW)).toBe(false);
+  });
+
+  test("no secret: minting is skipped and verification always fails", async () => {
+    expect(await mintDownloadStamp({}, scope, NOW)).toBeNull();
+    const stamp = await mintDownloadStamp(env, scope, NOW);
+    expect(await verifyDownloadStamp({}, stamp!, scope, NOW)).toBe(false);
+  });
+});
+
+describe("stamped relay downloads", () => {
+  const owner = { playerUuid: "player-owner", playerName: "Owner" };
+  const guest = { playerUuid: "player-guest", playerName: "Guest" };
+  const stranger = { playerUuid: "player-stranger", playerName: "Stranger" };
+  const key = "packs/full/ab/abcdef.pack";
+  const bytes = new TextEncoder().encode("0123456789");
+
+  async function fixture(env: Record<string, string>) {
+    const repository = createSqliteRepository();
+    const instance = createTestService(repository, createBlobSigner().signer, {
+      ...env,
+      BLOBS: createBlobBucket({ [key]: bytes.slice(), "icons/ab/icon.png": bytes.slice() })
+    } as never);
+    for (const player of [owner, guest, stranger]) {
+      await repository.upsertUser({ ...player, createdAt: new Date().toISOString() });
+    }
+    const world = await repository.createWorld(owner, "Friends SMP", "friends-smp");
+    const invite = await instance.createInvite(owner, world.id, new Date("2026-01-01T00:00:00.000Z"));
+    await instance.redeemInvite(guest, { code: invite.code }, new Date("2026-01-01T00:05:00.000Z"));
+    await instance.claimHost(owner, world.id, { joinTarget: "example.test:25565" }, new Date());
+    const runtime = instance.realtimeLocal.runtimeRecord(world.id);
+    await instance.finalizeSnapshot(owner, world.id, {
+      runtimeEpoch: runtime?.runtimeEpoch,
+      hostToken: runtime?.runtimeToken,
+      baseSnapshotId: null,
+      files: [],
+      packs: [{
+        packId: "non-region",
+        hash: "abcdef",
+        size: 10,
+        storageKey: key,
+        transferMode: "pack-full",
+        chainDepth: 0,
+        files: [{ path: "level.dat", hash: "hash-level", size: 10, contentType: "application/octet-stream" }]
+      }]
+    } as never);
+    const plan = await instance.downloadPlan(guest, world.id, { files: [], nonRegionPack: null, regionBundles: [] });
+    const step = plan.nonRegionPackDownload?.steps[0];
+    expect(step?.storageKey).toBe(key);
+    return { repository, instance, world, download: step!.download };
+  }
+
+  function getRequest(headers: Record<string, string>) {
+    return new Request("https://example.invalid/download", { headers });
+  }
+
+  test("plans stamp download URLs; a stamp alone serves the blob after membership is gone", async () => {
+    const { instance, world, download } = await fixture({ SIGNING_SECRET: "stamp-secret" });
+    const stamp = download.headers["x-sharedworld-blob-stamp"];
+    expect(stamp).toBeDefined();
+
+    await instance.kickMember(owner, world.id, guest.playerUuid);
+    // The coordinator path refuses a revoked member, so success here proves
+    // the stamped fast path decided alone (and pins the documented
+    // "may finish an in-flight download" semantic).
+    const response = await instance.downloadStorageBlob(guest, world.id, key, getRequest(download.headers));
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("0123456789");
+    await expect(Promise.resolve().then(() => instance.downloadStorageBlob(guest, world.id, key, getRequest({}))))
+      .rejects.toMatchObject({ status: 403, code: "membership_revoked" });
+  });
+
+  test("a stamp is useless to another player, for another key, or without a secret", async () => {
+    const { instance, world, download } = await fixture({ SIGNING_SECRET: "stamp-secret" });
+    await expect(Promise.resolve().then(() => instance.downloadStorageBlob(stranger, world.id, key, getRequest(download.headers))))
+      .rejects.toMatchObject({ status: 403, code: "forbidden" });
+    await instance.kickMember(owner, world.id, guest.playerUuid);
+    await expect(Promise.resolve().then(() => instance.downloadStorageBlob(guest, world.id, "icons/ab/icon.png", getRequest(download.headers))))
+      .rejects.toMatchObject({ status: 403, code: "membership_revoked" });
+  });
+
+  test("without a signing secret, plans carry no stamp and the coordinator path still serves members", async () => {
+    const { instance, world, download } = await fixture({});
+    expect(download.headers["x-sharedworld-blob-stamp"]).toBeUndefined();
+    const response = await instance.downloadStorageBlob(guest, world.id, key, getRequest(download.headers));
+    expect(response.status).toBe(200);
+  });
+
+  test("world summaries stamp the custom icon download for the viewer", async () => {
+    const { repository, instance, world } = await fixture({ SIGNING_SECRET: "stamp-secret" });
+    await repository.updateWorld(owner, world.id, {
+      name: "Friends SMP",
+      motdLine1: null,
+      motdLine2: null,
+      customIconStorageKey: "icons/ab/icon.png",
+      customIconPngBase64: null,
+      clearCustomIcon: false
+    });
+    const [summary] = (await instance.listWorlds(guest)).filter((entry) => entry.id === world.id);
+    const stamp = summary?.customIconDownload?.headers["x-sharedworld-blob-stamp"];
+    expect(stamp).toBeDefined();
+    expect(await verifyDownloadStamp(
+      { SIGNING_SECRET: "stamp-secret" },
+      stamp!,
+      { worldId: world.id, storageKey: "icons/ab/icon.png", playerUuid: guest.playerUuid },
+      new Date()
+    )).toBe(true);
   });
 });

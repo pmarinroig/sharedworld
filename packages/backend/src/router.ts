@@ -16,7 +16,7 @@ export function createRouter(service: RouterService) {
     ...snapshotRoutes(service)
   ];
 
-  return async function route(request: Request): Promise<Response> {
+  return async function route(request: Request, executionContext?: { waitUntil(task: Promise<unknown>): void }): Promise<Response> {
     try {
       for (const route of routes) {
         const match = route.pattern.exec(request.url);
@@ -29,6 +29,9 @@ export function createRouter(service: RouterService) {
         const ctx: RequestContext = route.auth
           ? await authenticate(request, service)
           : { playerUuid: "", playerName: "" };
+        if (executionContext != null) {
+          ctx.defer = (task) => executionContext.waitUntil(task);
+        }
         return await route.handler(request, match.pathname.groups, ctx);
       }
       throw new HttpError(404, "not_found", "Route not found.");

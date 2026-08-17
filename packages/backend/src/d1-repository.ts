@@ -3,6 +3,7 @@ import type {
   FinalizeSnapshotRequest,
   InviteCode,
   KickMemberResponse,
+  ManifestFile,
   StorageProviderType,
   StorageUsageSummary,
   SnapshotManifest,
@@ -46,6 +47,30 @@ import {
   sqlPlaceholders,
   type Row
 } from "./repository/d1-support.ts";
+
+/**
+ * Newest snapshot id for one world as a correlated scalar. Relies on
+ * idx_snapshots_world_created_id (world_id, created_at, id): with the `id`
+ * tiebreak covered, SQLite answers this with a single reverse index step
+ * instead of sorting the world's whole snapshot partition.
+ */
+const LATEST_SNAPSHOT_ID_SUBQUERY = (worldIdExpr: string): string =>
+  `(SELECT s.id FROM snapshots s WHERE s.world_id = ${worldIdExpr} ORDER BY s.created_at DESC, s.id DESC LIMIT 1)`;
+
+function looseFileOfRow(row: Row): ManifestFile {
+  return {
+    path: String(row.path),
+    hash: String(row.hash),
+    size: Number(row.size),
+    compressedSize: Number(row.compressed_size),
+    storageKey: String(row.storage_key),
+    contentType: String(row.content_type),
+    transferMode: String(row.transfer_mode ?? "whole-gzip") as FileTransferMode,
+    baseSnapshotId: asNullableString(row.base_snapshot_id),
+    baseHash: asNullableString(row.base_hash),
+    chainDepth: row.chain_depth == null ? null : Number(row.chain_depth)
+  };
+}
 
 export class D1SharedWorldRepository implements SharedWorldRepository {
   /**
@@ -223,13 +248,14 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
        ORDER BY world_id ASC`,
       playerUuid
     );
+    // Latest snapshot per member world as a correlated 1-row index walk (see
+    // migration 0029) — the former window query read every snapshot of every
+    // member world on each poll.
     const latest = await this.all<Row>(
-      `SELECT world_id, id FROM (
-         SELECT world_id, id, ROW_NUMBER() OVER (PARTITION BY world_id ORDER BY created_at DESC, id DESC) AS rn
-         FROM snapshots
-         WHERE ${memberWorldsFilter}
-       ) WHERE rn = 1
-       ORDER BY world_id ASC`,
+      `SELECT wm.world_id AS world_id, ${LATEST_SNAPSHOT_ID_SUBQUERY("wm.world_id")} AS id
+       FROM world_memberships wm
+       WHERE wm.player_uuid = ? AND wm.deleted_at IS NULL
+       ORDER BY wm.world_id ASC`,
       playerUuid
     );
     const accountIds = [...new Set(worlds.map((row) => asNullableString(row.storage_account_id)).filter((id): id is string => id != null))].sort();
@@ -942,6 +968,17 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     );
   }
 
+  async enqueuePendingBlobDeletes(provider: StorageProviderType, storageAccountId: string, storageKeys: readonly string[], enqueuedAt: string): Promise<void> {
+    if (storageKeys.length === 0) {
+      return;
+    }
+    await this.batch(storageKeys.map((storageKey) => this.db.prepare(
+      `INSERT INTO pending_blob_deletes (provider, storage_account_id, storage_key, enqueued_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT (provider, storage_account_id, storage_key) DO NOTHING`
+    ).bind(provider, storageAccountId, storageKey, enqueuedAt)));
+  }
+
   async listPendingBlobDeletes(provider: StorageProviderType, storageAccountId: string, limit: number): Promise<Array<{ storageKey: string; attempts: number }>> {
     const rows = await this.all<Row>(
       `SELECT storage_key, attempts
@@ -1213,16 +1250,26 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
   }
 
   async getLatestSnapshotHeaders(worldId: string): Promise<SnapshotManifest | null> {
-    const snapshot = await this.latestSnapshotRow(worldId);
+    // Own query (not latestSnapshotRow) so the directory rides along with
+    // the row: the id-only callers of latestSnapshotRow must not pay for
+    // packs_json bytes on every heartbeat.
+    const snapshot = await this.first<Row>(
+      `SELECT id, world_id, created_at, created_by_uuid, packs_json
+       FROM snapshots
+       WHERE world_id = ?
+       ORDER BY created_at DESC, id DESC
+       LIMIT 1`,
+      worldId
+    );
     if (!snapshot) {
       return null;
     }
-    return this.loadSnapshotHeaders(String(snapshot.id), worldId, String(snapshot.created_at), String(snapshot.created_by_uuid));
+    return this.loadSnapshotHeaders(String(snapshot.id), worldId, String(snapshot.created_at), String(snapshot.created_by_uuid), snapshot.packs_json);
   }
 
   async getSnapshotHeaders(worldId: string, snapshotId: string): Promise<SnapshotManifest | null> {
     const row = await this.first<Row>(
-      `SELECT id, world_id, created_at, created_by_uuid
+      `SELECT id, world_id, created_at, created_by_uuid, packs_json
        FROM snapshots
        WHERE world_id = ? AND id = ?`,
       worldId,
@@ -1231,7 +1278,63 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     if (!row) {
       return null;
     }
-    return this.loadSnapshotHeaders(String(row.id), String(row.world_id), String(row.created_at), String(row.created_by_uuid));
+    return this.loadSnapshotHeaders(String(row.id), String(row.world_id), String(row.created_at), String(row.created_by_uuid), row.packs_json);
+  }
+
+  /**
+   * Headers for many snapshots of one world in a fixed number of queries
+   * (finalize validates/accounts/stamps every delta pack against its base
+   * snapshot — hundreds of packs over dozens of distinct bases, which as
+   * one-at-a-time loads cost 3 sequential D1 round-trips per base per pass;
+   * measured at ~18s of finalize wall time in production). Unknown ids are
+   * simply absent from the result. Ids ride in as one JSON array (D1 caps
+   * bound parameters, and a delta-heavy world can reference many bases).
+   */
+  async getSnapshotHeadersBatch(worldId: string, snapshotIds: readonly string[]): Promise<Map<string, SnapshotManifest>> {
+    const result = new Map<string, SnapshotManifest>();
+    const ids = [...new Set(snapshotIds)];
+    if (ids.length === 0) {
+      return result;
+    }
+    const idsJson = JSON.stringify(ids);
+    const rows = await this.all<Row>(
+      `SELECT id, world_id, created_at, created_by_uuid, packs_json
+       FROM snapshots
+       WHERE world_id = ? AND id IN (SELECT value FROM json_each(?))`,
+      worldId,
+      idsJson
+    );
+    if (rows.length === 0) {
+      return result;
+    }
+    const looseRows = await this.all<Row>(
+      `SELECT snapshot_id, path, hash, size, compressed_size, storage_key, content_type, transfer_mode, base_snapshot_id, base_hash, chain_depth
+       FROM snapshot_files
+       WHERE snapshot_id IN (SELECT value FROM json_each(?)) AND pack_id IS NULL
+       ORDER BY snapshot_id ASC, path ASC`,
+      idsJson
+    );
+    const looseBySnapshot = new Map<string, Row[]>();
+    for (const row of looseRows) {
+      const key = String(row.snapshot_id);
+      const list = looseBySnapshot.get(key) ?? [];
+      list.push(row);
+      looseBySnapshot.set(key, list);
+    }
+    for (const row of rows) {
+      const snapshotId = String(row.id);
+      result.set(snapshotId, {
+        worldId: String(row.world_id),
+        snapshotId,
+        createdAt: String(row.created_at),
+        createdByUuid: String(row.created_by_uuid),
+        files: (looseBySnapshot.get(snapshotId) ?? []).map((file) => looseFileOfRow(file)),
+        // Legacy pre-0026 rows (packs_json NULL) fall back to a per-snapshot
+        // snapshot_packs read inside packDirectory — none are written anymore.
+        packs: assembleSnapshotPacks(await this.packDirectory(snapshotId, asNullableString(row.packs_json)), () => [], { includeChainSteps: true })
+      });
+    }
+    return result;
   }
 
   /**
@@ -1243,7 +1346,7 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
    * manifest document can never block the next finalize — the world always
    * heals by snapshotting again.
    */
-  private async loadSnapshotHeaders(snapshotId: string, worldId: string, createdAt: string, createdByUuid: string): Promise<SnapshotManifest> {
+  private async loadSnapshotHeaders(snapshotId: string, worldId: string, createdAt: string, createdByUuid: string, rawPacksJson?: unknown): Promise<SnapshotManifest> {
     const rows = await this.all<Row>(
       `SELECT path, hash, size, compressed_size, storage_key, content_type, transfer_mode, base_snapshot_id, base_hash, chain_depth
        FROM snapshot_files
@@ -1251,24 +1354,18 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
        ORDER BY path ASC`,
       snapshotId
     );
+    // Callers that already hold the snapshot row pass its packs_json so the
+    // directory does not cost a second read of the same row.
+    const directory = rawPacksJson === undefined
+      ? await this.packDirectoryOf(snapshotId)
+      : await this.packDirectory(snapshotId, asNullableString(rawPacksJson));
     return {
       worldId,
       snapshotId,
       createdAt,
       createdByUuid,
-      files: rows.map((row) => ({
-        path: String(row.path),
-        hash: String(row.hash),
-        size: Number(row.size),
-        compressedSize: Number(row.compressed_size),
-        storageKey: String(row.storage_key),
-        contentType: String(row.content_type),
-        transferMode: String(row.transfer_mode ?? "whole-gzip") as FileTransferMode,
-        baseSnapshotId: asNullableString(row.base_snapshot_id),
-        baseHash: asNullableString(row.base_hash),
-        chainDepth: row.chain_depth == null ? null : Number(row.chain_depth)
-      })),
-      packs: assembleSnapshotPacks(await this.packDirectoryOf(snapshotId), () => [], { includeChainSteps: true })
+      files: rows.map((row) => looseFileOfRow(row)),
+      packs: assembleSnapshotPacks(directory, () => [], { includeChainSteps: true })
     };
   }
 
@@ -1994,16 +2091,16 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     }
 
     const latestByWorld = new Map<string, Row>();
+    // Latest snapshot per world: one 1-row index walk per world (migration
+    // 0029) resolved to ids, then a primary-key fetch — instead of a window
+    // over every snapshot of every listed world.
     const latestRows = await this.all<Row>(
       `SELECT id, world_id, created_at, data_version, minecraft_version
-       FROM (
-         SELECT id, world_id, created_at, data_version, minecraft_version,
-                ROW_NUMBER() OVER (PARTITION BY world_id ORDER BY created_at DESC, id DESC) AS rn
-         FROM snapshots
-         WHERE world_id IN (${placeholders})
-       )
-       WHERE rn = 1`,
-      ...worldIds
+       FROM snapshots
+       WHERE id IN (
+         SELECT ${LATEST_SNAPSHOT_ID_SUBQUERY("j.value")} FROM json_each(?) j
+       )`,
+      JSON.stringify(worldIds)
     );
     for (const row of latestRows) {
       latestByWorld.set(String(row.world_id), row);

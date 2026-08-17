@@ -90,6 +90,41 @@ describe("D1 repository read paths", () => {
     });
   });
 
+  describe("latest snapshot per world (0029 index walk)", () => {
+    const pack = {
+      packId: "non-region",
+      hash: "h",
+      size: 1,
+      storageKey: "packs/full/h.pack",
+      transferMode: "pack-full" as const,
+      files: [{ path: "level.dat", hash: "hl", size: 1, contentType: "application/octet-stream" }]
+    };
+
+    test("list, details and the ETag facts all pick the newest snapshot, id-tiebroken on equal timestamps", async () => {
+      const repository = createSqliteRepository();
+      await repository.upsertUser({ playerUuid: owner.playerUuid, playerName: owner.playerName, createdAt: new Date().toISOString() });
+      const withSnapshots = await repository.createWorld(owner, "Alpha", "alpha");
+      const empty = await repository.createWorld(owner, "Beta", "beta");
+      const factsBefore = JSON.stringify(await repository.worldsChangeFacts(owner.playerUuid));
+
+      const older = await repository.finalizeSnapshot(withSnapshots.id, owner, { files: [], packs: [pack], baseSnapshotId: null }, new Date("2026-01-01T00:00:00.000Z"));
+      const same = new Date("2026-01-01T00:05:00.000Z");
+      const twinA = await repository.finalizeSnapshot(withSnapshots.id, owner, { files: [], packs: [pack], baseSnapshotId: older.snapshotId }, same);
+      const twinB = await repository.finalizeSnapshot(withSnapshots.id, owner, { files: [], packs: [pack], baseSnapshotId: older.snapshotId }, same);
+      const expected = [twinA.snapshotId, twinB.snapshotId].sort().at(-1);
+
+      const listed = await repository.listWorldsForPlayer(owner.playerUuid);
+      expect(listed.find((world) => world.id === withSnapshots.id)?.lastSnapshotId).toBe(expected);
+      expect(listed.find((world) => world.id === empty.id)?.lastSnapshotId).toBeNull();
+      expect((await repository.getWorldDetails(withSnapshots.id, owner.playerUuid))?.lastSnapshotAt).toBe(same.toISOString());
+
+      const factsAfter = JSON.stringify(await repository.worldsChangeFacts(owner.playerUuid));
+      expect(factsAfter).not.toBe(factsBefore);
+      expect(factsAfter).toContain(expected!);
+      expect(JSON.stringify(await repository.worldChangeFacts(withSnapshots.id, owner.playerUuid, new Date()))).toContain(expected!);
+    });
+  });
+
   describe("getActiveInvite", () => {
     const invite = (worldId: string, id: string, createdAt: string, expiresAt: string) => ({
       id,

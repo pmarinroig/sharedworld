@@ -452,7 +452,16 @@ export function createIntegrationTestApp(publicBaseUrl: string, persistence: Int
         return state.storageProvider.handleUploadRequest(request, url);
       }
 
-      return createRouter(state.service)(request);
+      // Same post-response lane as the worker runtime (waitUntil): deferred
+      // housekeeping runs detached, its failures logged, never awaited by
+      // the response.
+      return createRouter(state.service)(request, {
+        waitUntil(task) {
+          task.catch((error: unknown) => {
+            console.warn("integration app: deferred task failed", String(error));
+          });
+        }
+      });
     }
   };
 }

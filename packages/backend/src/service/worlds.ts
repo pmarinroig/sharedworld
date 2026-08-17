@@ -18,7 +18,7 @@ import { clientVersionAtLeast, HttpError } from "../http.ts";
 import { slugify } from "../ids.ts";
 import type { RequestContext, WorldUpdateRecord } from "../repository.ts";
 import type { StorageBinding } from "../storage.ts";
-import { signDownloadForWorld, type ServiceContext } from "./context.ts";
+import { signDownloadForWorld, type DownloadViewer, type ServiceContext } from "./context.ts";
 import {
   publishWorldEvent,
   requireHostAuthority,
@@ -33,7 +33,7 @@ import { parsePositiveInt } from "./sync-plan.ts";
 
 export async function listWorlds(svc: ServiceContext, ctx: RequestContext): Promise<WorldSummary[]> {
   const worlds = await svc.repository.listWorldsForPlayer(ctx.playerUuid);
-  return Promise.all(worlds.map((world) => hydrateWorldSummary(svc, world, ctx.requestOrigin)));
+  return Promise.all(worlds.map((world) => hydrateWorldSummary(svc, world, ctx)));
 }
 
 /**
@@ -116,7 +116,7 @@ export async function createWorld(
 
 export async function getWorld(svc: ServiceContext, ctx: RequestContext, worldId: string, now: Date): Promise<WorldDetails> {
   const world = await requireWorldDetails(svc, worldId, ctx.playerUuid);
-  const hydrated = await hydrateWorldDetails(svc, world, ctx.requestOrigin);
+  const hydrated = await hydrateWorldDetails(svc, world, ctx);
   // 0.4.1+ clients fetch usage on demand (GET /worlds/:id/storage-usage from
   // the edit screen); the inline value here priced every world-details read
   // at a full file-table scan plus a Drive quota call — fatal on the paths
@@ -176,7 +176,7 @@ export async function updateWorld(
     world.customIconStorageKey !== updated.customIconStorageKey ? world.customIconStorageKey : null
   );
   await publishWorldEvent(svc, worldId, "world-changed");
-  return hydrateWorldDetails(svc, updated, ctx.requestOrigin);
+  return hydrateWorldDetails(svc, updated, ctx);
 }
 
 export async function updateWorldSettings(
@@ -193,7 +193,7 @@ export async function updateWorldSettings(
   }
   await publishWorldEvent(svc, worldId, "settings-changed");
   const updated = await requireWorldDetails(svc, worldId, ctx.playerUuid);
-  return hydrateWorldDetails(svc, updated, ctx.requestOrigin);
+  return hydrateWorldDetails(svc, updated, ctx);
 }
 
 /**
@@ -321,18 +321,18 @@ export async function cachedQuota(
   return quota;
 }
 
-export async function hydrateWorldSummary(svc: ServiceContext, world: WorldSummary, requestOrigin?: string): Promise<WorldSummary> {
+export async function hydrateWorldSummary(svc: ServiceContext, world: WorldSummary, viewer: DownloadViewer): Promise<WorldSummary> {
   if (!world.customIconStorageKey) {
     return world;
   }
   return {
     ...world,
-    customIconDownload: await signDownloadForWorld(svc, world.id, world.customIconStorageKey, requestOrigin)
+    customIconDownload: await signDownloadForWorld(svc, world.id, world.customIconStorageKey, viewer)
   };
 }
 
-export function hydrateWorldDetails(svc: ServiceContext, world: WorldDetails, requestOrigin?: string): Promise<WorldDetails> {
-  return hydrateWorldSummary(svc, world, requestOrigin) as Promise<WorldDetails>;
+export function hydrateWorldDetails(svc: ServiceContext, world: WorldDetails, viewer: DownloadViewer): Promise<WorldDetails> {
+  return hydrateWorldSummary(svc, world, viewer) as Promise<WorldDetails>;
 }
 
 /**
@@ -363,7 +363,7 @@ async function createSeededWorldResult(
     throw new HttpError(409, "world_busy", "SharedWorld is already being set up.");
   }
   return {
-    world: await hydrateWorldDetails(svc, world, ctx.requestOrigin),
+    world: await hydrateWorldDetails(svc, world, ctx),
     initialUploadAssignment: decision.assignment
   };
 }

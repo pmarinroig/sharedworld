@@ -107,6 +107,13 @@ export interface RequestContext {
   requestOrigin?: string;
   /** Contents of the x-sharedworld-version request header (sent by 0.2.2+ clients). */
   clientVersion?: string | null;
+  /**
+   * Runs housekeeping AFTER the response is sent (Workers `waitUntil`).
+   * Absent outside the worker runtime (tests, tools), where callers must
+   * simply await the work inline. Deferred work has a bounded post-response
+   * lifetime, so it must be safe to be cut off mid-way.
+   */
+  defer?: (task: Promise<unknown>) => void;
 }
 
 export interface WorldUpdateRecord extends UpdateWorldRequest {
@@ -192,6 +199,8 @@ export interface StorageRepository {
   deleteConfirmedUploadSessionsBefore(provider: StorageProviderType, storageAccountId: string, confirmedBefore: string, limit: number): Promise<void>;
   /** 0028 GC retry queue: a provider delete that failed, to be retried by the bounded sweep. */
   enqueuePendingBlobDelete(provider: StorageProviderType, storageAccountId: string, storageKey: string, enqueuedAt: string): Promise<void>;
+  /** Batch form of enqueuePendingBlobDelete (one D1 batch, duplicates ignored). */
+  enqueuePendingBlobDeletes(provider: StorageProviderType, storageAccountId: string, storageKeys: readonly string[], enqueuedAt: string): Promise<void>;
   /** Oldest pending deletes for the account, up to limit. */
   listPendingBlobDeletes(provider: StorageProviderType, storageAccountId: string, limit: number): Promise<Array<{ storageKey: string; attempts: number }>>;
   deletePendingBlobDelete(provider: StorageProviderType, storageAccountId: string, storageKey: string): Promise<void>;
@@ -239,6 +248,8 @@ export interface SnapshotRepository {
    */
   getLatestSnapshotHeaders(worldId: string): Promise<SnapshotManifest | null>;
   getSnapshotHeaders(worldId: string, snapshotId: string): Promise<SnapshotManifest | null>;
+  /** Headers for many snapshot ids of one world in a fixed number of queries; unknown ids are absent. */
+  getSnapshotHeadersBatch(worldId: string, snapshotIds: readonly string[]): Promise<Map<string, SnapshotManifest>>;
   listSnapshotSummaries(worldId: string): Promise<WorldSnapshotSummary[]>;
   listSnapshotsForWorld(worldId: string): Promise<SnapshotRecord[]>;
   getSnapshotGameVersions(worldId: string, snapshotId: string): Promise<{ dataVersion: number | null; minecraftVersion: string | null } | null>;

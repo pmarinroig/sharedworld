@@ -138,21 +138,50 @@ export async function finalizeSnapshot(
     ["host-starting", "host-live", "host-finalizing"],
     now
   );
-  await validateFinalizeSnapshotRequest(svc, worldId, request);
-  await computeChainDeltaBytes(svc, worldId, request);
-  const manifest = await persistSnapshot(svc, worldId, ctx, request, now);
+  // One header cache for validation, chain accounting and recipe stamping,
+  // primed with every base snapshot the request references in a fixed
+  // number of queries: the three passes used to each load the same bases
+  // one at a time (3 sequential D1 round-trips per base per pass — ~18s of
+  // finalize wall time on delta-heavy worlds).
+  const headersCache = await prefetchBaseSnapshotHeaders(svc, worldId, request);
+  await validateFinalizeSnapshotRequest(svc, worldId, request, headersCache);
+  await computeChainDeltaBytes(svc, worldId, request, headersCache);
+  const manifest = await persistSnapshot(svc, worldId, ctx, request, now, headersCache);
+  await publishWorldEvent(svc, worldId, "snapshot-changed");
   // Retention runs at most hourly per world (CAS claim): it only ever
   // deletes >24h-old snapshots, so per-finalize cadence bought nothing but
   // delete/promotion writes on every autosave. Manual delete/restore keep
   // their immediate retention passes.
+  //
+  // It runs AFTER the response whenever the runtime allows (waitUntil): the
+  // snapshot is durable the moment persistSnapshot returns, while the
+  // retention pass — provider deletes with retry ladders, legacy-chain
+  // upgrades — was measured at 19-46s inline, past the mod's 20s request
+  // timeout. The client then reported a "transient failure" for a finalize
+  // that had succeeded, retried, and in the worst case (mid-retry timeout
+  // aborting the connection) left the runtime parked in host-finalizing.
+  // The pass is cutoff-safe: blob deletes run under a time budget and the
+  // remainder is queued for the bounded sweeps.
   if (await svc.repository.claimRetentionSlot(worldId, now, SNAPSHOT_RETENTION_INTERVAL_MS)) {
-    await applySnapshotRetention(svc, worldId, now);
+    const retention = applySnapshotRetention(svc, worldId, now, ctx.defer != null ? DEFERRED_BLOB_DELETE_BUDGET_MS : null)
+      .catch((error: unknown) => {
+        console.warn("SharedWorld snapshot retention failed", { worldId, cause: String(error) });
+      });
+    if (ctx.defer != null) {
+      ctx.defer(retention);
+    } else {
+      await retention;
+    }
   }
-  await publishWorldEvent(svc, worldId, "snapshot-changed");
   return manifest;
 }
 
 const SNAPSHOT_RETENTION_INTERVAL_MS = 60 * 60_000;
+/**
+ * Post-response work gets ~30s before the runtime reclaims the isolate;
+ * blob deletes stop well inside that and hand the rest to the queue.
+ */
+const DEFERRED_BLOB_DELETE_BUDGET_MS = 15_000;
 
 /**
  * 0027 write path: persist the snapshot with its pack member lists as one
@@ -170,12 +199,13 @@ export async function persistSnapshot(
   worldId: string,
   ctx: RequestContext,
   request: FinalizeSnapshotRequest,
-  now: Date
+  now: Date,
+  headersCache: SnapshotHeadersCache = new Map()
 ): Promise<SnapshotManifest> {
   // Stamped here so BOTH producers (finalize and restore) emit
   // self-contained snapshots — restore republishes packs whose recipes
   // inherit from the restored-from snapshot's directory.
-  await stampChainSteps(svc, worldId, request);
+  await stampChainSteps(svc, worldId, request, headersCache);
   let manifestStorageKey: string | null = null;
   const packs = request.packs ?? [];
   if (packs.length > 0) {
@@ -224,7 +254,7 @@ function manifestDocCapable(svc: ServiceContext, binding: WorldStorageBinding): 
  * one per month beyond that; the newest snapshot is always kept. Cleanup failures
  * are logged, never propagated: retention must not fail a successful snapshot.
  */
-export async function applySnapshotRetention(svc: ServiceContext, worldId: string, now: Date): Promise<void> {
+export async function applySnapshotRetention(svc: ServiceContext, worldId: string, now: Date, blobDeleteBudgetMs: number | null = null): Promise<void> {
   const snapshots = await svc.repository.listSnapshotsForWorld(worldId);
   const maxBackups = (await svc.repository.getWorldSettings(worldId))?.settings?.maxBackups ?? null;
   const keep = selectSnapshotsToKeep(snapshots, now, maxBackups);
@@ -245,7 +275,7 @@ export async function applySnapshotRetention(svc: ServiceContext, worldId: strin
     const binding = await requireWorldStorageBinding(svc, worldId);
     if (deleteIds.length > 0) {
       const deletion = await svc.repository.deleteSnapshots(worldId, deleteIds);
-      await deleteUnreferencedBlobs(svc, binding, deletion.unreferencedStorageKeys);
+      await deleteUnreferencedBlobs(svc, binding, deletion.unreferencedStorageKeys, blobDeleteBudgetMs);
     }
     // Piggybacked 0028 retry sweep: rides the same hourly retention slot.
     await sweepPendingBlobDeletes(svc, binding, now);
@@ -267,8 +297,29 @@ export async function purgeWorldSnapshots(svc: ServiceContext, binding: StorageB
   }
 }
 
-export async function deleteUnreferencedBlobs(svc: ServiceContext, binding: StorageBinding, storageKeys: string[]): Promise<void> {
-  for (const storageKey of storageKeys) {
+/**
+ * Deletes blobs whose last referencing rows are already gone. With a
+ * `budgetMs`, deletes stop once the budget elapses and every remaining key
+ * is queued for the bounded sweeps instead — the caller is running after
+ * the response and may be reclaimed by the runtime at any moment past that.
+ */
+export async function deleteUnreferencedBlobs(
+  svc: ServiceContext,
+  binding: StorageBinding,
+  storageKeys: string[],
+  budgetMs: number | null = null
+): Promise<void> {
+  const deadline = budgetMs == null ? null : Date.now() + budgetMs;
+  for (let index = 0; index < storageKeys.length; index += 1) {
+    const storageKey = storageKeys[index];
+    if (deadline != null && Date.now() >= deadline) {
+      const remaining = storageKeys.slice(index);
+      if (binding.storageAccountId != null) {
+        await svc.repository.enqueuePendingBlobDeletes(binding.provider, binding.storageAccountId, remaining, new Date().toISOString());
+      }
+      console.warn("SharedWorld blob cleanup deferred to the sweep queue", { remaining: remaining.length, budgetMs });
+      return;
+    }
     try {
       await svc.storageProvider.delete(binding, storageKey);
       if (svc.storageProvider.provider === "r2") {
@@ -384,9 +435,47 @@ export async function storageKeysExist(
  * unique paths/pack ids, storage objects that actually exist, and delta chains
  * whose base snapshot, base hash, and chain depth all line up.
  */
-async function validateFinalizeSnapshotRequest(svc: ServiceContext, worldId: string, request: FinalizeSnapshotRequest): Promise<void> {
+type SnapshotHeadersCache = Map<string, SnapshotManifest | null>;
+
+/**
+ * Batch-loads the headers of every base snapshot a finalize request refers
+ * to (the request's own base plus each delta file's/pack's base) into one
+ * cache shared by validation, chain accounting and recipe stamping. Ids the
+ * repository does not know stay uncached, so the per-id path still produces
+ * its precise snapshot_base_not_found.
+ */
+async function prefetchBaseSnapshotHeaders(svc: ServiceContext, worldId: string, request: FinalizeSnapshotRequest): Promise<SnapshotHeadersCache> {
+  const ids = new Set<string>();
+  if (request.baseSnapshotId != null) {
+    ids.add(request.baseSnapshotId);
+  }
+  for (const file of request.files) {
+    if (file.baseSnapshotId != null) {
+      ids.add(file.baseSnapshotId);
+    }
+  }
+  for (const pack of request.packs ?? []) {
+    if (pack.baseSnapshotId != null) {
+      ids.add(pack.baseSnapshotId);
+    }
+  }
+  const cache: SnapshotHeadersCache = new Map();
+  if (ids.size === 0) {
+    return cache;
+  }
+  for (const [snapshotId, headers] of await svc.repository.getSnapshotHeadersBatch(worldId, [...ids])) {
+    cache.set(snapshotId, headers);
+  }
+  return cache;
+}
+
+async function validateFinalizeSnapshotRequest(
+  svc: ServiceContext,
+  worldId: string,
+  request: FinalizeSnapshotRequest,
+  snapshotCache: SnapshotHeadersCache = new Map()
+): Promise<void> {
   const binding = await requireWorldStorageBinding(svc, worldId);
-  const snapshotCache = new Map<string, SnapshotManifest | null>();
   const seenPaths = new Set<string>();
   const seenPackIds = new Set<string>();
   const existingStorageKeys = await storageKeysExist(svc, binding, [
@@ -524,8 +613,12 @@ async function validateSnapshotPackBase(
  * delta packs stay NULL (unaccounted — the planner will force a re-full).
  * Never trusts a client-sent accumulator.
  */
-async function computeChainDeltaBytes(svc: ServiceContext, worldId: string, request: FinalizeSnapshotRequest): Promise<void> {
-  const snapshotCache = new Map<string, SnapshotManifest | null>();
+async function computeChainDeltaBytes(
+  svc: ServiceContext,
+  worldId: string,
+  request: FinalizeSnapshotRequest,
+  snapshotCache: SnapshotHeadersCache = new Map()
+): Promise<void> {
   for (const pack of request.packs ?? []) {
     if (!isDeltaPackTransferMode(pack.transferMode)) {
       pack.chainDeltaBytes = 0;
@@ -585,8 +678,12 @@ function validateSnapshotPackDeltaV2Fields(pack: SnapshotPack): void {
  * of every older snapshot row. A broken/unresolvable legacy chain leaves
  * chainSteps null — that pack keeps the walk-based download path.
  */
-async function stampChainSteps(svc: ServiceContext, worldId: string, request: FinalizeSnapshotRequest): Promise<void> {
-  const headersCache = new Map<string, SnapshotManifest | null>();
+async function stampChainSteps(
+  svc: ServiceContext,
+  worldId: string,
+  request: FinalizeSnapshotRequest,
+  headersCache: SnapshotHeadersCache = new Map()
+): Promise<void> {
   for (const pack of request.packs ?? []) {
     if (!isDeltaPackTransferMode(pack.transferMode)) {
       pack.chainSteps = [selfChainStep(pack, null)];
