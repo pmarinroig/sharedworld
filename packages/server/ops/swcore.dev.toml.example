@@ -1,0 +1,18 @@
+# Local dev config for `scripts/box-dev.sh` — the `.dev.vars` of the Rust
+# server. Copy to public/packages/server/.dev.toml (gitignored) and fill the
+# Google values for real Drive syncs; without a .dev.toml the dev script runs
+# the offline profile (dev auth, mock Google link, filesystem blobs).
+active_storage_provider = "google-drive"
+public_base_url = "http://127.0.0.1:8787"
+signing_secret = "dev-signing-secret"
+allow_dev_auth = true
+dev_auth_secret = "dev-secret"
+# Dialtone dev bypass for the guest (manual-two-client.sh needs it).
+allow_dev_insecure_e4mc = true
+# Mock Google link flow; set false and fill the client below for real Drive.
+allow_dev_google_oauth = true
+# google_oauth_client_id = "….apps.googleusercontent.com"
+# google_oauth_client_secret = "…"
+# google_oauth_redirect_uri = "http://127.0.0.1:8787/storage/google/callback"
+google_oauth_scopes = "openid email profile https://www.googleapis.com/auth/drive.appdata"
+upload_max_body_bytes = 95000000

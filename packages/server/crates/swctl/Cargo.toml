@@ -1,0 +1,23 @@
+[package]
+name = "swctl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.6", features = ["derive", "env"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "blocking", "json"] }
+rusqlite = "0.40.2"
+serde = "1.0.229"
+serde_json = "1.0.151"
+sw-contracts = { version = "0.1.0", path = "../sw-contracts" }
+sw-core = { version = "0.1.0", path = "../sw-core" }
+sw-db = { version = "0.1.0", path = "../sw-db" }
+tokio = "1.53.1"
+toml = "1.1.4"
+
+[lints]
+workspace = true

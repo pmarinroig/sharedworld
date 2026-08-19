@@ -1,0 +1,39 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/sw-contracts",
+  "crates/sw-db",
+  "crates/sw-core",
+  "crates/sw-http",
+  "crates/sw-ipc",
+  "crates/sw-testkit",
+  "crates/swcore",
+  "crates/swedge",
+  "crates/swctl",
+  "crates/sw-loadgen",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/pmarinroig/sharedworld"
+rust-version = "1.85"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+opt-level = 3
+debug = 1
+panic = "unwind"
+
+[profile.dev]
+opt-level = 0
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[workspace.lints.clippy]
+too_many_arguments = "allow"
+type_complexity = "allow"
+large_enum_variant = "allow"

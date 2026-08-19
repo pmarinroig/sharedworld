@@ -1,0 +1,7 @@
+apiVersion: 1
+providers:
+  - name: sharedworld
+    folder: SharedWorld
+    type: file
+    options:
+      path: /etc/grafana/provisioning/dashboards

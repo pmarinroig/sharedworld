@@ -1,0 +1,8 @@
+[Unit]
+Description=SharedWorld SQLite daily backup (online .backup, 14 kept)
+
+[Service]
+Type=oneshot
+User=sharedworld
+Group=sharedworld
+ExecStart=/bin/sh -c 'set -e; d=/var/lib/sharedworld/backups; mkdir -p "$d"; f="$d/sharedworld-$(date -u +%%Y%%m%%dT%%H%%M%%SZ).db"; sqlite3 /var/lib/sharedworld/sharedworld.db ".backup $f" && gzip -f "$f"; ls -1t "$d"/sharedworld-*.db.gz | tail -n +15 | xargs -r rm -f'

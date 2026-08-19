@@ -1,0 +1,32 @@
+[Unit]
+Description=SharedWorld core server (swcore)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sharedworld
+Group=sharedworld
+# Sockets for swedge live here (tmpfs, recreated on boot).
+RuntimeDirectory=sharedworld
+RuntimeDirectoryPreserve=yes
+StateDirectory=sharedworld
+ConfigurationDirectory=sharedworld
+Environment=SW_CONFIG=/etc/sharedworld/swcore.toml
+Environment=SW_DB_PATH=/var/lib/sharedworld/sharedworld.db
+Environment=SW_LOG_JSON=true
+Environment=RUST_LOG=info
+ExecStart=/usr/local/bin/swcore --listen 127.0.0.1:8787 --metrics-listen 127.0.0.1:9464 --uds-http /run/sharedworld/core-http.sock --uds-ws /run/sharedworld/core-ws.sock
+Restart=always
+RestartSec=1
+LimitNOFILE=262144
+# Sub-second restarts: swedge keeps client sockets and queues HTTP meanwhile.
+TimeoutStopSec=15
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/sharedworld /run/sharedworld
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

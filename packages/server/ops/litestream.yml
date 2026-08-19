@@ -1,0 +1,12 @@
+# /etc/litestream.yml — continuous SQLite replication (WAL shipping) to an
+# S3-compatible bucket (Backblaze B2 free tier or a Hetzner Storage Box via
+# sftp). Restore drill: litestream restore -o /tmp/restored.db /var/lib/sharedworld/sharedworld.db
+dbs:
+  - path: /var/lib/sharedworld/sharedworld.db
+    replicas:
+      - type: s3
+        bucket: sharedworld-db
+        path: sharedworld.db
+        endpoint: https://s3.eu-central-003.backblazeb2.com
+        retention: 720h
+        sync-interval: 10s

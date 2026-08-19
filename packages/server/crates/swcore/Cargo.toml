@@ -1,0 +1,31 @@
+[package]
+name = "swcore"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+testkit = ["sw-http/testkit", "dep:sw-testkit"]
+
+[dependencies]
+sw-ipc = { version = "0.1.0", path = "../sw-ipc" }
+anyhow = "1.0.104"
+axum = "0.8.9"
+clap = { version = "4.6.6", features = ["derive", "env"] }
+metrics-exporter-prometheus = "0.18.3"
+serde = "1.0.229"
+sw-contracts = { version = "0.1.0", path = "../sw-contracts" }
+sw-core = { version = "0.1.0", path = "../sw-core" }
+sw-db = { version = "0.1.0", path = "../sw-db" }
+sw-http = { version = "0.1.0", path = "../sw-http" }
+sw-testkit = { version = "0.1.0", path = "../sw-testkit", optional = true }
+tokio = { version = "1.53.1", features = ["full"] }
+toml = "1.1.4"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["json", "env-filter"] }
+
+[lints]
+workspace = true

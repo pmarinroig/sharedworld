@@ -1,0 +1,30 @@
+[Unit]
+Description=SharedWorld edge (TLS, proxy, WebSocket owner)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sharedworld
+Group=sharedworld
+RuntimeDirectory=sharedworld
+RuntimeDirectoryPreserve=yes
+StateDirectory=sharedworld
+EnvironmentFile=-/etc/sharedworld/swedge.env
+Environment=SW_LOG_JSON=true
+Environment=RUST_LOG=info
+# Binds :443 as a non-root user.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+ExecStart=/usr/local/bin/swedge --tls-listen 0.0.0.0:443 --core-http-socket /run/sharedworld/core-http.sock --core-ws-socket /run/sharedworld/core-ws.sock --metrics-listen 127.0.0.1:9465
+Restart=always
+RestartSec=1
+LimitNOFILE=262144
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/sharedworld /run/sharedworld
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

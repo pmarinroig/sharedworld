@@ -1,0 +1,36 @@
+[package]
+name = "sw-testkit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow = "1.0.104"
+async-trait = "0.1.92"
+axum = "0.8.9"
+base64 = "0.23.1"
+bytes = "1.12.1"
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+futures = "0.3.34"
+http = "1.5.0"
+parking_lot = "0.12.5"
+rand = "0.10.2"
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "json", "stream"] }
+rsa = "0.9.10"
+serde = "1.0.229"
+serde_json = "1.0.151"
+sha2 = "0.11.0"
+sw-contracts = { version = "0.1.0", path = "../sw-contracts" }
+sw-core = { version = "0.1.0", path = "../sw-core" }
+sw-db = { version = "0.1.0", path = "../sw-db" }
+sw-http = { version = "0.1.0", path = "../sw-http" }
+tempfile = "3.27.0"
+tokio = "1.53.1"
+tokio-util = { version = "0.7.19", features = ["io"] }
+tracing = "0.1.44"
+uuid = { version = "1.24.1", features = ["v4"] }
+
+[lints]
+workspace = true

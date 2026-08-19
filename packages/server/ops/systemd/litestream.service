@@ -1,0 +1,15 @@
+[Unit]
+Description=Litestream replication for the SharedWorld database
+After=swcore.service
+
+[Service]
+Type=simple
+User=sharedworld
+Group=sharedworld
+EnvironmentFile=-/etc/sharedworld/litestream.env
+ExecStart=/usr/local/bin/litestream replicate -config /etc/litestream.yml
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

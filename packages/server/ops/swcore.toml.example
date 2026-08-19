@@ -1,0 +1,47 @@
+# SharedWorld core server config (/etc/sharedworld/swcore.toml).
+# Every key mirrors a wrangler.toml/Env knob of the Cloudflare worker plus the
+# box-only lane-D settings. Environment overrides: SW_* (see swcore --help).
+
+# "google-drive" (production) or "r2" (local filesystem blobs at fs_blob_root).
+active_storage_provider = "google-drive"
+session_ttl_hours = 168
+# The box's own public origin (signed upload URLs, OAuth redirect base).
+public_base_url = "https://api.sharedworld.example"
+# Lane D: download URLs point at the Cloudflare relay worker.
+relay_base_url = "https://sharedworld.farigola777.workers.dev"
+signed_url_ttl_seconds = 900
+
+# Blob stamps (HMAC). Rotate: move current → previous, set a new current.
+signing_secret = "CHANGE-ME"
+# signing_secret_previous = ""
+
+# Mojang player-certificate keys: leave unset — the box refreshes them itself
+# (api.minecraftservices.com is reachable from here, unlike from Workers).
+mojang_keys_self_refresh = true
+
+# Google OAuth (Drive appdata). The redirect URI must be registered in the
+# Google console for the box hostname.
+google_oauth_client_id = "….apps.googleusercontent.com"
+google_oauth_client_secret = "CHANGE-ME"
+google_oauth_redirect_uri = "https://api.sharedworld.example/storage/google/callback"
+google_oauth_scopes = "openid email profile https://www.googleapis.com/auth/drive.appdata"
+
+# Relay worker pacing / body limit (advertised to clients).
+upload_max_body_bytes = 95000000
+suggested_autosave_interval_ms = 600000
+suggested_runtime_poll_interval_ms = 15000
+max_active_worlds = 1000
+
+# Lane D: the CF forwarder presents this on every forwarded request.
+internal_api_secret = "CHANGE-ME"
+# Relay download tokens (swctl relay-keys-gen). The worker gets only the
+# public key + RELAY_TOKEN_KEY.
+relay_signing_key_b64 = "CHANGE-ME"
+relay_token_key_b64 = "CHANGE-ME"
+# Tokens-at-rest master key (swctl master-key-gen > /etc/sharedworld/master.key; chmod 600).
+master_key_file = "/etc/sharedworld/master.key"
+
+# Dev only — never true in production.
+allow_dev_auth = false
+allow_dev_google_oauth = false
+test_routes = false

@@ -1,0 +1,24 @@
+[package]
+name = "sw-loadgen"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Load generator: N worlds × host + guests with realistic cadences against a running swcore"
+
+[[bin]]
+name = "sw-loadgen"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+futures-util = "0.3.34"
+rand = "0.10"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1.53.1", features = ["full"] }
+tokio-tungstenite = "0.30.0"
+tokio-util = "0.7.19"
+uuid = { version = "1.24.1", features = ["v4"] }
