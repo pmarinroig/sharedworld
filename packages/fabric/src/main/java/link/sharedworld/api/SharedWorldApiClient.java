@@ -7,6 +7,7 @@ import link.sharedworld.RuntimePlayerIdentity;
 import link.sharedworld.SharedWorldDevSessionBridge;
 import link.sharedworld.api.SharedWorldModels.AuthChallengeDto;
 import link.sharedworld.api.SharedWorldModels.CreateWorldResultDto;
+import link.sharedworld.api.SharedWorldModels.DeleteSnapshotsResultDto;
 import link.sharedworld.api.SharedWorldModels.DevSessionTokenDto;
 import link.sharedworld.api.SharedWorldModels.DownloadPlanDto;
 import link.sharedworld.api.SharedWorldModels.ErrorDto;
@@ -390,6 +391,12 @@ public final class SharedWorldApiClient {
     public SnapshotActionResultDto deleteSnapshot(String worldId, String snapshotId) throws IOException, InterruptedException {
         ensureSession();
         return request("DELETE", "/worlds/" + worldId + "/snapshots/" + snapshotId, null, SnapshotActionResultDto.class, true);
+    }
+
+    /** 0.4.5: one request for any number of backups; the backend answers once the rows are gone. */
+    public DeleteSnapshotsResultDto deleteSnapshots(String worldId, java.util.List<String> snapshotIds) throws IOException, InterruptedException {
+        ensureSession();
+        return request("POST", "/worlds/" + worldId + "/snapshots/delete", Map.of("snapshotIds", snapshotIds), DeleteSnapshotsResultDto.class, true);
     }
 
     public UploadPlanDto prepareUploads(String worldId, long runtimeEpoch, String hostToken, LocalFileDescriptorDto[] files, LocalPackDescriptorDto nonRegionPack, LocalPackDescriptorDto[] regionBundles) throws IOException, InterruptedException {

@@ -82,6 +82,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
     private Button backButton;
     private Button secondaryButton;
     private Button replaceWorldButton;
+    private Button selectAllBackupsButton;
     private Button primaryButton;
     private final EditWorldSettingsForm settingsForm;
     private boolean savingSettings;
@@ -140,6 +141,12 @@ public final class EditSharedWorldScreen extends VersionedScreen {
                 ignored -> this.openReplaceWorldScreen()
         ).width(190).build();
         this.addRenderableWidget(this.replaceWorldButton);
+
+        this.selectAllBackupsButton = Button.builder(
+                Component.translatable("screen.sharedworld.backups_select_all"),
+                ignored -> this.snapshotList.toggleMarkAll()
+        ).width(120).build();
+        this.addRenderableWidget(this.selectAllBackupsButton);
 
         this.snapshotList = link.sharedworld.versioned.LayoutCompat.registerTabList(
                 new SnapshotBrowserList(this.minecraft, 120, 100, 0, 36, this), this::addRenderableWidget);
@@ -253,6 +260,22 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         this.statusBanner.renderBottomCentered(guiGraphics, this.font, this.width / 2, this.height - FOOTER_HEIGHT - 2, Math.min(this.width - 40, 420));
     }
 
+    /** Owner + idle: the only state in which the list offers bulk-delete ticks. */
+    boolean canManageBackups() {
+        return this.isOwner() && !this.loading && !this.actionInFlight;
+    }
+
+    void onSnapshotMarksChanged() {
+        this.confirmDelete = false;
+        this.confirmRestore = false;
+        this.refreshStatus();
+        this.updateButtons();
+    }
+
+    private List<String> markedBackupIds() {
+        return this.snapshotList == null ? List.of() : this.snapshotList.markedSnapshotIds();
+    }
+
     void onSnapshotSelected(WorldSnapshotSummaryDto snapshot) {
         this.selectedSnapshot = snapshot;
         this.resetConfirms();
@@ -292,6 +315,22 @@ public final class EditSharedWorldScreen extends VersionedScreen {
                     leftColumn,
                     top + 14,
                     this.contentArea.width() - 76,
+                    0xFFFFD37A
+            );
+        }
+        int doomed = this.settingsForm.backupsDeletedBySave(this.snapshots.size());
+        if (doomed > 0) {
+            // Under the max-backups button (third row of the left column): the
+            // one thing worth a warning here — lowering the cap below what is
+            // stored deletes backups the moment the settings are saved.
+            this.drawWrappedText(
+                    guiGraphics,
+                    doomed == 1
+                            ? Component.translatable("screen.sharedworld.settings_max_backups_lower_warning_one")
+                            : Component.translatable("screen.sharedworld.settings_max_backups_lower_warning", doomed),
+                    leftColumn,
+                    top + 34 + 72 + 6,
+                    columnWidth,
                     0xFFFFD37A
             );
         }
@@ -341,6 +380,10 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         if (this.selectedSnapshot == null) {
             this.drawWrappedText(guiGraphics, Component.translatable("screen.sharedworld.backups_empty"), detailX + 12, detailY + 18, detailWidth - 24, 0xFFB8C5D6);
             return;
+        }
+        int marked = this.markedBackupIds().size();
+        if (marked > 0) {
+            this.drawWrappedText(guiGraphics, Component.translatable("screen.sharedworld.backups_marked", marked), detailX + 12, detailY + 84, detailWidth - 24, 0xFFF2C25B);
         }
 
         this.drawKeyValue(guiGraphics, detailX + 12, detailY + 18, Component.translatable("screen.sharedworld.backups_created"), formatTimestamp(this.selectedSnapshot.createdAt()), 84);
@@ -441,6 +484,20 @@ public final class EditSharedWorldScreen extends VersionedScreen {
             this.replaceWorldButton.visible = currentTab == this.detailsTab && this.isOwner();
             this.replaceWorldButton.active = !this.loading && !this.actionInFlight && this.isOwner() && this.details != null;
         }
+        if (this.selectAllBackupsButton != null) {
+            int deletable = 0;
+            for (WorldSnapshotSummaryDto snapshot : this.snapshots) {
+                if (!snapshot.isLatest()) {
+                    deletable += 1;
+                }
+            }
+            int marked = this.markedBackupIds().size();
+            this.selectAllBackupsButton.visible = currentTab == this.backupsTab && this.isOwner() && deletable > 1;
+            this.selectAllBackupsButton.active = this.canManageBackups();
+            this.selectAllBackupsButton.setMessage(Component.translatable(marked > 0 && marked >= deletable
+                    ? "screen.sharedworld.backups_select_none"
+                    : "screen.sharedworld.backups_select_all"));
+        }
         if (currentTab == this.detailsTab) {
             this.primaryButton.visible = true;
             this.secondaryButton.visible = this.isOwner();
@@ -453,14 +510,21 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         } else if (currentTab == this.backupsTab) {
             this.primaryButton.visible = true;
             this.secondaryButton.visible = true;
-            this.secondaryButton.setMessage(Component.translatable(this.confirmDelete
-                    ? "screen.sharedworld.confirm_delete"
-                    : "screen.sharedworld.delete_backup"));
-            this.secondaryButton.active = !this.loading && !this.actionInFlight && this.isOwner() && this.selectedSnapshot != null && !this.selectedSnapshot.isLatest();
+            int marked = this.markedBackupIds().size();
+            if (marked > 0) {
+                this.secondaryButton.setMessage(Component.translatable(this.confirmDelete
+                        ? "screen.sharedworld.confirm_delete_backups"
+                        : "screen.sharedworld.delete_backups", marked));
+            } else {
+                this.secondaryButton.setMessage(Component.translatable(this.confirmDelete
+                        ? "screen.sharedworld.confirm_delete"
+                        : "screen.sharedworld.delete_backup"));
+            }
+            this.secondaryButton.active = this.canManageBackups() && (marked > 0 || (this.selectedSnapshot != null && !this.selectedSnapshot.isLatest()));
             this.primaryButton.setMessage(Component.translatable(this.confirmRestore
                     ? "screen.sharedworld.confirm_restore"
                     : "screen.sharedworld.restore_backup"));
-            this.primaryButton.active = !this.loading && !this.actionInFlight && this.isOwner() && this.selectedSnapshot != null && !this.selectedSnapshot.isLatest();
+            this.primaryButton.active = this.canManageBackups() && marked == 0 && this.selectedSnapshot != null && !this.selectedSnapshot.isLatest();
         } else if (currentTab == this.membersTab) {
             this.primaryButton.visible = true;
             this.secondaryButton.visible = true;
@@ -540,7 +604,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         if (currentTab == this.backupsTab) {
             if (this.confirmRestore) {
                 this.restoreSnapshot();
-            } else if (this.selectedSnapshot != null && !this.selectedSnapshot.isLatest() && this.isOwner()) {
+            } else if (this.selectedSnapshot != null && !this.selectedSnapshot.isLatest() && this.isOwner() && this.markedBackupIds().isEmpty()) {
                 this.confirmRestore = true;
                 this.confirmDelete = false;
                 this.refreshStatus();
@@ -572,8 +636,8 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         }
         if (currentTab == this.backupsTab) {
             if (this.confirmDelete) {
-                this.deleteSnapshot();
-            } else if (this.selectedSnapshot != null && !this.selectedSnapshot.isLatest() && this.isOwner()) {
+                this.deleteSnapshots();
+            } else if (this.isOwner() && (!this.markedBackupIds().isEmpty() || (this.selectedSnapshot != null && !this.selectedSnapshot.isLatest()))) {
                 this.confirmDelete = true;
                 this.confirmRestore = false;
                 this.refreshStatus();
@@ -645,6 +709,9 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         this.setStatusInfoKey("screen.sharedworld.edit_status_saving_settings");
         this.updateButtons();
         link.sharedworld.api.SharedWorldModels.WorldSettingsDto dto = this.settingsForm.currentDto();
+        // A lowered backups cap prunes on the backend as the save lands; the
+        // Backups tab must not keep offering snapshots that no longer exist.
+        boolean pruning = this.settingsForm.backupsDeletedBySave(this.snapshots.size()) > 0;
         this.dataController.saveSettings(this.world.id(), dto, updated -> {
             this.savingSettings = false;
             this.actionInFlight = false;
@@ -655,6 +722,9 @@ public final class EditSharedWorldScreen extends VersionedScreen {
             // of waiting for the next heartbeat.
             SharedWorldClient.hostingManager().applyLocalWorldSettingsChange(this.world.id(), dto);
             this.updateButtons();
+            if (pruning) {
+                this.reloadData();
+            }
         }, error -> {
             this.savingSettings = false;
             this.actionInFlight = false;
@@ -715,17 +785,39 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         });
     }
 
-    private void deleteSnapshot() {
-        WorldSnapshotSummaryDto snapshot = this.selectedSnapshot;
-        if (snapshot == null || snapshot.isLatest() || !this.isOwner()) {
+    /**
+     * Ticked rows win over the highlighted one; either way it is a single
+     * request (0.4.5 bulk endpoint) that answers as soon as the backups are
+     * gone — Drive space is reclaimed by the backend afterwards.
+     */
+    private void deleteSnapshots() {
+        List<String> ids = this.markedBackupIds();
+        if (ids.isEmpty()) {
+            WorldSnapshotSummaryDto snapshot = this.selectedSnapshot;
+            if (snapshot == null || snapshot.isLatest()) {
+                return;
+            }
+            ids = List.of(snapshot.snapshotId());
+        }
+        if (!this.isOwner()) {
             return;
         }
+        int count = ids.size();
         this.actionInFlight = true;
-        this.setStatusWarningKey("screen.sharedworld.edit_status_deleting_backup");
-        this.dataController.deleteSnapshot(this.world.id(), snapshot.snapshotId(), () -> {
+        if (count == 1) {
+            this.setStatusWarningKey("screen.sharedworld.edit_status_deleting_backup");
+        } else {
+            this.setStatusWarningKey("screen.sharedworld.edit_status_deleting_backups", count);
+        }
+        this.dataController.deleteSnapshots(this.world.id(), ids, () -> {
             this.actionInFlight = false;
             this.confirmDelete = false;
-            this.setStatusSuccessKey("screen.sharedworld.edit_status_backup_deleted");
+            this.snapshotList.clearMarks();
+            if (count == 1) {
+                this.setStatusSuccessKey("screen.sharedworld.edit_status_backup_deleted");
+            } else {
+                this.setStatusSuccessKey("screen.sharedworld.edit_status_backups_deleted", count);
+            }
             this.reloadData();
         }, error -> {
             this.actionInFlight = false;
@@ -883,7 +975,12 @@ public final class EditSharedWorldScreen extends VersionedScreen {
             return;
         }
         if (this.confirmDelete) {
-            this.setStatusWarningKey("screen.sharedworld.edit_status_delete_confirm");
+            int marked = this.markedBackupIds().size();
+            if (marked > 0) {
+                this.setStatusWarningKey("screen.sharedworld.edit_status_delete_confirm_many", marked);
+            } else {
+                this.setStatusWarningKey("screen.sharedworld.edit_status_delete_confirm");
+            }
             return;
         }
         if (this.confirmKick) {
@@ -1190,11 +1287,14 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         @Override
         public void visitChildren(Consumer<AbstractWidget> consumer) {
             this.sharedworldVisitListChild(consumer, EditSharedWorldScreen.this.snapshotList);
+            consumer.accept(EditSharedWorldScreen.this.selectAllBackupsButton);
         }
 
         @Override
         public void doLayout(ScreenRectangle area) {
             EditSharedWorldScreen.this.layoutBrowserLists();
+            // Bottom-left of the details panel, above the footer.
+            EditSharedWorldScreen.this.selectAllBackupsButton.setPosition(area.left() + 214, area.top() + area.height() - 46);
         }
     }
 

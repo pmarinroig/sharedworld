@@ -157,6 +157,9 @@ final class WorldSyncSupport {
         }
     }
 
+    /** Attempts per blob transfer before the sync fails closed (see {@link #withTransportRetries}). */
+    static final int TRANSPORT_RETRY_ATTEMPTS = 5;
+
     @FunctionalInterface
     interface BlobTransfer {
         void run() throws IOException, InterruptedException;
@@ -168,9 +171,14 @@ final class WorldSyncSupport {
      * transfer itself and are never retried — sync fails closed on those.
      * A retried transfer restarts its progress reporting, which can briefly
      * overstate the progress bar; correctness is unaffected.
+     * <p>
+     * Five attempts (0.75 + 1.5 + 3 + 6 s of backoff, ~11 s) cover a backend
+     * deploy restart: three attempts spanned ~2 s, which a multi-GB download
+     * lost to a restart that took a moment longer, re-planning from scratch
+     * instead of resuming its {@code .swpart}.
      */
     static void withTransportRetries(SyncPolicy policy, BlobTransfer transfer) throws IOException, InterruptedException {
-        RetryPolicy retry = new RetryPolicy(3, policy == null ? 750L : policy.retryBaseDelayMs(), policy == null ? 8_000L : policy.retryMaxDelayMs());
+        RetryPolicy retry = new RetryPolicy(TRANSPORT_RETRY_ATTEMPTS, policy == null ? 750L : policy.retryBaseDelayMs(), policy == null ? 8_000L : policy.retryMaxDelayMs());
         IOException lastFailure = null;
         for (int attempt = 1; attempt <= retry.maxAttempts(); attempt++) {
             long delayMs = retry.delayBeforeAttemptMs(attempt);

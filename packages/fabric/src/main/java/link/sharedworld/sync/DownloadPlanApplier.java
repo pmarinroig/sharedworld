@@ -382,6 +382,11 @@ final class DownloadPlanApplier {
             } finally {
                 if (currentBase == null || !currentBase.equals(artifactFile)) {
                     Files.deleteIfExists(artifactFile);
+                    // A step that failed past its transport retries leaves its
+                    // resumable partial behind; the next plan downloads onto a
+                    // fresh temp name, so the partial would only be swept at
+                    // the next launch.
+                    Files.deleteIfExists(artifactFile.resolveSibling(artifactFile.getFileName() + ".swpart"));
                 }
             }
         }
@@ -491,6 +496,11 @@ final class DownloadPlanApplier {
             } finally {
                 if (currentBase == null || !currentBase.equals(artifactFile)) {
                     Files.deleteIfExists(artifactFile);
+                    // A step that failed past its transport retries leaves its
+                    // resumable partial behind; the next plan downloads onto a
+                    // fresh temp name, so the partial would only be swept at
+                    // the next launch.
+                    Files.deleteIfExists(artifactFile.resolveSibling(artifactFile.getFileName() + ".swpart"));
                 }
             }
         }

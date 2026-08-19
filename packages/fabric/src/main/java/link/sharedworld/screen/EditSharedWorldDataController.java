@@ -101,10 +101,10 @@ final class EditSharedWorldDataController {
         }));
     }
 
-    void deleteSnapshot(String worldId, String snapshotId, Runnable onSuccess, Consumer<Throwable> onError) {
+    void deleteSnapshots(String worldId, java.util.List<String> snapshotIds, Runnable onSuccess, Consumer<Throwable> onError) {
         CompletableFuture.runAsync(() -> {
             try {
-                this.apiClient.deleteSnapshot(worldId, snapshotId);
+                this.apiClient.deleteSnapshots(worldId, snapshotIds);
             } catch (Exception exception) {
                 throw new RuntimeException(exception);
             }

@@ -265,6 +265,12 @@ public final class SharedWorldModels {
     ) {
     }
 
+    public record DeleteSnapshotsResultDto(
+            String worldId,
+            java.util.List<String> deletedSnapshotIds
+    ) {
+    }
+
     public record ResetInviteResponseDto(
             String[] revokedInviteIds,
             InviteCodeDto invite

@@ -34,8 +34,12 @@ final class EditWorldSettingsForm {
 
     private String difficulty = "normal";
     private String gameMode = "survival";
-    /** C3: retained-backup cap cycle; null = age policy only. */
-    private static final Integer[] MAX_BACKUPS_STEPS = { null, 10, 25, 50, 100 };
+    /**
+     * C3: retained-backup cap cycle; null = age policy only. Descending so each
+     * click asks for less Drive space; 1 (0.4.5) keeps only the current
+     * snapshot — no restorable backups at all.
+     */
+    private static final Integer[] MAX_BACKUPS_STEPS = { null, 100, 50, 25, 10, 5, 3, 1 };
     private Integer maxBackups;
     private final EnumMap<SharedWorldGameRule, Boolean> rules = new EnumMap<>(SharedWorldGameRule.class);
     private WorldSettingsDto loadedSettings;
@@ -186,6 +190,21 @@ final class EditWorldSettingsForm {
         this.onChanged.run();
     }
 
+    /**
+     * How many stored backups the pending (unsaved) cap would delete on save:
+     * positive only when the player lowered the cap this session below the
+     * number of snapshots the world has. Automatic (null) never counts — its
+     * schedule is not a hard cap.
+     */
+    int backupsDeletedBySave(int storedSnapshots) {
+        if (this.maxBackups == null || this.loadedSettings == null) {
+            return 0;
+        }
+        Integer saved = this.loadedSettings.maxBackups();
+        boolean lowered = saved == null || this.maxBackups < saved;
+        return lowered ? Math.max(0, storedSnapshots - this.maxBackups) : 0;
+    }
+
     boolean dirty() {
         return this.loadedSettings != null && !this.currentDto().equals(this.loadedSettings);
     }
@@ -240,7 +259,9 @@ final class EditWorldSettingsForm {
                 "screen.sharedworld.settings_max_backups",
                 this.maxBackups == null
                         ? Component.translatable("screen.sharedworld.settings_max_backups_auto")
-                        : Component.literal(String.valueOf(this.maxBackups))));
+                        : this.maxBackups == 1
+                                ? Component.translatable("screen.sharedworld.settings_max_backups_none")
+                                : Component.literal(String.valueOf(this.maxBackups))));
         this.maxBackupsButton.active = editable;
         for (var entry : this.ruleButtons.entrySet()) {
             boolean value = Boolean.TRUE.equals(this.rules.get(entry.getKey()));

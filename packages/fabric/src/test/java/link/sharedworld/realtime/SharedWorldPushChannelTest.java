@@ -284,6 +284,8 @@ class SharedWorldPushChannelTest {
         assertEquals(1_000L, SharedWorldPushChannel.backoffMs(0, true));
         assertEquals(15_000L, SharedWorldPushChannel.backoffMs(10, true));
         assertEquals(180_000L, SharedWorldPushChannel.backoffMs(10, false));
+        assertEquals(500L, SharedWorldPushChannel.jitterSpanMs(1_000L));
+        assertEquals(7_500L, SharedWorldPushChannel.jitterSpanMs(15_000L));
         assertEquals(8_000L, SharedWorldPushChannel.backoffMs(3, false));
     }
 

@@ -360,11 +360,21 @@ public final class SharedWorldPushChannel {
             return;
         }
         long backoff = backoffMs(failedAttempts, activitySupplier.getAsBoolean());
-        long delay = backoff + ThreadLocalRandom.current().nextLong(500);
+        long delay = backoff + ThreadLocalRandom.current().nextLong(jitterSpanMs(backoff));
         pendingReconnect = scheduler.schedule(() -> {
             pendingReconnect = null;
             connectNow();
         }, delay, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * Jitter grows with the backoff (half of it, at least 500 ms) so a fleet
+     * that lost its sockets together — a backend restart, a box reboot —
+     * comes back spread over the whole window instead of in 500 ms bursts.
+     * At the active cap that is 15–22.5 s, still inside the 30 s socket grace.
+     */
+    static long jitterSpanMs(long backoffMs) {
+        return Math.max(500L, backoffMs / 2);
     }
 
     static long backoffMs(int failedAttempts, boolean active) {
