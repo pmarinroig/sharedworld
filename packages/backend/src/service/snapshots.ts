@@ -7,6 +7,7 @@ import {
   REGION_FULL_TRANSFER_MODE,
   WHOLE_GZIP_TRANSFER_MODE,
   isRegionBundleId,
+  type DeleteSnapshotsResult,
   type FileTransferMode,
   type FinalizeSnapshotRequest,
   type ManifestFile,
@@ -18,7 +19,7 @@ import {
 
 import { HttpError } from "../http.ts";
 import { buildManifestDocument } from "../manifest-doc.ts";
-import type { RequestContext, WorldStorageBinding } from "../repository.ts";
+import { SNAPSHOT_CREATED_AT_SLACK_MS, type PendingBlobDeleteRecord, type RequestContext, type WorldStorageBinding } from "../repository.ts";
 import type { StorageBinding } from "../storage.ts";
 import type { ServiceContext } from "./context.ts";
 import {
@@ -32,7 +33,16 @@ import {
   sessionActorOf
 } from "./runtime-access.ts";
 
-const SNAPSHOT_RETENTION_ALL_RECENT_MS = 24 * 60 * 60_000;
+/**
+ * Age policy (0.4.5 schedule): every snapshot for the last hour, then one per
+ * hour up to two days, one per day up to 30 days, one per month beyond.
+ * Before 0.4.5 the keep-all window was 24h: with a 5-10 min autosave that
+ * pinned a day of near-duplicate history and was the main reason free
+ * Google Drives filled up; the fine-grained backups only matter for the last
+ * hour or so of a session (rollback recovery), which the schedule keeps.
+ */
+const SNAPSHOT_RETENTION_ALL_RECENT_MS = 60 * 60_000;
+const SNAPSHOT_RETENTION_HOURLY_MS = 48 * 60 * 60_000;
 const SNAPSHOT_RETENTION_DAILY_MS = 30 * 24 * 60 * 60_000;
 
 export async function listSnapshots(svc: ServiceContext, ctx: RequestContext, worldId: string): Promise<WorldSnapshotSummary[]> {
@@ -79,7 +89,7 @@ export async function restoreSnapshot(
     files: snapshot.files,
     packs: snapshot.packs
   }, now);
-  await applySnapshotRetention(svc, worldId, now);
+  await runAfterResponse(ctx, applySnapshotRetention(svc, worldId, now, ctx.defer != null ? DEFERRED_BLOB_DELETE_BUDGET_MS : null), "snapshot retention after restore");
   return {
     worldId,
     snapshotId
@@ -92,34 +102,89 @@ export async function deleteSnapshot(
   worldId: string,
   snapshotId: string
 ): Promise<SnapshotActionResult> {
+  await deleteSnapshots(svc, ctx, worldId, [snapshotId]);
+  return {
+    worldId,
+    snapshotId
+  };
+}
+
+/**
+ * Deletes a set of backups in one pass: one D1 batch, one unreferenced-key
+ * computation for the whole set (keys shared between the deleted backups
+ * are resolved once), and the response goes out as soon as the rows are
+ * gone. The rows are the source of truth — a deleted backup can no longer
+ * be restored and no longer counts as used storage — so the provider
+ * deletes run after the response under a time budget, with the remainder
+ * queued for the cron sweep. Before 0.4.5 every Drive delete ran inline,
+ * which put a big backup past the mod's 20s request timeout even though the
+ * rows had already been dropped.
+ */
+export async function deleteSnapshots(
+  svc: ServiceContext,
+  ctx: RequestContext,
+  worldId: string,
+  snapshotIds: readonly string[]
+): Promise<DeleteSnapshotsResult> {
   const world = await requireWorldDetails(svc, worldId, ctx.playerUuid);
   requireOwner(world, ctx, "delete backups");
   const binding = await requireWorldStorageBinding(svc, worldId);
-  const snapshot = await svc.repository.getSnapshot(worldId, snapshotId);
-  if (!snapshot) {
-    throw snapshotNotFoundError();
+  const requested = new Set(snapshotIds.filter((snapshotId) => typeof snapshotId === "string" && snapshotId.length > 0));
+  if (requested.size === 0) {
+    throw new HttpError(400, "invalid_request", "snapshotIds must name at least one backup.");
   }
-  if (world.lastSnapshotId === snapshotId) {
+  if (world.lastSnapshotId != null && requested.has(world.lastSnapshotId)) {
     throw new HttpError(409, "cannot_delete_latest_snapshot", "The latest backup cannot be deleted.");
+  }
+  const existing = await svc.repository.existingSnapshotIds(worldId, [...requested]);
+  const deleteIds = [...requested].filter((snapshotId) => existing.has(snapshotId));
+  if (deleteIds.length === 0) {
+    throw snapshotNotFoundError();
   }
   // S1: edges come only from non-self-contained referrers, so stamped
   // snapshots pin nothing and old backups become individually deletable.
   // The residual 409 covers only legacy snapshots that still resolve their
-  // chains by walking base snapshot rows.
+  // chains by walking base snapshot rows — and only when the dependant is
+  // not itself part of this deletion.
+  const deleting = new Set(deleteIds);
   const deltaBases = await svc.repository.listSnapshotDeltaBases(worldId);
-  if (deltaBases.some((edge) => edge.baseSnapshotId === snapshotId && edge.snapshotId !== snapshotId)) {
+  if (deltaBases.some((edge) => deleting.has(edge.baseSnapshotId) && edge.snapshotId !== edge.baseSnapshotId && !deleting.has(edge.snapshotId))) {
     throw new HttpError(
       409,
       "snapshot_base_in_use",
       "A newer backup still needs this one to stay restorable. It will become deletable automatically as backups refresh."
     );
   }
-  const deletion = await svc.repository.deleteSnapshots(worldId, [snapshotId]);
-  await deleteUnreferencedBlobs(svc, binding, deletion.unreferencedStorageKeys);
+  const deletion = await svc.repository.deleteSnapshots(worldId, deleteIds);
+  await runAfterResponse(
+    ctx,
+    deleteUnreferencedBlobs(svc, binding, deletion.unreferencedStorageKeys, ctx.defer != null ? DEFERRED_BLOB_DELETE_BUDGET_MS : null),
+    "blob cleanup after backup delete"
+  );
   return {
     worldId,
-    snapshotId
+    deletedSnapshotIds: deleteIds
   };
+}
+
+/**
+ * Hands `task` to the runtime's post-response slot when the request has one
+ * (Workers waitUntil), else awaits it inline (tests, tools). Failures are
+ * logged, never propagated: the durable part of the operation has already
+ * committed by the time callers reach this.
+ */
+function runAfterResponse(ctx: RequestContext, task: Promise<unknown>, label: string): Promise<void> {
+  const guarded = task.then(
+    () => undefined,
+    (error: unknown) => {
+      console.warn(`SharedWorld ${label} failed`, { cause: String(error) });
+    }
+  );
+  if (ctx.defer != null) {
+    ctx.defer(guarded);
+    return Promise.resolve();
+  }
+  return guarded;
 }
 
 export async function finalizeSnapshot(
@@ -162,7 +227,13 @@ export async function finalizeSnapshot(
   // aborting the connection) left the runtime parked in host-finalizing.
   // The pass is cutoff-safe: blob deletes run under a time budget and the
   // remainder is queued for the bounded sweeps.
-  if (await svc.repository.claimRetentionSlot(worldId, now, SNAPSHOT_RETENTION_INTERVAL_MS)) {
+  //
+  // 0.4.6: an owner cap (maxBackups) is a hard limit, not a schedule — with
+  // the hourly slot alone a "None" world accumulated one backup per save for
+  // up to an hour. A capped world runs the pass on every finalize (cheap when
+  // nothing exceeds the cap); uncapped worlds keep the hourly cadence.
+  const capped = (await svc.repository.getWorldSettings(worldId))?.settings?.maxBackups != null;
+  if (capped || await svc.repository.claimRetentionSlot(worldId, now, SNAPSHOT_RETENTION_INTERVAL_MS)) {
     const retention = applySnapshotRetention(svc, worldId, now, ctx.defer != null ? DEFERRED_BLOB_DELETE_BUDGET_MS : null)
       .catch((error: unknown) => {
         console.warn("SharedWorld snapshot retention failed", { worldId, cause: String(error) });
@@ -181,7 +252,7 @@ const SNAPSHOT_RETENTION_INTERVAL_MS = 60 * 60_000;
  * Post-response work gets ~30s before the runtime reclaims the isolate;
  * blob deletes stop well inside that and hand the rest to the queue.
  */
-const DEFERRED_BLOB_DELETE_BUDGET_MS = 15_000;
+export const DEFERRED_BLOB_DELETE_BUDGET_MS = 15_000;
 
 /**
  * 0027 write path: persist the snapshot with its pack member lists as one
@@ -342,22 +413,87 @@ export async function deleteUnreferencedBlobs(
 }
 
 const PENDING_BLOB_DELETE_SWEEP_LIMIT = 3;
+/**
+ * Per cron tick. Every key costs a handful of subrequests (provider delete,
+ * row bookkeeping; the reference check is one query for the whole tick),
+ * and the free plan caps a single invocation at 50, so the tick stays small
+ * and relies on running often.
+ */
+export const PENDING_BLOB_DELETE_CRON_LIMIT = 8;
 
 /**
- * Bounded retry of previously-failed blob deletes (0028). Request-driven —
- * no cron exists — from the upload-session path and the hourly retention
- * slot. Re-referenced keys are dropped without deleting: content-addressed
- * dedupe can legitimately resurrect a key between enqueue and sweep.
+ * Bounded retry of previously-failed blob deletes (0028), request-driven
+ * from the hourly retention slot (the cron below is the unattended drain).
+ * Re-referenced keys are dropped without deleting: content-addressed dedupe
+ * can legitimately resurrect a key between enqueue and sweep.
  */
 export async function sweepPendingBlobDeletes(svc: ServiceContext, binding: StorageBinding, now: Date): Promise<void> {
-  if (binding.storageAccountId == null) {
+  const storageAccountId = binding.storageAccountId;
+  if (storageAccountId == null) {
     return;
   }
   try {
-    const pending = await svc.repository.listPendingBlobDeletes(binding.provider, binding.storageAccountId, PENDING_BLOB_DELETE_SWEEP_LIMIT);
-    for (const entry of pending) {
-      if (await svc.repository.isStorageKeyReferenced(entry.storageKey)) {
-        await svc.repository.deletePendingBlobDelete(binding.provider, binding.storageAccountId, entry.storageKey);
+    const pending = await svc.repository.listPendingBlobDeletes(binding.provider, storageAccountId, PENDING_BLOB_DELETE_SWEEP_LIMIT);
+    await retryPendingBlobDeletes(svc, pending.map((entry) => ({ provider: binding.provider, storageAccountId, ...entry })), now);
+  } catch (error) {
+    console.warn("SharedWorld pending blob delete sweep failed", { cause: String(error) });
+  }
+}
+
+/**
+ * 0.4.5 cron drain (`scheduled` handler): the unattended counterpart of the
+ * request-driven sweeps. Instant-ack deletes and post-response GC hand
+ * their overflow to the queue, so a world that goes quiet must not leave
+ * bytes stranded until its next upload. Returns how many entries were
+ * attempted (for logging/tests).
+ */
+export async function sweepDuePendingBlobDeletes(svc: ServiceContext, now: Date, limit = PENDING_BLOB_DELETE_CRON_LIMIT): Promise<number> {
+  try {
+    const due = await svc.repository.listDuePendingBlobDeletes(now.toISOString(), limit);
+    await retryPendingBlobDeletes(svc, due, now);
+    return due.length;
+  } catch (error) {
+    console.warn("SharedWorld scheduled blob delete sweep failed", { cause: String(error) });
+    return 0;
+  }
+}
+
+/**
+ * Retries a batch of queued deletes with ONE reference check per storage
+ * account. Every queued key was verified unreferenced when it was enqueued
+ * (deleteSnapshots resolves candidates against every surviving snapshot);
+ * pack directories only ever gain references from snapshots alive at the
+ * time (finalize, restore, S1 chain-step stamping copies from living
+ * ancestors), so the only thing that can resurrect a queued key is a
+ * snapshot created after the enqueue. The re-check is therefore scoped to
+ * the account's snapshots created since the oldest enqueue in the batch
+ * (with created_at slack) instead of the whole fleet's directories — the
+ * per-key fleet scan cost ~875k rows read each on 2026-08-17.
+ */
+async function retryPendingBlobDeletes(svc: ServiceContext, entries: readonly PendingBlobDeleteRecord[], now: Date): Promise<void> {
+  const groups = new Map<string, PendingBlobDeleteRecord[]>();
+  for (const entry of entries) {
+    const groupKey = `${entry.provider}\u0000${entry.storageAccountId}`;
+    const group = groups.get(groupKey);
+    if (group == null) {
+      groups.set(groupKey, [entry]);
+    } else {
+      group.push(entry);
+    }
+  }
+  for (const group of groups.values()) {
+    const { provider, storageAccountId } = group[0];
+    const binding: StorageBinding = { provider, storageAccountId };
+    const oldestEnqueue = group.reduce((oldest, entry) => Math.min(oldest, Date.parse(entry.enqueuedAt)), Number.POSITIVE_INFINITY);
+    const referenced = await svc.repository.filterReferencedStorageKeys(group.map((entry) => entry.storageKey), {
+      provider,
+      storageAccountId,
+      snapshotsCreatedSince: Number.isFinite(oldestEnqueue) ? new Date(oldestEnqueue - SNAPSHOT_CREATED_AT_SLACK_MS).toISOString() : null
+    });
+    for (const entry of group) {
+      if (referenced.has(entry.storageKey)) {
+        console.log("SharedWorld pending blob delete dropped: key re-referenced", { storageKey: entry.storageKey, storageAccountId });
+        await svc.repository.deletePendingBlobDelete(provider, storageAccountId, entry.storageKey);
         continue;
       }
       try {
@@ -365,14 +501,12 @@ export async function sweepPendingBlobDeletes(svc: ServiceContext, binding: Stor
         if (svc.storageProvider.provider === "r2") {
           await svc.blobSigner.deleteBlob?.(entry.storageKey);
         }
-        await svc.repository.deletePendingBlobDelete(binding.provider, binding.storageAccountId, entry.storageKey);
+        await svc.repository.deletePendingBlobDelete(provider, storageAccountId, entry.storageKey);
       } catch (error) {
         console.warn("SharedWorld pending blob delete retry failed", { storageKey: entry.storageKey, attempts: entry.attempts, cause: String(error) });
-        await svc.repository.bumpPendingBlobDeleteAttempt(binding.provider, binding.storageAccountId, entry.storageKey, now.toISOString());
+        await svc.repository.bumpPendingBlobDeleteAttempt(provider, storageAccountId, entry.storageKey, now.toISOString());
       }
     }
-  } catch (error) {
-    console.warn("SharedWorld pending blob delete sweep failed", { cause: String(error) });
   }
 }
 
@@ -380,7 +514,7 @@ export async function maybeDeleteUnreferencedBlob(svc: ServiceContext, binding: 
   if (!storageKey) {
     return;
   }
-  const stillReferenced = await svc.repository.isStorageKeyReferenced(storageKey);
+  const stillReferenced = await svc.repository.isStorageKeyReferenced(storageKey, { provider: binding.provider, storageAccountId: binding.storageAccountId });
   if (!stillReferenced) {
     await deleteUnreferencedBlobs(svc, binding, [storageKey]);
   }
@@ -1003,6 +1137,7 @@ function selectSnapshotsToKeepByAge(
 ): Set<string> {
   const keep = new Set<string>();
   const nowTime = now.getTime();
+  const hourlyBuckets = new Set<string>();
   const dailyBuckets = new Set<string>();
   const monthlyBuckets = new Set<string>();
 
@@ -1016,6 +1151,15 @@ function selectSnapshotsToKeepByAge(
     const ageMs = Math.max(0, nowTime - snapshotTime);
     if (keep.size === 0 || ageMs <= SNAPSHOT_RETENTION_ALL_RECENT_MS) {
       keep.add(snapshot.snapshotId);
+      continue;
+    }
+
+    if (ageMs <= SNAPSHOT_RETENTION_HOURLY_MS) {
+      const hourBucket = snapshot.createdAt.slice(0, 13);
+      if (!hourlyBuckets.has(hourBucket)) {
+        hourlyBuckets.add(hourBucket);
+        keep.add(snapshot.snapshotId);
+      }
       continue;
     }
 

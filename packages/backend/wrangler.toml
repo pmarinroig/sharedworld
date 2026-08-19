@@ -16,7 +16,21 @@ database_id = "9375862a-5ace-47ec-8e2f-5b1bad12cf34"
 [observability]
 enabled = true
 
+# 0.4.5: minute tick that drains the blob GC retry queue (pending_blob_deletes)
+# a few keys at a time. Backup deletes answer as soon as the rows are gone and
+# reclaim Drive bytes after the response; whatever the post-response budget
+# cannot finish lands in the queue, and this is what empties it when no
+# request happens to come by.
 [vars]
+# Lane D (see docs/cutover-runbook.md): set MODE = "lane-d" to turn this
+# worker into a thin front for the Rust server — Drive download relay and
+# forwarding (incl. /ws) to BOX_URL; D1/DO stay bound but unused.
+# Secrets for that mode (wrangler secret put): INTERNAL_API_SECRET,
+# RELAY_PUBLIC_KEY, RELAY_TOKEN_KEY (from `swctl relay-keys-gen`), and
+# ADMIN_SECRET only while dumping coordinator state before the cutover.
+# MODE = "maintenance"   # cutover freeze: everything 503 + Retry-After, D1 untouched
+MODE = "lane-d"
+BOX_URL = "https://api.763616.xyz"
 ALLOW_DEV_AUTH = "false"
 ALLOW_DEV_INSECURE_E4MC = "false"
 ALLOW_DEV_GOOGLE_OAUTH = "false"

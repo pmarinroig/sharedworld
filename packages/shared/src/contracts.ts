@@ -131,7 +131,8 @@ export interface WorldSettings {
    * 0.4.2: hard cap on retained backups (applied after the age policy, the
    * latest always kept). null/absent = age policy only. Owner-set storage
    * control — meaningful since chain self-containment (S1) made retention
-   * deletions real.
+   * deletions real. 0.4.5: minimum 1 = keep only the current snapshot (no
+   * restorable backups); lowering it applies retention right away.
    */
   maxBackups?: number | null;
 }
@@ -561,6 +562,22 @@ export interface WorldSnapshotSummary {
 export interface SnapshotActionResult {
   worldId: string;
   snapshotId: string;
+}
+
+/**
+ * 0.4.5 bulk delete (`POST /worlds/:id/snapshots/delete`): one request, one
+ * D1 batch, one unreferenced-blob computation for the whole set. Ids that no
+ * longer exist are skipped; the latest snapshot is refused (409) as in the
+ * single-id form. Blob bytes are reclaimed after the response.
+ */
+export interface DeleteSnapshotsRequest {
+  snapshotIds: string[];
+}
+
+export interface DeleteSnapshotsResult {
+  worldId: string;
+  /** Ids actually removed (missing ids are dropped, not errors). */
+  deletedSnapshotIds: string[];
 }
 
 export interface UploadPlanRequest {

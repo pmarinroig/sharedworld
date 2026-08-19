@@ -26,6 +26,8 @@ import type {
   RedeemInviteRequest,
   ReleaseHostRequest,
   ResetInviteResponse,
+  DeleteSnapshotsRequest,
+  DeleteSnapshotsResult,
   SnapshotActionResult,
   SnapshotManifest,
   StorageAccountSummary,
@@ -226,6 +228,15 @@ export class SharedWorldService {
 
   async deleteSnapshot(ctx: RequestContext, worldId: string, snapshotId: string): Promise<SnapshotActionResult> {
     return snapshots.deleteSnapshot(this.svc, ctx, worldId, snapshotId);
+  }
+
+  async deleteSnapshots(ctx: RequestContext, worldId: string, request: DeleteSnapshotsRequest): Promise<DeleteSnapshotsResult> {
+    return snapshots.deleteSnapshots(this.svc, ctx, worldId, Array.isArray(request?.snapshotIds) ? request.snapshotIds : []);
+  }
+
+  /** Cron entry point: drains due entries of the blob GC retry queue. */
+  async sweepDuePendingBlobDeletes(now = new Date()): Promise<number> {
+    return snapshots.sweepDuePendingBlobDeletes(this.svc, now);
   }
 
   async finalizeSnapshot(ctx: RequestContext, worldId: string, request: FinalizeSnapshotRequest, now = new Date()) {

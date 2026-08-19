@@ -28,7 +28,7 @@ import {
   requireWorldStorageBinding,
   sessionActorOf
 } from "./runtime-access.ts";
-import { maybeDeleteUnreferencedBlob, purgeWorldSnapshots } from "./snapshots.ts";
+import { applySnapshotRetention, DEFERRED_BLOB_DELETE_BUDGET_MS, maybeDeleteUnreferencedBlob, purgeWorldSnapshots } from "./snapshots.ts";
 import { parsePositiveInt } from "./sync-plan.ts";
 
 export async function listWorlds(svc: ServiceContext, ctx: RequestContext): Promise<WorldSummary[]> {
@@ -188,10 +188,27 @@ export async function updateWorldSettings(
   const world = await requireWorldDetails(svc, worldId, ctx.playerUuid);
   requireOwner(world, ctx, "change world settings");
   const settings = validateWorldSettings(request.settings);
+  const previousMaxBackups = (await svc.repository.getWorldSettings(worldId))?.settings?.maxBackups ?? null;
   if (!await svc.repository.updateWorldSettings(worldId, JSON.stringify(settings))) {
     throw new HttpError(404, "world_not_found", "This Shared World no longer exists.");
   }
   await publishWorldEvent(svc, worldId, "settings-changed");
+  // 0.4.5: a tightened cap takes effect now rather than at the next hourly
+  // finalize slot — the owner lowering it is asking for Drive space back and
+  // would otherwise see nothing happen. Runs after the response (budgeted
+  // blob deletes, overflow to the GC queue), inline without a runtime.
+  const nextMaxBackups = settings.maxBackups ?? null;
+  if (nextMaxBackups != null && (previousMaxBackups == null || nextMaxBackups < previousMaxBackups)) {
+    const retention = applySnapshotRetention(svc, worldId, new Date(), ctx.defer != null ? DEFERRED_BLOB_DELETE_BUDGET_MS : null)
+      .catch((error: unknown) => {
+        console.warn("SharedWorld retention after maxBackups change failed", { worldId, cause: String(error) });
+      });
+    if (ctx.defer != null) {
+      ctx.defer(retention);
+    } else {
+      await retention;
+    }
+  }
   const updated = await requireWorldDetails(svc, worldId, ctx.playerUuid);
   return hydrateWorldDetails(svc, updated, ctx);
 }
@@ -426,8 +443,11 @@ function validateWorldSettings(raw: WorldSettings | undefined): WorldSettings {
     settings.gamerules = validateGameRules(raw.gamerules);
   }
   if (raw.maxBackups !== undefined) {
-    if (raw.maxBackups !== null && (!Number.isInteger(raw.maxBackups) || raw.maxBackups < 3 || raw.maxBackups > 1000)) {
-      throw new HttpError(400, "invalid_world_settings", "maxBackups must be null or an integer between 3 and 1000.");
+    // 0.4.5: floor lowered from 3 to 1 — "1" keeps only the current snapshot
+    // (no restorable backups), the owner's call for worlds too big for their
+    // Drive.
+    if (raw.maxBackups !== null && (!Number.isInteger(raw.maxBackups) || raw.maxBackups < 1 || raw.maxBackups > 1000)) {
+      throw new HttpError(400, "invalid_world_settings", "maxBackups must be null or an integer between 1 and 1000.");
     }
     settings.maxBackups = raw.maxBackups;
   }

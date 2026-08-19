@@ -222,7 +222,7 @@ describe("completeCertAuth", () => {
 describe("MojangServicesKeyProvider", () => {
   // Mojang answers 403 to all Cloudflare Workers egress, so the provider must
   // NEVER fetch: keys come from the pinned env var or the D1 row seeded by
-  // scripts/backend-seed-mojang-keys.sh, served indefinitely regardless of age.
+  // scripts/cf-seed-mojang-keys.sh, served indefinitely regardless of age.
   test("never fetches: serves the seeded D1 row regardless of its age", async () => {
     const keys = await keysPromise;
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(((() => {

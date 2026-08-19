@@ -1,4 +1,4 @@
-import type { CommitBlobSessionRequest, CreateBlobSessionRequest, FinalizeSnapshotRequest, UploadPlanRequest } from "../../../shared/src/index.ts";
+import type { CommitBlobSessionRequest, CreateBlobSessionRequest, DeleteSnapshotsRequest, FinalizeSnapshotRequest, UploadPlanRequest } from "../../../shared/src/index.ts";
 
 import { json, ok, readJson } from "../http.ts";
 import type { RouterService } from "./shared.ts";
@@ -8,6 +8,7 @@ export function snapshotRoutes(
   service: Pick<
     RouterService,
     | "deleteSnapshot"
+    | "deleteSnapshots"
     | "downloadPlan"
     | "downloadStorageBlob"
     | "finalizeSnapshot"
@@ -38,6 +39,15 @@ export function snapshotRoutes(
       pattern: new UrlPattern({ pathname: "/worlds/:worldId/snapshots/:snapshotId/restore" }),
       auth: true,
       handler: async (_request, params, ctx) => json(await service.restoreSnapshot(ctx, requireParam(params.worldId, "worldId"), requireParam(params.snapshotId, "snapshotId")))
+    },
+    {
+      // 0.4.5 bulk delete. POST rather than DELETE-with-body: some HTTP
+      // stacks drop DELETE bodies, and the shape must survive every client.
+      method: "POST",
+      pattern: new UrlPattern({ pathname: "/worlds/:worldId/snapshots/delete" }),
+      auth: true,
+      handler: async (request, params, ctx) =>
+        json(await service.deleteSnapshots(ctx, requireParam(params.worldId, "worldId"), await readJson<DeleteSnapshotsRequest>(request)))
     },
     {
       method: "DELETE",

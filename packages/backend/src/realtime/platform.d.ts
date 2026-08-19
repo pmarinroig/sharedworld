@@ -31,6 +31,7 @@ interface DurableObjectStorage {
   put(key: string, value: unknown): Promise<void>;
   delete(key: string): Promise<boolean>;
   setAlarm(scheduledTime: number | Date): Promise<void>;
+  getAlarm(): Promise<number | null>;
   deleteAlarm(): Promise<void>;
   readonly sql: SqlStorage;
 }

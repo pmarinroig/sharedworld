@@ -8,7 +8,7 @@ import { decodeBase64Field } from "./certificate.ts";
  * and api.minecraftservices.com alike — so the worker NEVER fetches this
  * document itself: the set comes from MOJANG_PLAYER_CERTIFICATE_KEYS
  * (comma-separated base64 DER, the pin/test hook) or from the D1 row that
- * scripts/backend-seed-mojang-keys.sh writes from a developer machine. The
+ * scripts/cf-seed-mojang-keys.sh writes from a developer machine. The
  * seeded set is served indefinitely regardless of age — the keys rotate on the
  * order of years, and a stale answer is far better than a failed login.
  */
@@ -39,7 +39,7 @@ export class MojangServicesKeyProvider implements ServicesKeyProvider {
     }
 
     console.error(
-      "SharedWorld Mojang publickeys cache is empty; run scripts/backend-seed-mojang-keys.sh to seed it"
+      "SharedWorld Mojang publickeys cache is empty; run scripts/cf-seed-mojang-keys.sh to seed it"
     );
     throw new HttpError(
       503,

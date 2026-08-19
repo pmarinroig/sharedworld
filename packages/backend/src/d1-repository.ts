@@ -19,6 +19,7 @@ import type { D1Database } from "./env.ts";
 import type {
   AuthChallengeRecord,
   DeleteWorldResult,
+  PendingBlobDeleteRecord,
   RequestContext,
   SnapshotDeletionResult,
   SnapshotRecord,
@@ -26,10 +27,12 @@ import type {
   StorageAccountRecord,
   StorageLinkSessionRecord,
   StorageObjectRecord,
+  StorageReferenceScope,
   StorageUploadSessionRecord,
   UserRecord,
   WorldUpdateRecord
 } from "./repository.ts";
+import { SNAPSHOT_CREATED_AT_SLACK_MS } from "./repository.ts";
 import type { SnapshotManifestCache } from "./manifest-cache.ts";
 import { manifestUnavailable, type SnapshotManifestDocumentReader } from "./manifest-doc.ts";
 import { runtimePhaseToWorldStatus } from "./runtime-protocol.ts";
@@ -56,6 +59,30 @@ import {
  */
 const LATEST_SNAPSHOT_ID_SUBQUERY = (worldIdExpr: string): string =>
   `(SELECT s.id FROM snapshots s WHERE s.world_id = ${worldIdExpr} ORDER BY s.created_at DESC, s.id DESC LIMIT 1)`;
+
+/**
+ * D1 caps bound parameters per statement at 100. Key/id lists of any size
+ * travel as ONE JSON-array parameter and are unpacked with json_each; SQLite
+ * still probes an index on the left-hand column for `x IN (SELECT ...)`.
+ */
+const IN_JSON_LIST = "IN (SELECT value FROM json_each(?))";
+
+/** Storage-key namespaces that never appear inside pack directories. */
+const MANIFEST_DOC_KEY_PREFIX = "manifests/";
+const WORLD_ICON_KEY_PREFIX = "icons/";
+
+/**
+ * Below this many candidate keys the pack-directory legs pre-filter snapshot
+ * rows with a raw substring test on packs_json (D1 bills one row read per
+ * snapshot per candidate) before expanding json_each — a snapshot whose
+ * directory text does not even contain the key cannot reference it. Above
+ * it, expanding the (already scoped) directories once is the cheaper of the
+ * two: a directory expands to packs × (1 + chain steps) rows, ~500 for a
+ * typical world, ~5k for the largest. Measured on production 2026-08-18
+ * (7-world account, 83 scoped snapshots): 8 garbage keys → 620 rows with
+ * the pre-filter; 100 keys unfiltered → 136k rows.
+ */
+const DIRECTORY_PREFILTER_MAX_KEYS = 256;
 
 function looseFileOfRow(row: Row): ManifestFile {
   return {
@@ -535,58 +562,138 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     return { worldDeleted: true, deletedCustomIconStorageKey };
   }
 
-  async isStorageKeyReferenced(storageKey: string): Promise<boolean> {
-    const snapshotReference = await this.first<Row>(
-      "SELECT 1 AS found FROM snapshot_files WHERE storage_key = ? LIMIT 1",
-      storageKey
-    );
-    if (snapshotReference) {
-      return true;
+  async isStorageKeyReferenced(storageKey: string, scope: StorageReferenceScope | null = null): Promise<boolean> {
+    return (await this.filterReferencedStorageKeys([storageKey], scope)).has(storageKey);
+  }
+
+  async filterReferencedStorageKeys(storageKeys: readonly string[], scope: StorageReferenceScope | null = null): Promise<Set<string>> {
+    return this.referencedStorageKeys(storageKeys, scope, null);
+  }
+
+  /**
+   * Reference resolution for GC. Keys are routed by namespace: manifest
+   * documents and world icons live in their own indexed columns and never
+   * inside pack directories, so they skip the directory legs entirely (a
+   * world-icon swap used to pay two fleet-wide json_each scans to learn
+   * nothing). Snapshot files, legacy pack rows and manifest pointers are
+   * indexed lookups and stay account-agnostic (a cross-account hit only ever
+   * errs on the side of keeping a blob). The pack-directory + chain-recipe
+   * legs are unindexed json_each scans — the 875k-rows-per-key whale of
+   * 2026-08-17 — and are bounded three ways: to the account's worlds
+   * (`scope`), to snapshots created since an instant (`scope`), and to
+   * snapshots a caller has not already resolved in memory
+   * (`resolvedInMemory`: deleteSnapshots holds the world's own directories,
+   * so SQL only has to look at the account's OTHER worlds plus anything
+   * finalized after that load).
+   */
+  private async referencedStorageKeys(
+    storageKeys: readonly string[],
+    scope: StorageReferenceScope | null,
+    resolvedInMemory: { worldId: string; loadedAt: string } | null
+  ): Promise<Set<string>> {
+    const referenced = new Set<string>();
+    const unique = [...new Set(storageKeys)];
+    if (unique.length === 0) {
+      return referenced;
     }
-    // Legacy transition leg (pre-0026 pack rows) plus the JSON directories.
-    const packReference = await this.first<Row>(
-      "SELECT 1 AS found FROM snapshot_packs WHERE storage_key = ? LIMIT 1",
-      storageKey
-    );
-    if (packReference) {
-      return true;
+    const collect = (rows: Row[]) => {
+      for (const row of rows) {
+        const key = asNullableString(row.storage_key);
+        if (key != null) {
+          referenced.add(key);
+        }
+      }
+    };
+    // Snapshot-side scope, shared by every leg that hangs off a snapshot row
+    // (`s` is the snapshots alias in each statement).
+    const snapshotConditions: string[] = [];
+    const snapshotParams: unknown[] = [];
+    if (scope != null) {
+      snapshotConditions.push("s.world_id IN (SELECT w.id FROM worlds w WHERE w.storage_provider = ? AND w.storage_account_id IS ?)");
+      snapshotParams.push(scope.provider, scope.storageAccountId);
+      if (scope.snapshotsCreatedSince != null) {
+        snapshotConditions.push("s.created_at >= ?");
+        snapshotParams.push(scope.snapshotsCreatedSince);
+      }
     }
-    const directoryReference = await this.first<Row>(
-      `SELECT 1 AS found
-       FROM snapshots, json_each(COALESCE(snapshots.packs_json, '[]')) AS pack
-       WHERE json_extract(pack.value, '$.storageKey') = ?
-       LIMIT 1`,
-      storageKey
-    );
-    if (directoryReference) {
-      return true;
+    const snapshotScope = snapshotConditions.length === 0 ? "" : ` AND ${snapshotConditions.join(" AND ")}`;
+
+    const manifestKeys = unique.filter((key) => key.startsWith(MANIFEST_DOC_KEY_PREFIX));
+    const iconKeys = unique.filter((key) => key.startsWith(WORLD_ICON_KEY_PREFIX));
+    const blobKeys = unique.filter((key) => !key.startsWith(MANIFEST_DOC_KEY_PREFIX) && !key.startsWith(WORLD_ICON_KEY_PREFIX));
+
+    if (manifestKeys.length > 0) {
+      // 0027 manifest documents (partial index idx_snapshots_manifest_storage_key).
+      collect(await this.all<Row>(
+        `SELECT DISTINCT s.manifest_storage_key AS storage_key
+         FROM snapshots s
+         WHERE s.manifest_storage_key ${IN_JSON_LIST}${snapshotScope}`,
+        JSON.stringify(manifestKeys),
+        ...snapshotParams
+      ));
     }
-    // S1 chain recipes: a surviving snapshot's steps may reference blobs
-    // whose original snapshot rows are long gone.
-    const chainStepReference = await this.first<Row>(
-      `SELECT 1 AS found
-       FROM snapshots, json_each(COALESCE(snapshots.packs_json, '[]')) AS pack,
-            json_each(COALESCE(json_extract(pack.value, '$.chainSteps'), '[]')) AS step
-       WHERE json_extract(step.value, '$.storageKey') = ?
-       LIMIT 1`,
-      storageKey
-    );
-    if (chainStepReference) {
-      return true;
+    if (iconKeys.length > 0) {
+      collect(await this.all<Row>(
+        `SELECT DISTINCT w.custom_icon_storage_key AS storage_key
+         FROM worlds w
+         WHERE w.deleted_at IS NULL AND w.custom_icon_storage_key ${IN_JSON_LIST}${scope == null ? "" : " AND w.storage_provider = ? AND w.storage_account_id IS ?"}`,
+        JSON.stringify(iconKeys),
+        ...(scope == null ? [] : [scope.provider, scope.storageAccountId])
+      ));
     }
-    // 0027 manifest documents (partial index idx_snapshots_manifest_storage_key).
-    const manifestDocReference = await this.first<Row>(
-      "SELECT 1 AS found FROM snapshots WHERE manifest_storage_key = ? LIMIT 1",
-      storageKey
-    );
-    if (manifestDocReference) {
-      return true;
+    if (blobKeys.length === 0) {
+      return referenced;
     }
-    const iconReference = await this.first<Row>(
-      "SELECT 1 AS found FROM worlds WHERE custom_icon_storage_key = ? AND deleted_at IS NULL LIMIT 1",
-      storageKey
-    );
-    return iconReference != null;
+    const blobKeysJson = JSON.stringify(blobKeys);
+    // Indexed row legs: loose files + pre-0027 member rows, and pre-0026 pack rows.
+    collect(await this.all<Row>(
+      `SELECT DISTINCT sf.storage_key
+       FROM snapshot_files sf
+       JOIN snapshots s ON s.id = sf.snapshot_id
+       WHERE sf.storage_key ${IN_JSON_LIST}${snapshotScope}`,
+      blobKeysJson,
+      ...snapshotParams
+    ));
+    collect(await this.all<Row>(
+      `SELECT DISTINCT sp.storage_key
+       FROM snapshot_packs sp
+       JOIN snapshots s ON s.id = sp.snapshot_id
+       WHERE sp.storage_key ${IN_JSON_LIST}${snapshotScope}`,
+      blobKeysJson,
+      ...snapshotParams
+    ));
+
+    // Pack directories (0026) and S1 chain recipes: a surviving snapshot's
+    // steps may reference blobs whose original snapshot rows are long gone.
+    // These are the unindexed json_each legs — every bound applies here.
+    const conditions = ["s.packs_json IS NOT NULL", ...snapshotConditions];
+    const params: unknown[] = [...snapshotParams];
+    if (resolvedInMemory != null) {
+      conditions.push("(s.world_id != ? OR s.created_at >= ?)");
+      params.push(resolvedInMemory.worldId, new Date(Date.parse(resolvedInMemory.loadedAt) - SNAPSHOT_CREATED_AT_SLACK_MS).toISOString());
+    }
+    if (blobKeys.length <= DIRECTORY_PREFILTER_MAX_KEYS) {
+      conditions.push("EXISTS (SELECT 1 FROM json_each(?) AS candidate WHERE instr(s.packs_json, candidate.value) > 0)");
+      params.push(blobKeysJson);
+    }
+    const where = conditions.join("\n           AND ");
+    collect(await this.all<Row>(
+      `SELECT json_extract(pack.value, '$.storageKey') AS storage_key
+         FROM snapshots s, json_each(COALESCE(s.packs_json, '[]')) AS pack
+         WHERE ${where}
+           AND json_extract(pack.value, '$.storageKey') ${IN_JSON_LIST}
+       UNION ALL
+       SELECT json_extract(step.value, '$.storageKey') AS storage_key
+         FROM snapshots s, json_each(COALESCE(s.packs_json, '[]')) AS pack,
+              json_each(COALESCE(json_extract(pack.value, '$.chainSteps'), '[]')) AS step
+         WHERE ${where}
+           AND json_extract(step.value, '$.storageKey') ${IN_JSON_LIST}`,
+      ...params,
+      blobKeysJson,
+      ...params,
+      blobKeysJson
+    ));
+    return referenced;
   }
 
   async getWorldStorageBinding(worldId: string) {
@@ -979,9 +1086,9 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     ).bind(provider, storageAccountId, storageKey, enqueuedAt)));
   }
 
-  async listPendingBlobDeletes(provider: StorageProviderType, storageAccountId: string, limit: number): Promise<Array<{ storageKey: string; attempts: number }>> {
+  async listPendingBlobDeletes(provider: StorageProviderType, storageAccountId: string, limit: number): Promise<Array<{ storageKey: string; attempts: number; enqueuedAt: string }>> {
     const rows = await this.all<Row>(
-      `SELECT storage_key, attempts
+      `SELECT storage_key, attempts, enqueued_at
        FROM pending_blob_deletes
        WHERE provider = ? AND storage_account_id = ?
        ORDER BY enqueued_at ASC
@@ -990,7 +1097,30 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       storageAccountId,
       limit
     );
-    return rows.map((row) => ({ storageKey: String(row.storage_key), attempts: Number(row.attempts) }));
+    return rows.map((row) => ({ storageKey: String(row.storage_key), attempts: Number(row.attempts), enqueuedAt: String(row.enqueued_at) }));
+  }
+
+  async listDuePendingBlobDeletes(now: string, limit: number): Promise<PendingBlobDeleteRecord[]> {
+    // Backoff after the n-th failed attempt: 5 min * 2^(n-1), capped at 24h
+    // (the shift is clamped so it stays in range). ISO timestamps with a
+    // trailing Z parse in SQLite's datetime(); both sides compare in UTC.
+    const rows = await this.all<Row>(
+      `SELECT provider, storage_account_id, storage_key, attempts, enqueued_at
+       FROM pending_blob_deletes
+       WHERE last_attempt_at IS NULL
+          OR datetime(last_attempt_at, '+' || MIN(1440, 5 * (1 << MIN(MAX(attempts - 1, 0), 12))) || ' minutes') <= datetime(?)
+       ORDER BY attempts ASC, enqueued_at ASC
+       LIMIT ?`,
+      now,
+      limit
+    );
+    return rows.map((row) => ({
+      provider: String(row.provider) as StorageProviderType,
+      storageAccountId: String(row.storage_account_id),
+      storageKey: String(row.storage_key),
+      attempts: Number(row.attempts),
+      enqueuedAt: String(row.enqueued_at)
+    }));
   }
 
   async deletePendingBlobDelete(provider: StorageProviderType, storageAccountId: string, storageKey: string): Promise<void> {
@@ -1826,13 +1956,12 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       };
     }
 
-    const requestedPlaceholders = sqlPlaceholders(snapshotIds.length);
     const deletedRows = await this.all<Row>(
       `SELECT id, manifest_storage_key
        FROM snapshots
-       WHERE world_id = ? AND id IN (${requestedPlaceholders})`,
+       WHERE world_id = ? AND id ${IN_JSON_LIST}`,
       worldId,
-      ...snapshotIds
+      JSON.stringify(snapshotIds)
     );
     const deletedSnapshotIds = deletedRows.map((row) => String(row.id));
     const doomedManifestDocKeys = deletedRows
@@ -1845,25 +1974,35 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
       };
     }
 
-    const deletePlaceholders = sqlPlaceholders(deletedSnapshotIds.length);
+    const deletedIdsJson = JSON.stringify(deletedSnapshotIds);
     const doomed = new Set(deletedSnapshotIds);
     const candidateRows = await this.all<Row>(
       `SELECT DISTINCT storage_key
        FROM snapshot_files
-       WHERE snapshot_id IN (${deletePlaceholders})`,
-      ...deletedSnapshotIds
+       WHERE snapshot_id ${IN_JSON_LIST}`,
+      deletedIdsJson
     );
     // Legacy transition leg: pack rows written by a pre-0026 worker.
     const packCandidateRows = await this.all<Row>(
       `SELECT DISTINCT storage_key
        FROM snapshot_packs
-       WHERE snapshot_id IN (${deletePlaceholders})`,
-      ...deletedSnapshotIds
+       WHERE snapshot_id ${IN_JSON_LIST}`,
+      deletedIdsJson
     );
 
+    // Where the world's blobs live: the reference check below is scoped to
+    // this storage account (deleted worlds included — purge runs here too).
+    const worldRow = await this.first<Row>("SELECT storage_provider, storage_account_id FROM worlds WHERE id = ?", worldId);
+    const scope: StorageReferenceScope = {
+      provider: String(worldRow?.storage_provider ?? "google-drive") as StorageProviderType,
+      storageAccountId: asNullableString(worldRow?.storage_account_id)
+    };
+
     // All of the world's snapshots with their pack directories, oldest
-    // first: feeds doomed-pack candidates, referrer detection, and the
-    // oldest-heir promotion choice. Retention bounds this to ~35 rows.
+    // first: feeds doomed-pack candidates, referrer detection, the
+    // oldest-heir promotion choice, and the in-memory half of the
+    // reference check. Retention bounds this to ~35 rows.
+    const directoriesLoadedAt = new Date().toISOString();
     const worldSnapshotRows = await this.all<Row>(
       `SELECT id, packs_json FROM snapshots WHERE world_id = ? ORDER BY created_at ASC, id ASC`,
       worldId
@@ -1900,11 +2039,11 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
        FROM snapshot_packs sp
        JOIN snapshots s ON s.id = sp.snapshot_id
        WHERE s.world_id = ?
-         AND sp.members_snapshot_id IN (${deletePlaceholders})
-         AND sp.snapshot_id NOT IN (${deletePlaceholders})`,
+         AND sp.members_snapshot_id ${IN_JSON_LIST}
+         AND sp.snapshot_id NOT ${IN_JSON_LIST}`,
       worldId,
-      ...deletedSnapshotIds,
-      ...deletedSnapshotIds
+      deletedIdsJson,
+      deletedIdsJson
     );
     type Referrer = { snapshotId: string; packId: string; donorId: string; representation: "json" | "legacy" };
     const referrers: Referrer[] = [];
@@ -1980,19 +2119,19 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
     }
     statements.push(this.prepared(
       `DELETE FROM snapshot_files
-       WHERE snapshot_id IN (${deletePlaceholders})`,
-      ...deletedSnapshotIds
+       WHERE snapshot_id ${IN_JSON_LIST}`,
+      deletedIdsJson
     ));
     statements.push(this.prepared(
       `DELETE FROM snapshot_packs
-       WHERE snapshot_id IN (${deletePlaceholders})`,
-      ...deletedSnapshotIds
+       WHERE snapshot_id ${IN_JSON_LIST}`,
+      deletedIdsJson
     ));
     statements.push(this.prepared(
       `DELETE FROM snapshots
-       WHERE world_id = ? AND id IN (${deletePlaceholders})`,
+       WHERE world_id = ? AND id ${IN_JSON_LIST}`,
       worldId,
-      ...deletedSnapshotIds
+      deletedIdsJson
     ));
     // One transactional batch: promotion and deletion land together, so a
     // failure can never leave an heir pointing at a vanished donor.
@@ -2000,47 +2139,35 @@ export class D1SharedWorldRepository implements SharedWorldRepository {
 
     let unreferencedStorageKeys: string[] = [];
     if (candidateStorageKeys.length > 0) {
-      const keyPlaceholders = sqlPlaceholders(candidateStorageKeys.length);
-      const referencedRows = await this.all<Row>(
-        `SELECT DISTINCT storage_key
-         FROM snapshot_files
-         WHERE storage_key IN (${keyPlaceholders})`,
-        ...candidateStorageKeys
-      );
-      const referencedPackRows = await this.all<Row>(
-        `SELECT DISTINCT storage_key
-         FROM snapshot_packs
-         WHERE storage_key IN (${keyPlaceholders})`,
-        ...candidateStorageKeys
-      );
-      // Content-addressed dedupe is per storage account, cross-world — the
-      // directory leg must scan every world's snapshots, like the row legs.
-      const referencedDirectoryRows = await this.all<Row>(
-        `SELECT DISTINCT json_extract(pack.value, '$.storageKey') AS storage_key
-         FROM snapshots, json_each(COALESCE(snapshots.packs_json, '[]')) AS pack
-         WHERE json_extract(pack.value, '$.storageKey') IN (${keyPlaceholders})`,
-        ...candidateStorageKeys
-      );
-      // 0027 leg: surviving snapshots' manifest documents (partial index).
-      const referencedManifestDocRows = await this.all<Row>(
-        `SELECT DISTINCT manifest_storage_key AS storage_key
-         FROM snapshots
-         WHERE manifest_storage_key IN (${keyPlaceholders})`,
-        ...candidateStorageKeys
-      );
-      // S1 leg: surviving snapshots' chain recipes (account-wide, like the
-      // other legs — content-addressed keys are shared cross-world).
-      const referencedChainStepRows = await this.all<Row>(
-        `SELECT DISTINCT json_extract(step.value, '$.storageKey') AS storage_key
-         FROM snapshots, json_each(COALESCE(snapshots.packs_json, '[]')) AS pack,
-              json_each(COALESCE(json_extract(pack.value, '$.chainSteps'), '[]')) AS step
-         WHERE json_extract(step.value, '$.storageKey') IN (${keyPlaceholders})`,
-        ...candidateStorageKeys
-      );
-      const stillReferenced = new Set(
-        [...referencedRows, ...referencedPackRows, ...referencedDirectoryRows, ...referencedManifestDocRows, ...referencedChainStepRows]
-          .map((row) => String(row.storage_key))
-      );
+      // Content-addressed dedupe is per storage account, cross-world, so a
+      // candidate survives if ANY snapshot in the account still names it.
+      // This world's survivors are already parsed above: resolve their pack
+      // and chain-recipe references in memory (zero extra rows read), then
+      // ask SQL only about what memory cannot see — the account's other
+      // worlds, same-world snapshots finalized after the load, and the
+      // indexed row/manifest legs. On a one-world account this keeps
+      // retention off the pack-directory scan entirely.
+      const candidateSet = new Set(candidateStorageKeys);
+      const stillReferenced = new Set<string>();
+      for (const [snapshotId, directory] of directories) {
+        if (doomed.has(snapshotId)) {
+          continue;
+        }
+        for (const entry of directory ?? []) {
+          if (candidateSet.has(entry.storageKey)) {
+            stillReferenced.add(entry.storageKey);
+          }
+          for (const step of entry.chainSteps ?? []) {
+            if (candidateSet.has(step.storageKey)) {
+              stillReferenced.add(step.storageKey);
+            }
+          }
+        }
+      }
+      const unresolved = candidateStorageKeys.filter((key) => !stillReferenced.has(key));
+      for (const key of await this.referencedStorageKeys(unresolved, scope, { worldId, loadedAt: directoriesLoadedAt })) {
+        stillReferenced.add(key);
+      }
       unreferencedStorageKeys = candidateStorageKeys.filter((key) => !stillReferenced.has(key)).sort();
     }
 

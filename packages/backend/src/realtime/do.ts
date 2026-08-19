@@ -319,6 +319,16 @@ export class WorldCoordinatorDO {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname === "/dump" && request.method === "GET") {
+      // Lane-D cutover: the whole kv table (runtime, lastEpoch, waiters,
+      // presence, fingerprints…) — the state that lives nowhere in D1.
+      const rows: Record<string, string> = {};
+      for (const row of this.ctx.storage.sql.exec("SELECT key, value FROM kv").toArray()) {
+        rows[String(row.key)] = String(row.value);
+      }
+      const alarm = await this.ctx.storage.getAlarm();
+      return Response.json({ worldId: this.ctx.id.name ?? null, kv: rows, alarmAt: alarm == null ? null : new Date(alarm).toISOString() });
+    }
     if (url.pathname !== "/call" || request.method !== "POST") {
       return new Response("not found", { status: 404 });
     }

@@ -208,6 +208,9 @@ const defaultRouterService = {
   async deleteSnapshot(_ctx, _worldId, _snapshotId) {
     return unexpectedRouteCall("deleteSnapshot");
   },
+  async deleteSnapshots(_ctx, _worldId, _request) {
+    return unexpectedRouteCall("deleteSnapshots");
+  },
   async deleteWorld(_ctx, _worldId) {
     return unexpectedRouteCall("deleteWorld");
   },

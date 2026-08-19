@@ -52,7 +52,7 @@ import {
   requireSessionAccessAllowingRevokedHost,
   requireWorldStorageBinding
 } from "./runtime-access.ts";
-import { isDeltaPackTransferMode, storageKeysExist, sweepPendingBlobDeletes } from "./snapshots.ts";
+import { isDeltaPackTransferMode, storageKeysExist } from "./snapshots.ts";
 import { cachedQuota } from "./worlds.ts";
 import { driveStorageFullError } from "../storage/drive.ts";
 
@@ -504,7 +504,11 @@ export async function createBlobUploadSession(
   const now = new Date();
   await failIfDriveFull(svc, binding);
   await sweepExpiredUploadSessions(svc, capable, binding, now);
-  await sweepPendingBlobDeletes(svc, binding, now);
+  // No GC retry sweep here: this runs once per BLOB (a big world opens
+  // hundreds of sessions per snapshot, several in parallel), so a queue that
+  // filled after a retention prune used to bill its reference checks per
+  // upload and add seconds to each session request. The cron drain and the
+  // hourly retention slot own the queue.
   const sessionUrl = await capable.createResumableSession(
     binding,
     request.storageKey,

@@ -99,6 +99,36 @@ export interface WorldStorageBinding {
   storageAccountId: string | null;
 }
 
+export interface PendingBlobDeleteRecord {
+  provider: StorageProviderType;
+  storageAccountId: string;
+  storageKey: string;
+  attempts: number;
+  enqueuedAt: string;
+}
+
+/**
+ * Where a storage key could still be referenced from. Blobs live in one
+ * storage account (worlds never change binding), so only that account's
+ * worlds can reference them; `snapshotsCreatedSince` narrows the pack-directory
+ * scan further to snapshots that did not exist when the key was last verified
+ * unreferenced (see the GC retry sweep). Both bounds exist because the
+ * pack-directory legs are `json_each` scans with no index behind them.
+ */
+export interface StorageReferenceScope {
+  provider: StorageProviderType;
+  storageAccountId: string | null;
+  snapshotsCreatedSince?: string | null;
+}
+
+/**
+ * Slack applied to `created_at` bounds on snapshots: the column is stamped
+ * from the request's start time and the row lands at the end of finalize,
+ * so a snapshot committed after some instant can carry a created_at up to
+ * a couple of minutes before it. Read as "created no earlier than".
+ */
+export const SNAPSHOT_CREATED_AT_SLACK_MS = 15 * 60_000;
+
 export type { UncleanShutdownWarning };
 
 export interface RequestContext {
@@ -165,7 +195,15 @@ export interface WorldRepository {
   /** Lightweight settings read for the host heartbeat; null when the world does not exist. */
   getWorldSettings(worldId: string): Promise<{ settings: WorldSettings | null; settingsRevision: number } | null>;
   deleteWorldForPlayer(ctx: RequestContext, worldId: string, now: Date): Promise<DeleteWorldResult>;
-  isStorageKeyReferenced(storageKey: string): Promise<boolean>;
+  /** Single-key form of filterReferencedStorageKeys. */
+  isStorageKeyReferenced(storageKey: string, scope?: StorageReferenceScope | null): Promise<boolean>;
+  /**
+   * The subset of `storageKeys` some surviving row still points at (snapshot
+   * files, legacy pack rows, pack directories + chain recipes, manifest
+   * documents, world icons). One query per leg for the whole set. Production
+   * callers pass a scope; unscoped calls scan every world's directories.
+   */
+  filterReferencedStorageKeys(storageKeys: readonly string[], scope?: StorageReferenceScope | null): Promise<Set<string>>;
   getWorldStorageBinding(worldId: string): Promise<WorldStorageBinding | null>;
   getStorageUsage(worldId: string): Promise<StorageUsageSummary>;
 }
@@ -202,7 +240,14 @@ export interface StorageRepository {
   /** Batch form of enqueuePendingBlobDelete (one D1 batch, duplicates ignored). */
   enqueuePendingBlobDeletes(provider: StorageProviderType, storageAccountId: string, storageKeys: readonly string[], enqueuedAt: string): Promise<void>;
   /** Oldest pending deletes for the account, up to limit. */
-  listPendingBlobDeletes(provider: StorageProviderType, storageAccountId: string, limit: number): Promise<Array<{ storageKey: string; attempts: number }>>;
+  listPendingBlobDeletes(provider: StorageProviderType, storageAccountId: string, limit: number): Promise<Array<{ storageKey: string; attempts: number; enqueuedAt: string }>>;
+  /**
+   * 0.4.5 cron drain: pending deletes across every account that are due at
+   * `now` — never attempted, or past their attempt-based backoff (5 min
+   * doubling per attempt, capped at a day). Fewest attempts first so a
+   * stuck account cannot starve fresh work.
+   */
+  listDuePendingBlobDeletes(now: string, limit: number): Promise<PendingBlobDeleteRecord[]>;
   deletePendingBlobDelete(provider: StorageProviderType, storageAccountId: string, storageKey: string): Promise<void>;
   bumpPendingBlobDeleteAttempt(provider: StorageProviderType, storageAccountId: string, storageKey: string, attemptedAt: string): Promise<void>;
 }

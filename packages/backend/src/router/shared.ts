@@ -20,6 +20,7 @@ export type RouterService = Pick<
   | "createWorld"
   | "abandonFinalization"
   | "deleteSnapshot"
+  | "deleteSnapshots"
   | "deleteWorld"
   | "downloadPlan"
   | "downloadStorageBlob"

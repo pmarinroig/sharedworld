@@ -3,7 +3,7 @@ name: Refresh Mojang keys
 # Mojang serves api.minecraftservices.com/publickeys with HTTP 403 to
 # Cloudflare Workers egress, so the Worker can never refresh its own D1 cache
 # of player-certificate public keys. GitHub-hosted runners (Azure egress) are
-# not blocked, so this workflow does what scripts/backend-seed-mojang-keys.sh
+# not blocked, so this workflow does what scripts/cf-seed-mojang-keys.sh
 # does from a dev machine: fetch the key set here and write it into remote D1.
 #
 # The seed step needs a CLOUDFLARE_API_TOKEN repo secret (D1 edit permission).
