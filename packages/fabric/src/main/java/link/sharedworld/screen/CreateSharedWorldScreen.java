@@ -19,9 +19,7 @@ import link.sharedworld.versioned.GuiBlit;
 import link.sharedworld.versioned.VersionedScreen;
 import net.minecraft.network.chat.Component;
 
-import java.awt.Desktop;
 import java.io.IOException;
-import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -655,12 +653,7 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
             throw new IOException(SharedWorldText.string("screen.sharedworld.storage_missing_auth_url"));
         }
         this.minecraft.keyboardHandler.setClipboard(attempt.authUrl());
-        if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
-            Desktop.getDesktop().browse(URI.create(attempt.authUrl()));
-            attempt.setCopiedFallback(false);
-            return;
-        }
-        attempt.setCopiedFallback(true);
+        attempt.setCopiedFallback(!link.sharedworld.util.BrowserOpener.open(attempt.authUrl()));
     }
 
     private void cancelDriveLinkAttempt(boolean cancelBackend) {

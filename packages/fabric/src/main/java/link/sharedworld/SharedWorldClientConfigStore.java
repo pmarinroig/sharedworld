@@ -60,6 +60,11 @@ public final class SharedWorldClientConfigStore {
         return configuredBackendBaseUrl();
     }
 
+    /** Account deletion: revert to defaults in memory only (the file is deleted separately). */
+    public synchronized void resetForAccountDeletion() {
+        this.state = new ClientConfig();
+    }
+
     private ClientConfig load() {
         if (!Files.exists(this.file)) {
             return new ClientConfig();

@@ -62,7 +62,6 @@ pub struct StorageLinkSessionRecord {
 pub struct StorageLinkSessionUpdate {
     pub status: Option<StorageLinkStatus>,
     pub linked_account_email: Option<Option<String>>,
-    pub account_display_name: Option<Option<String>>,
     pub error_message: Option<Option<String>>,
     pub storage_account_id: Option<Option<String>>,
     pub completed_at: Option<Option<String>>,

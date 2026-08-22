@@ -178,6 +178,23 @@ pub trait ResumableUploadCapable: Send + Sync {
     async fn delete_object_by_id(&self, binding: &StorageBinding, file_id: &str) -> HttpResult<()>;
 }
 
+/// Optional provider capability behind account unlink / account deletion:
+/// enumerate everything the app holds for an account — including files that
+/// lost their `storage_objects` row — and revoke the app's OAuth access.
+#[async_trait]
+pub trait AccountCleanupCapable: Send + Sync {
+    /// One page of provider file ids for the bound account's app data.
+    async fn list_account_object_ids(
+        &self,
+        binding: &StorageBinding,
+        page_token: Option<&str>,
+    ) -> HttpResult<(Vec<String>, Option<String>)>;
+    /// Delete by provider file id (an already-gone file is success).
+    async fn delete_account_object(&self, binding: &StorageBinding, file_id: &str) -> HttpResult<()>;
+    /// Best-effort OAuth revocation for the bound account's tokens.
+    async fn revoke_account_access(&self, binding: &StorageBinding) -> HttpResult<()>;
+}
+
 #[async_trait]
 pub trait StorageProvider: Send + Sync {
     fn provider(&self) -> StorageProviderType;
@@ -203,6 +220,10 @@ pub trait StorageProvider: Send + Sync {
     }
     /// Lane-D relay grants (direct reads by the CF relay); Drive only.
     fn relay(&self) -> Option<&dyn crate::relay::RelayCapable> {
+        None
+    }
+    /// Account unlink / delete-account cleanup; Drive only.
+    fn account_cleanup(&self) -> Option<&dyn AccountCleanupCapable> {
         None
     }
     /// True when 0027 manifest documents can be written/read for this binding

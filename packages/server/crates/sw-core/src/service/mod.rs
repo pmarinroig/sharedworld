@@ -1,6 +1,7 @@
 //! Service layer: `ServiceContext` (the dependencies every domain module
 //! operates on) and the `Service` façade the HTTP layer calls.
 
+pub mod account;
 pub mod members;
 pub mod runtime_access;
 pub mod session;

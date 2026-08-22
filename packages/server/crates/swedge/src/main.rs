@@ -67,7 +67,10 @@ struct Args {
 
 fn init_tracing(json: bool) {
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    // rustls_acme::incoming logs every malformed TLS handshake at ERROR;
+    // internet scanners produce hundreds of those a day, drowning real errors.
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info,rustls_acme::incoming=off"));
     if json {
         tracing_subscriber::registry().with(filter).with(fmt::layer().json().flatten_event(true)).init();
     } else {

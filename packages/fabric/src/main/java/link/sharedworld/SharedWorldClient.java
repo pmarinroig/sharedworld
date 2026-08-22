@@ -373,6 +373,55 @@ public final class SharedWorldClient implements ClientModInitializer {
         sessionCoordinator.clearPersistedGuestRecovery();
     }
 
+    /**
+     * Account deletion, final step: stop everything that could silently
+     * re-authenticate (a fresh handshake would recreate the just-deleted
+     * account), forget in-memory state, and delete every SharedWorld file on
+     * this machine — config JSONs and the whole game-dir tree, playable world
+     * copies included. Deliberately re-entering the SharedWorld UI afterwards
+     * starts over like a fresh install.
+     */
+    public static void wipeLocalDataForAccountDeletion() {
+        if (pushChannel != null) {
+            pushChannel.stop();
+        }
+        pushChannelStarted = false;
+        apiClient.forgetSessionForAccountDeletion();
+        SharedWorldSessionStore.shared().resetForAccountDeletion();
+        LIST_STATE.resetForAccountDeletion();
+        SharedWorldClientConfigStore.shared().resetForAccountDeletion();
+        java.nio.file.Path configDir = FabricLoader.getInstance().getConfigDir();
+        String[] configFiles = {
+                "sharedworld-sessions.json",
+                "sharedworld-client.json",
+                "sharedworld-worlds.json",
+                "sharedworld-recovery.json",
+                "sharedworld-host-recovery.json",
+                "sharedworld-release.json"
+        };
+        for (String name : configFiles) {
+            try {
+                java.nio.file.Files.deleteIfExists(configDir.resolve(name));
+            } catch (java.io.IOException exception) {
+                LOGGER.warn("SharedWorld could not delete {}", name, exception);
+            }
+        }
+        deleteTreeQuietly(Minecraft.getInstance().gameDirectory.toPath().resolve("sharedworld"));
+    }
+
+    private static void deleteTreeQuietly(java.nio.file.Path root) {
+        if (!java.nio.file.Files.exists(root)) {
+            return;
+        }
+        try (java.util.stream.Stream<java.nio.file.Path> stream = java.nio.file.Files.walk(root)) {
+            for (java.nio.file.Path path : stream.sorted(java.util.Comparator.reverseOrder()).toList()) {
+                java.nio.file.Files.deleteIfExists(path);
+            }
+        } catch (java.io.IOException exception) {
+            LOGGER.warn("SharedWorld could not fully delete {}", root, exception);
+        }
+    }
+
     public static SharedWorldCustomIconStore customIconStore() {
         return CUSTOM_ICON_STORE;
     }

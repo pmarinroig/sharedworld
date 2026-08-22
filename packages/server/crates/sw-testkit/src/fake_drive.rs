@@ -14,8 +14,8 @@ use parking_lot::Mutex;
 use sw_contracts::StorageProviderType;
 use sw_core::http_error::{HttpError, HttpResult};
 use sw_core::storage::{
-    BlobRange, PutBody, ResumableProbe, ResumableUploadCapable, StorageBinding, StorageProvider,
-    StorageQuota, StoredBlob,
+    AccountCleanupCapable, BlobRange, PutBody, ResumableProbe, ResumableUploadCapable, StorageBinding,
+    StorageProvider, StorageQuota, StoredBlob,
 };
 use sw_db::repo::StorageObjectRecord;
 use sw_db::{time, Repository};
@@ -55,6 +55,11 @@ pub struct FakeDriveProvider {
     objects: Mutex<HashMap<String, StoredObject>>,
     sessions: Mutex<HashMap<String, FakeSession>>,
     deleted_file_ids: Mutex<Vec<String>>,
+    /// The provider's own per-account view of the appDataFolder: file ids that
+    /// exist regardless of `storage_objects` rows (account-cleanup sweeps).
+    app_files: Mutex<HashMap<String, Vec<String>>>,
+    revoked_accounts: Mutex<Vec<String>>,
+    auth_dead_accounts: Mutex<Vec<String>>,
     counters: Mutex<Counters>,
     quota: Mutex<StorageQuota>,
     next_id: AtomicU64,
@@ -67,9 +72,26 @@ impl FakeDriveProvider {
             objects: Mutex::new(HashMap::new()),
             sessions: Mutex::new(HashMap::new()),
             deleted_file_ids: Mutex::new(Vec::new()),
+            app_files: Mutex::new(HashMap::new()),
+            revoked_accounts: Mutex::new(Vec::new()),
+            auth_dead_accounts: Mutex::new(Vec::new()),
             counters: Mutex::new(Counters::default()),
             quota: Mutex::new(StorageQuota::default()),
             next_id: AtomicU64::new(0),
+        }
+    }
+
+    fn register_app_file(&self, account_id: &str, file_id: &str) {
+        let mut files = self.app_files.lock();
+        let entry = files.entry(account_id.to_string()).or_default();
+        if !entry.iter().any(|f| f == file_id) {
+            entry.push(file_id.to_string());
+        }
+    }
+
+    fn unregister_app_file(&self, account_id: &str, file_id: &str) {
+        if let Some(entry) = self.app_files.lock().get_mut(account_id) {
+            entry.retain(|f| f != file_id);
         }
     }
 
@@ -92,6 +114,7 @@ impl FakeDriveProvider {
         size: i64,
     ) -> HttpResult<()> {
         let now = time::now_iso();
+        self.register_app_file(account_id, object_id);
         self.repo
             .upsert_storage_object(StorageObjectRecord {
                 provider: StorageProviderType::GoogleDrive,
@@ -150,6 +173,28 @@ impl FakeDriveProvider {
 
     pub fn deleted_file_ids(&self) -> Vec<String> {
         self.deleted_file_ids.lock().clone()
+    }
+
+    /// Plants a Drive file that has no `storage_objects` row (the orphan an
+    /// account-cleanup sweep must still find and delete).
+    pub fn add_orphan_app_file(&self, account_id: &str, file_id: &str) {
+        self.register_app_file(account_id, file_id);
+    }
+
+    /// File ids the provider still holds for an account.
+    pub fn app_file_ids(&self, account_id: &str) -> Vec<String> {
+        self.app_files.lock().get(account_id).cloned().unwrap_or_default()
+    }
+
+    /// Storage account ids whose OAuth access was revoked.
+    pub fn revoked_accounts(&self) -> Vec<String> {
+        self.revoked_accounts.lock().clone()
+    }
+
+    /// Simulates a grant revoked at Google: cleanup listings for this account
+    /// fail the way a dead refresh token does.
+    pub fn set_cleanup_auth_dead(&self, account_id: &str) {
+        self.auth_dead_accounts.lock().push(account_id.to_string());
     }
 
     pub fn upload_count(&self, storage_key: &str) -> u32 {
@@ -241,6 +286,11 @@ impl StorageProvider for FakeDriveProvider {
 
     async fn delete(&self, binding: &StorageBinding, storage_key: &str) -> HttpResult<()> {
         let account = Self::account_of(binding)?;
+        if let Some(object) =
+            self.repo.get_storage_object(StorageProviderType::GoogleDrive, &account, storage_key).await?
+        {
+            self.unregister_app_file(&account, &object.object_id);
+        }
         self.objects.lock().remove(storage_key);
         self.repo.delete_storage_object(StorageProviderType::GoogleDrive, &account, storage_key).await?;
         Ok(())
@@ -252,6 +302,42 @@ impl StorageProvider for FakeDriveProvider {
 
     fn resumable(&self) -> Option<&dyn ResumableUploadCapable> {
         Some(self)
+    }
+
+    fn account_cleanup(&self) -> Option<&dyn AccountCleanupCapable> {
+        Some(self)
+    }
+}
+
+#[async_trait]
+impl AccountCleanupCapable for FakeDriveProvider {
+    async fn list_account_object_ids(
+        &self,
+        binding: &StorageBinding,
+        _page_token: Option<&str>,
+    ) -> HttpResult<(Vec<String>, Option<String>)> {
+        let account = Self::account_of(binding)?;
+        if self.auth_dead_accounts.lock().contains(&account) {
+            return Err(HttpError::new(
+                401,
+                "drive_reauth_required",
+                "Google Drive authorization needs to be refreshed.",
+            ));
+        }
+        Ok((self.app_file_ids(&account), None))
+    }
+
+    async fn delete_account_object(&self, binding: &StorageBinding, file_id: &str) -> HttpResult<()> {
+        let account = Self::account_of(binding)?;
+        self.unregister_app_file(&account, file_id);
+        self.deleted_file_ids.lock().push(file_id.to_string());
+        Ok(())
+    }
+
+    async fn revoke_account_access(&self, binding: &StorageBinding) -> HttpResult<()> {
+        let account = Self::account_of(binding)?;
+        self.revoked_accounts.lock().push(account);
+        Ok(())
     }
 }
 
@@ -319,7 +405,10 @@ impl ResumableUploadCapable for FakeDriveProvider {
         self.record_row(&account, storage_key, file_id, content_type, size).await
     }
 
-    async fn delete_object_by_id(&self, _binding: &StorageBinding, file_id: &str) -> HttpResult<()> {
+    async fn delete_object_by_id(&self, binding: &StorageBinding, file_id: &str) -> HttpResult<()> {
+        if let Ok(account) = Self::account_of(binding) {
+            self.unregister_app_file(&account, file_id);
+        }
         self.deleted_file_ids.lock().push(file_id.to_string());
         Ok(())
     }

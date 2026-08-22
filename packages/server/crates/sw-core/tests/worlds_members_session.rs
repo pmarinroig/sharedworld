@@ -159,3 +159,46 @@ async fn world_lifecycle_through_services() {
     let gone = worlds::get_world(svc, &owner(), &wid, now).await;
     assert_eq!(gone.unwrap_err().code, "world_not_found");
 }
+
+/// [P8] Effects whose membership read fails make the initial host claim lose
+/// the way a concurrent claimant would — after the world/membership rows
+/// already exist. The failed create must compensate, not strand them.
+struct SeedLosingEffects;
+
+#[async_trait::async_trait]
+impl sw_core::realtime::CoordinatorEffects for SeedLosingEffects {
+    async fn list_memberships(
+        &self,
+        _world_id: &str,
+    ) -> Result<Vec<sw_core::realtime::RuntimeMembership>, sw_core::HttpError> {
+        Err(sw_core::HttpError::new(409, "world_busy", "injected: lost the claim race"))
+    }
+    async fn mirror_runtime(&self, _world_id: &str, _status: &WorldRuntimeStatus) {}
+    async fn mirror_presence(&self, _world_id: &str, _players: &[RoomPlayer]) {}
+    async fn publish(&self, _event: RealtimeEvent, _recipients: Option<Vec<String>>) {}
+    async fn schedule_alarm(&self, _world_id: &str, _at: Option<sw_core::time::Instant>) {}
+    async fn set_host_watch(&self, _world_id: &str, _host_uuid: &str, _watching: bool) -> bool {
+        false
+    }
+    async fn probe_host_reachability(
+        &self,
+        _host_uuid: &str,
+    ) -> Result<Option<sw_core::time::Instant>, sw_core::HttpError> {
+        Ok(None)
+    }
+}
+
+#[tokio::test]
+async fn p8_create_whose_runtime_seed_loses_leaves_no_world_behind() {
+    let env = TestEnv::new().await;
+    env.realtime.registry.set_effects(std::sync::Arc::new(SeedLosingEffects));
+    let doomed = worlds::create_world(
+        &env.svc,
+        &owner(),
+        &CreateWorldRequest { name: Some(serde_json::json!("Doomed World")), ..Default::default() },
+        time::now(),
+    )
+    .await;
+    assert!(doomed.is_err(), "seed loss must fail the create");
+    assert!(worlds::list_worlds(&env.svc, &owner()).await.unwrap().is_empty());
+}

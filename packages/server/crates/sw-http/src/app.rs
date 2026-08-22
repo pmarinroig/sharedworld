@@ -28,6 +28,7 @@ async fn metrics_endpoint() -> Response {
 /// `testkit` feature and only mounted when `config.test_routes` is set.
 pub fn build_router(state: Arc<AppState>) -> Router {
     let mut router = Router::new()
+        .merge(crate::routes::account::routes())
         .merge(crate::routes::auth::routes())
         .merge(crate::routes::storage::routes())
         .merge(crate::routes::worlds::routes())

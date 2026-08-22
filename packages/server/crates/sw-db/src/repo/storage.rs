@@ -8,7 +8,10 @@ use super::records::*;
 use super::{placeholders, Repository};
 use crate::error::DbError;
 
-fn decrypt_opt(cipher: Option<&crate::token_cipher::TokenCipher>, v: Option<String>) -> Option<String> {
+pub(crate) fn decrypt_opt(
+    cipher: Option<&crate::token_cipher::TokenCipher>,
+    v: Option<String>,
+) -> Option<String> {
     match (cipher, v) {
         (Some(c), Some(s)) => c.decrypt(&s),
         (None, Some(s)) if crate::token_cipher::TokenCipher::is_encrypted(&s) => None,
@@ -26,7 +29,7 @@ fn map_storage_account_with(
         provider: provider_of(&r.get::<_, String>("provider")?),
         owner_player_uuid: r.get("owner_player_uuid")?,
         external_account_id: r.get("external_account_id")?,
-        email: r.get("email")?,
+        email: decrypt_opt(cipher, r.get("email")?),
         display_name: r.get("display_name")?,
         access_token: decrypt_opt(cipher, r.get("access_token")?),
         refresh_token: decrypt_opt(cipher, r.get("refresh_token")?),
@@ -176,16 +179,15 @@ impl Repository {
                 // Present-but-null fields are explicit clears; absent keeps the current value.
                 let status = update.status.unwrap_or(current.status);
                 let email = update.linked_account_email.unwrap_or(current.linked_account_email);
-                let display = update.account_display_name.unwrap_or(current.account_display_name);
                 let err = update.error_message.unwrap_or(current.error_message);
                 let acct = update.storage_account_id.unwrap_or(current.storage_account_id);
                 let done = update.completed_at.unwrap_or(current.completed_at);
                 c.execute(
                     "storage_link_sessions.update",
                     "UPDATE storage_link_sessions
-                     SET status = ?, linked_account_email = ?, account_display_name = ?, error_message = ?, storage_account_id = ?, completed_at = ?
+                     SET status = ?, linked_account_email = ?, error_message = ?, storage_account_id = ?, completed_at = ?
                      WHERE id = ?",
-                    params![status.as_str(), email, display, err, acct, done, id],
+                    params![status.as_str(), email, err, acct, done, id],
                 )?;
                 Ok(())
             })
@@ -201,6 +203,9 @@ impl Repository {
             Some(cipher) => StorageAccountRecord {
                 access_token: a.access_token.as_deref().map(|t| cipher.encrypt(t)),
                 refresh_token: a.refresh_token.as_deref().map(|t| cipher.encrypt(t)),
+                // The email is PII: at rest it gets the same treatment as the
+                // tokens, so DB files and backups hold no plaintext Google data.
+                email: a.email.as_deref().map(|e| cipher.encrypt(e)),
                 ..a
             },
             None => a,
@@ -678,6 +683,77 @@ impl Repository {
             .await
     }
 
+    /// Account unlink / delete-account: removes every storage account row a
+    /// player owns for a provider (orphans from linking a second Google
+    /// account included).
+    pub async fn delete_storage_accounts_for_owner(
+        &self,
+        provider: StorageProviderType,
+        owner_player_uuid: &str,
+    ) -> Result<(), DbError> {
+        let owner = owner_player_uuid.to_string();
+        self.db
+            .write(move |c| {
+                c.execute(
+                    "storage_accounts.delete_for_owner",
+                    "DELETE FROM storage_accounts WHERE provider = ? AND owner_player_uuid = ?",
+                    params![provider.as_str(), owner],
+                )?;
+                Ok(())
+            })
+            .await
+    }
+
+    pub async fn delete_storage_objects_for_account(
+        &self,
+        provider: StorageProviderType,
+        storage_account_id: &str,
+    ) -> Result<(), DbError> {
+        let a = storage_account_id.to_string();
+        self.db
+            .write(move |c| {
+                c.execute(
+                    "storage_objects.delete_for_account",
+                    "DELETE FROM storage_objects WHERE provider = ? AND storage_account_id = ?",
+                    params![provider.as_str(), a],
+                )?;
+                Ok(())
+            })
+            .await
+    }
+
+    pub async fn delete_pending_blob_deletes_for_account(
+        &self,
+        provider: StorageProviderType,
+        storage_account_id: &str,
+    ) -> Result<(), DbError> {
+        let a = storage_account_id.to_string();
+        self.db
+            .write(move |c| {
+                c.execute(
+                    "pending_blob_deletes.delete_for_account",
+                    "DELETE FROM pending_blob_deletes WHERE provider = ? AND storage_account_id = ?",
+                    params![provider.as_str(), a],
+                )?;
+                Ok(())
+            })
+            .await
+    }
+
+    pub async fn delete_storage_link_sessions_for_player(&self, player_uuid: &str) -> Result<(), DbError> {
+        let p = player_uuid.to_string();
+        self.db
+            .write(move |c| {
+                c.execute(
+                    "storage_link_sessions.delete_for_player",
+                    "DELETE FROM storage_link_sessions WHERE player_uuid = ?",
+                    params![p],
+                )?;
+                Ok(())
+            })
+            .await
+    }
+
     pub async fn bump_pending_blob_delete_attempt(
         &self,
         provider: StorageProviderType,
@@ -720,31 +796,39 @@ pub(crate) fn get_storage_account_with(
     )
 }
 
-/// `swctl encrypt-tokens`: convert plaintext token columns to `enc:v1:`.
+/// `swctl encrypt-tokens`: convert plaintext token + email columns to `enc:v1:`.
 pub fn encrypt_plaintext_tokens(
     c: &crate::pool::Conn<'_>,
     cipher: &crate::token_cipher::TokenCipher,
 ) -> Result<usize, DbError> {
     let rows = c.query(
         "storage_accounts.all_tokens",
-        "SELECT id, access_token, refresh_token FROM storage_accounts",
+        "SELECT id, access_token, refresh_token, email FROM storage_accounts",
         [],
-        |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, Option<String>>(2)?)),
+        |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, Option<String>>(2)?,
+                r.get::<_, Option<String>>(3)?,
+            ))
+        },
     )?;
     let mut n = 0;
-    for (id, access, refresh) in rows {
+    for (id, access, refresh, email) in rows {
         let needs = |v: &Option<String>| {
             v.as_deref().is_some_and(|s| !crate::token_cipher::TokenCipher::is_encrypted(s))
         };
-        if !needs(&access) && !needs(&refresh) {
+        if !needs(&access) && !needs(&refresh) && !needs(&email) {
             continue;
         }
         c.execute(
             "storage_accounts.encrypt_tokens",
-            "UPDATE storage_accounts SET access_token = ?, refresh_token = ? WHERE id = ?",
+            "UPDATE storage_accounts SET access_token = ?, refresh_token = ?, email = ? WHERE id = ?",
             params![
                 access.as_deref().map(|t| cipher.encrypt(t)),
                 refresh.as_deref().map(|t| cipher.encrypt(t)),
+                email.as_deref().map(|t| cipher.encrypt(t)),
                 id
             ],
         )?;

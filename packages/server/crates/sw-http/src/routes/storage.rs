@@ -19,7 +19,7 @@ use crate::state::AppState;
 
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/storage/account", get(account))
+        .route("/storage/account", get(account).delete(unlink_account))
         .route("/storage/link-sessions", post(create_link))
         .route("/storage/link-sessions/{sessionId}/cancel", post(cancel_link))
         .route("/storage/link-sessions/{sessionId}", get(get_link))
@@ -28,6 +28,11 @@ pub fn routes() -> Router<Arc<AppState>> {
 
 async fn account(State(state): State<Arc<AppState>>, Auth(ctx): Auth) -> ApiResult<Response> {
     Ok(ok_json(&state.svc().storage_links.get_storage_account_summary(&ctx).await?))
+}
+
+async fn unlink_account(State(state): State<Arc<AppState>>, Auth(ctx): Auth) -> ApiResult<Response> {
+    sw_core::service::account::unlink_storage_account(&state.svc(), &ctx, time::now()).await?;
+    Ok(crate::error::no_content())
 }
 
 async fn create_link(

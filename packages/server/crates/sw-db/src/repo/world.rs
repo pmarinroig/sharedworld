@@ -31,7 +31,160 @@ impl Repository {
                     |r| r.get::<_, String>(0),
                 )?;
                 let mut summaries = Self::build_world_summaries_in(c, &ids, None)?;
-                Ok(ids.iter().filter_map(|id| summaries.remove(id)).collect())
+                Ok(ids.iter().filter_map(|id| summaries.remove(id)).collect::<Vec<_>>())
+            })
+            .await
+            .map(|worlds: Vec<WorldSummary>| {
+                worlds
+                    .into_iter()
+                    .map(|mut w| {
+                        w.storage_account_email = self.decrypt_email(w.storage_account_email.take());
+                        w
+                    })
+                    .collect()
+            })
+    }
+
+    /// Active worlds whose storage binding points at any storage account the
+    /// player owns — the unlink / delete-account guard. Counts every bound
+    /// world regardless of owner: unlinking under someone else's world (a
+    /// pre-fix shared-Google-account binding) would orphan it just the same.
+    pub async fn count_active_worlds_bound_to_player_accounts(
+        &self,
+        provider: StorageProviderType,
+        owner_player_uuid: &str,
+    ) -> Result<i64, DbError> {
+        let p = owner_player_uuid.to_string();
+        self.db
+            .read(move |c| {
+                Ok(c.query_one(
+                    "worlds.count_bound_to_player_accounts",
+                    "SELECT COUNT(*) FROM worlds
+                     WHERE deleted_at IS NULL AND storage_provider = ? AND storage_account_id IN
+                           (SELECT id FROM storage_accounts WHERE provider = ? AND owner_player_uuid = ?)",
+                    params![provider.as_str(), provider.as_str(), p],
+                    |r| r.get::<_, i64>(0),
+                )?
+                .unwrap_or(0))
+            })
+            .await
+    }
+
+    pub async fn get_world_owner_uuid(&self, world_id: &str) -> Result<Option<String>, DbError> {
+        let w = world_id.to_string();
+        self.db
+            .read(move |c| {
+                c.query_one(
+                    "worlds.owner_uuid",
+                    "SELECT owner_uuid FROM worlds WHERE id = ? AND deleted_at IS NULL",
+                    params![w],
+                    |r| r.get::<_, String>(0),
+                )
+            })
+            .await
+    }
+
+    /// Every world the player ever owned, tombstones included (account
+    /// deletion hard-deletes them bottom-up).
+    pub async fn list_world_ids_for_owner(&self, owner_player_uuid: &str) -> Result<Vec<String>, DbError> {
+        let p = owner_player_uuid.to_string();
+        self.db
+            .read(move |c| {
+                c.query(
+                    "worlds.ids_for_owner",
+                    "SELECT id FROM worlds WHERE owner_uuid = ? ORDER BY id ASC",
+                    params![p],
+                    |r| r.get::<_, String>(0),
+                )
+            })
+            .await
+    }
+
+    /// Account deletion: removes a world row and everything hanging off it,
+    /// in FK order. Callers pass tombstoned worlds — an active world must go
+    /// through `delete_world_for_player` first (realtime teardown, blob GC).
+    pub async fn hard_delete_world(&self, world_id: &str) -> Result<(), DbError> {
+        let w = world_id.to_string();
+        self.db
+            .write(move |c| {
+                c.execute(
+                    "snapshot_files.hard_delete_world",
+                    "DELETE FROM snapshot_files WHERE snapshot_id IN (SELECT id FROM snapshots WHERE world_id = ?)",
+                    params![w],
+                )?;
+                c.execute(
+                    "snapshot_packs.hard_delete_world",
+                    "DELETE FROM snapshot_packs WHERE snapshot_id IN (SELECT id FROM snapshots WHERE world_id = ?)",
+                    params![w],
+                )?;
+                c.execute("snapshots.hard_delete_world", "DELETE FROM snapshots WHERE world_id = ?", params![w])?;
+                c.execute("invite_codes.hard_delete_world", "DELETE FROM invite_codes WHERE world_id = ?", params![w])?;
+                c.execute(
+                    "world_memberships.hard_delete_world",
+                    "DELETE FROM world_memberships WHERE world_id = ?",
+                    params![w],
+                )?;
+                c.execute(
+                    "world_runtime_mirror.hard_delete_world",
+                    "DELETE FROM world_runtime_mirror WHERE world_id = ?",
+                    params![w],
+                )?;
+                c.execute(
+                    "storage_upload_sessions.hard_delete_world",
+                    "DELETE FROM storage_upload_sessions WHERE world_id = ?",
+                    params![w],
+                )?;
+                c.execute("coordinator_kv.hard_delete_world", "DELETE FROM coordinator_kv WHERE world_id = ?", params![w])?;
+                c.execute(
+                    "coordinator_alarms.hard_delete_world",
+                    "DELETE FROM coordinator_alarms WHERE world_id = ?",
+                    params![w],
+                )?;
+                c.execute("worlds.hard_delete", "DELETE FROM worlds WHERE id = ?", params![w])?;
+                Ok(())
+            })
+            .await
+    }
+
+    /// Account deletion: every remaining reference to the player in OTHER
+    /// players' surviving worlds is re-pointed at the sentinel user (FK
+    /// columns) or cleared, and the player's membership tombstones go away.
+    /// Runs after the player's own worlds are hard-deleted.
+    pub async fn scrub_player_references(
+        &self,
+        player_uuid: &str,
+        sentinel_uuid: &str,
+    ) -> Result<(), DbError> {
+        let (p, s) = (player_uuid.to_string(), sentinel_uuid.to_string());
+        self.db
+            .write(move |c| {
+                c.execute(
+                    "snapshots.scrub_creator",
+                    "UPDATE snapshots SET created_by_uuid = ? WHERE created_by_uuid = ?",
+                    params![s, p],
+                )?;
+                c.execute(
+                    "invite_codes.scrub_creator",
+                    "UPDATE invite_codes SET created_by_uuid = ? WHERE created_by_uuid = ?",
+                    params![s, p],
+                )?;
+                c.execute(
+                    "invite_codes.scrub_redeemer",
+                    "UPDATE invite_codes SET redeemed_by_uuid = NULL WHERE redeemed_by_uuid = ?",
+                    params![p],
+                )?;
+                c.execute(
+                    "world_memberships.scrub_player",
+                    "DELETE FROM world_memberships WHERE player_uuid = ?",
+                    params![p],
+                )?;
+                c.execute(
+                    "worlds.scrub_unclean_host",
+                    "UPDATE worlds SET unclean_shutdown_host_uuid = NULL, unclean_shutdown_host_player_name = NULL
+                     WHERE unclean_shutdown_host_uuid = ?",
+                    params![p],
+                )?;
+                Ok(())
             })
             .await
     }
@@ -114,7 +267,9 @@ impl Repository {
                 } else {
                     c.query(
                         "facts.accounts",
-                        &format!("SELECT id, email FROM storage_accounts WHERE id {IN_JSON_LIST} ORDER BY id ASC"),
+                        // external_account_id, not email: the same re-link signal
+                        // without hashing PII (the email is ciphertext at rest).
+                        &format!("SELECT id, external_account_id FROM storage_accounts WHERE id {IN_JSON_LIST} ORDER BY id ASC"),
                         params![json_list(&account_ids)],
                         |r| Ok(json!([r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?])),
                     )?
@@ -186,9 +341,10 @@ impl Repository {
                     params![w],
                     |r| r.get::<_, String>(0),
                 )?;
-                let account_email = match &account_id {
+                // external_account_id, not email: same re-link signal, no PII.
+                let account_external_id = match &account_id {
                     Some(id) => c
-                        .query_one("facts.account_email", "SELECT email FROM storage_accounts WHERE id = ?", params![id], |r| {
+                        .query_one("facts.account_external", "SELECT external_account_id FROM storage_accounts WHERE id = ?", params![id], |r| {
                             r.get::<_, Option<String>>(0)
                         })?
                         .flatten(),
@@ -211,7 +367,7 @@ impl Repository {
                     "memberships": memberships,
                     "mirrorUpdatedAt": mirror,
                     "latestSnapshotId": latest,
-                    "accountEmail": account_email,
+                    "accountExternalId": account_external_id,
                     "invite": invite
                 })))
             })
@@ -330,7 +486,11 @@ impl Repository {
         player_uuid: &str,
     ) -> Result<Option<WorldDetails>, DbError> {
         let (w, p) = (world_id.to_string(), player_uuid.to_string());
-        self.db.read(move |c| get_world_details_in(c, &w, &p)).await
+        let mut details = self.db.read(move |c| get_world_details_in(c, &w, &p)).await?;
+        if let Some(d) = details.as_mut() {
+            d.summary.storage_account_email = self.decrypt_email(d.summary.storage_account_email.take());
+        }
+        Ok(details)
     }
 
     pub async fn update_world(
@@ -367,6 +527,10 @@ impl Repository {
                 get_world_details_in(c, &w, &p)?.ok_or_else(|| DbError::other("World update failed."))
             })
             .await
+            .map(|mut d| {
+                d.summary.storage_account_email = self.decrypt_email(d.summary.storage_account_email.take());
+                d
+            })
     }
 
     pub async fn update_world_settings(&self, world_id: &str, settings_json: &str) -> Result<bool, DbError> {
@@ -536,6 +700,10 @@ impl Repository {
                 })
             })
             .await
+            .map(|mut usage| {
+                usage.account_email = self.decrypt_email(usage.account_email.take());
+                usage
+            })
     }
 
     /// Runtime mirror (single writer: the coordinator). Null fields leave the
@@ -609,6 +777,13 @@ fn tear_down_world(
         params![deleted_at, world_id],
     )?;
     c.execute("invite_codes.delete_world", "DELETE FROM invite_codes WHERE world_id = ?", params![world_id])?;
+    // The mirror is only ever read for live worlds; leaving the row used to
+    // leak the final host/roster names forever.
+    c.execute(
+        "world_runtime_mirror.delete_world",
+        "DELETE FROM world_runtime_mirror WHERE world_id = ?",
+        params![world_id],
+    )?;
     Ok(DeleteWorldResult { world_deleted: true, deleted_custom_icon_storage_key: icon })
 }
 

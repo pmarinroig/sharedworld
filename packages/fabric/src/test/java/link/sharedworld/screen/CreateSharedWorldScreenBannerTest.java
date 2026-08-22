@@ -66,7 +66,7 @@ final class CreateSharedWorldScreenBannerTest {
     void aFailedLinkSessionMessageShowsOnTheConnectStep() {
         SharedWorldStatusBanner banner = new SharedWorldStatusBanner();
         StorageLinkSessionDto failed = new StorageLinkSessionDto(
-                "link-1", "google-drive", "failed", null, null, null, null,
+                "link-1", "google-drive", "failed", null, null, null,
                 "Google didn't grant SharedWorld access to its app folder in your Drive. Return to Minecraft, connect again, and tick the Drive access checkbox on the Google screen.");
 
         CreateSharedWorldScreen.updateStorageBanner(

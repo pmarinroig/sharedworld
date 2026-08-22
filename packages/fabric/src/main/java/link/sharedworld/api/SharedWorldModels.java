@@ -205,7 +205,6 @@ public final class SharedWorldModels {
             String authUrl,
             String expiresAt,
             String linkedAccountEmail,
-            String accountDisplayName,
             String errorMessage
     ) {
     }
@@ -233,8 +232,15 @@ public final class SharedWorldModels {
             boolean linked,
             String provider,
             String email,
-            String displayName,
             boolean healthy
+    ) {
+    }
+
+    /** One bounded step of DELETE /account; the client loops until done. */
+    public record AccountDeleteStepDto(
+            boolean done,
+            String phase,
+            long remaining
     ) {
     }
 

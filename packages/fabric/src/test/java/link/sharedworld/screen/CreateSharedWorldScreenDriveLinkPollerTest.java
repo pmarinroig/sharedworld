@@ -124,7 +124,6 @@ final class CreateSharedWorldScreenDriveLinkPollerTest {
                 "https://example.invalid/auth",
                 Instant.EPOCH.toString(),
                 null,
-                null,
                 null
         );
     }

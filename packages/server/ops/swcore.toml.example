@@ -24,7 +24,7 @@ mojang_keys_self_refresh = true
 google_oauth_client_id = "….apps.googleusercontent.com"
 google_oauth_client_secret = "CHANGE-ME"
 google_oauth_redirect_uri = "https://api.sharedworld.example/storage/google/callback"
-google_oauth_scopes = "openid email profile https://www.googleapis.com/auth/drive.appdata"
+google_oauth_scopes = "openid email https://www.googleapis.com/auth/drive.appdata"
 
 # Relay worker pacing / body limit (advertised to clients).
 upload_max_body_bytes = 95000000

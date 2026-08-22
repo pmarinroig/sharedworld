@@ -212,6 +212,22 @@ public final class SharedWorldApiClient {
         return request("GET", "/storage/account", null, SharedWorldModels.StorageAccountSummaryDto.class, true);
     }
 
+    /** Unlink every Google Drive account (409 storage_unlink_blocked while worlds still use it). */
+    public void unlinkStorageAccount() throws IOException, InterruptedException {
+        ensureSession();
+        request("DELETE", "/storage/account", null, null, true);
+    }
+
+    /**
+     * One bounded step of full account deletion; callers loop until done.
+     * Generous timeout: a step's Drive sweep is time-budgeted server-side
+     * (~8s of sequential Drive deletes) but still has real network tail.
+     */
+    public SharedWorldModels.AccountDeleteStepDto deleteAccountStep() throws IOException, InterruptedException {
+        ensureSession();
+        return request("DELETE", "/account", null, SharedWorldModels.AccountDeleteStepDto.class, true, Duration.ofSeconds(60));
+    }
+
     public StorageLinkSessionDto getStorageLink(String sessionId) throws IOException, InterruptedException {
         ensureSession();
         return request("GET", "/storage/link-sessions/" + sessionId, null, StorageLinkSessionDto.class, true);
@@ -1055,6 +1071,15 @@ public final class SharedWorldApiClient {
         } catch (NumberFormatException exception) {
             return null;
         }
+    }
+
+    /**
+     * Account deletion: drop the cached session so nothing can silently
+     * re-authenticate afterwards (a fresh handshake would recreate the
+     * just-deleted account on the backend).
+     */
+    public void forgetSessionForAccountDeletion() {
+        invalidateSession();
     }
 
     private synchronized void invalidateSession() {

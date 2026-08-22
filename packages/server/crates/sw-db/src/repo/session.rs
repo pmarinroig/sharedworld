@@ -159,9 +159,52 @@ impl Repository {
             .await
     }
 
+    /// Account deletion: the player's live bearer tokens (each also has to be
+    /// invalidated in the in-process session cache).
+    pub async fn list_session_tokens_for_player(&self, player_uuid: &str) -> Result<Vec<String>, DbError> {
+        let p = player_uuid.to_string();
+        self.db
+            .read(move |c| {
+                c.query(
+                    "user_sessions.tokens_for_player",
+                    "SELECT token FROM user_sessions WHERE player_uuid = ?",
+                    params![p],
+                    |r| r.get::<_, String>(0),
+                )
+            })
+            .await
+    }
+
+    pub async fn delete_sessions_for_player(&self, player_uuid: &str) -> Result<(), DbError> {
+        let p = player_uuid.to_string();
+        self.db
+            .write(move |c| {
+                c.execute(
+                    "user_sessions.delete_for_player",
+                    "DELETE FROM user_sessions WHERE player_uuid = ?",
+                    params![p],
+                )?;
+                Ok(())
+            })
+            .await
+    }
+
+    pub async fn delete_user(&self, player_uuid: &str) -> Result<(), DbError> {
+        let p = player_uuid.to_string();
+        self.db
+            .write(move |c| {
+                c.execute("users.delete", "DELETE FROM users WHERE player_uuid = ?", params![p])?;
+                Ok(())
+            })
+            .await
+    }
+
     /// Box-only housekeeping (no cron existed on the worker): drop expired
     /// sessions and challenges in bounded batches. Returns rows deleted.
     pub async fn prune_expired_auth_rows(&self, now_iso: &str, limit: i64) -> Result<usize, DbError> {
+        let link_cutoff_iso = time::parse_iso(now_iso)
+            .map(|t| time::to_iso(t - chrono::Duration::hours(24)))
+            .unwrap_or_else(|| now_iso.to_string());
         let now_iso = now_iso.to_string();
         self.db
             .write(move |c| {
@@ -175,7 +218,16 @@ impl Repository {
                     "DELETE FROM auth_challenges WHERE nonce IN (SELECT nonce FROM auth_challenges WHERE expires_at < ? LIMIT ?)",
                     params![now_iso, limit],
                 )?;
-                Ok(a + b)
+                // Link sessions carry the linked Google email; a day after
+                // their (minutes-long) expiry there is nothing left to poll.
+                let d = c.execute(
+                    "storage_link_sessions.prune",
+                    "DELETE FROM storage_link_sessions WHERE id IN (
+                       SELECT id FROM storage_link_sessions WHERE expires_at < ? LIMIT ?
+                     )",
+                    params![link_cutoff_iso, limit],
+                )?;
+                Ok(a + b + d)
             })
             .await
     }

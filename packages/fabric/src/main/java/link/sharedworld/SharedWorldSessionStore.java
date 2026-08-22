@@ -78,6 +78,15 @@ public final class SharedWorldSessionStore implements SharedWorldApiClient.Sessi
         }
     }
 
+    /**
+     * Account deletion: drop every persisted session from memory without
+     * rewriting the file — the file itself is deleted right after, and a save
+     * here would resurrect it.
+     */
+    public synchronized void resetForAccountDeletion() {
+        this.state = new StoredSessions();
+    }
+
     private static boolean matches(StoredSession entry, String baseUrl, String playerUuid) {
         return entry != null
                 && baseUrl != null && baseUrl.equals(entry.baseUrl)

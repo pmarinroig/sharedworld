@@ -29,7 +29,6 @@ pub struct StorageLinkService {
 struct OAuthPayload {
     sub: String,
     email: Option<String>,
-    name: Option<String>,
     access_token: String,
     refresh_token: Option<String>,
     expires_at: String,
@@ -51,8 +50,6 @@ struct UserInfo {
     sub: String,
     #[serde(default)]
     email: Option<String>,
-    #[serde(default)]
-    name: Option<String>,
 }
 
 fn summarize(s: &StorageLinkSessionRecord) -> StorageLinkSession {
@@ -63,7 +60,6 @@ fn summarize(s: &StorageLinkSessionRecord) -> StorageLinkSession {
         auth_url: s.auth_url.clone(),
         expires_at: s.expires_at.clone(),
         linked_account_email: s.linked_account_email.clone(),
-        account_display_name: s.account_display_name.clone(),
         error_message: s.error_message.clone(),
     }
 }
@@ -188,7 +184,6 @@ impl StorageLinkService {
             auth_url,
             expires_at,
             linked_account_email: None,
-            account_display_name: None,
             error_message: None,
         })
     }
@@ -276,7 +271,7 @@ impl StorageLinkService {
         let account = match self.exchange_google_auth(&session, request, now).await {
             Ok(a) => a,
             Err(e) => {
-                if e.code == "storage_link_needs_consent" {
+                if e.code == "storage_link_needs_consent" || e.code == "storage_account_already_linked" {
                     self.repo
                         .update_storage_link_session(
                             session_id,
@@ -313,7 +308,6 @@ impl StorageLinkService {
                 StorageLinkSessionUpdate {
                     status: Some(StorageLinkStatus::Linked),
                     linked_account_email: Some(account.email.clone()),
-                    account_display_name: Some(account.display_name.clone()),
                     storage_account_id: Some(Some(account.id.clone())),
                     completed_at: Some(Some(time::to_iso(now))),
                     error_message: Some(None),
@@ -340,7 +334,6 @@ impl StorageLinkService {
             linked: best.is_some(),
             provider: self.provider,
             email: best.and_then(|a| a.email.clone()),
-            display_name: best.and_then(|a| a.display_name.clone()),
             healthy: best.is_some_and(|a| a.refresh_token.is_some()),
         })
     }
@@ -395,10 +388,13 @@ impl StorageLinkService {
                 super::super::service::signer::url_encode(state)
             );
         }
-        let scope =
-            self.config.google_oauth_scopes.clone().unwrap_or_else(|| {
-                "openid email profile https://www.googleapis.com/auth/drive.appdata".into()
-            });
+        // No `profile`: the account's display name is PII we never use — the
+        // email (from the `email` scope) is the only human-readable handle.
+        let scope = self
+            .config
+            .google_oauth_scopes
+            .clone()
+            .unwrap_or_else(|| "openid email https://www.googleapis.com/auth/drive.appdata".into());
         let state_param = format!("{session_id}:{state}");
         let mut pairs: Vec<(&str, &str)> = vec![
             ("client_id", self.config.google_oauth_client_id.as_deref().unwrap_or("")),
@@ -428,7 +424,6 @@ impl StorageLinkService {
                         OAuthPayload {
                             sub: mock.into(),
                             email: Some(mock.into()),
-                            name: Some(mock.into()),
                             access_token: "dev-google-token".into(),
                             refresh_token: Some("dev-google-refresh".into()),
                             expires_at: time::plus_ms_iso(now, 60 * 60_000),
@@ -483,7 +478,6 @@ impl StorageLinkService {
             OAuthPayload {
                 sub: user.sub,
                 email: user.email,
-                name: user.name,
                 access_token: token.access_token,
                 refresh_token: token.refresh_token,
                 expires_at: time::plus_ms_iso(now, expires_in_ms),
@@ -500,6 +494,13 @@ impl StorageLinkService {
         now: Instant,
     ) -> HttpResult<StorageAccountRecord> {
         let existing = self.repo.find_storage_account_by_external_id(session.provider, &payload.sub).await?;
+        if existing.as_ref().is_some_and(|e| e.owner_player_uuid != session.player_uuid) {
+            return Err(HttpError::new(
+                409,
+                "storage_account_already_linked",
+                "This Google account is already linked to another Minecraft player. Use a different Google account.",
+            ));
+        }
         let now_iso = time::to_iso(now);
         Ok(self
             .repo
@@ -509,7 +510,8 @@ impl StorageLinkService {
                 owner_player_uuid: session.player_uuid.clone(),
                 external_account_id: payload.sub,
                 email: payload.email,
-                display_name: payload.name,
+                // Never stored: the profile scope is not requested any more.
+                display_name: None,
                 access_token: Some(payload.access_token),
                 refresh_token: payload
                     .refresh_token

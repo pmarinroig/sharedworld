@@ -412,8 +412,18 @@ pub struct StorageAccountSummary {
     pub linked: bool,
     pub provider: StorageProviderType,
     pub email: Option<String>,
-    pub display_name: Option<String>,
     pub healthy: bool,
+}
+
+/// One bounded step of `DELETE /account`; the client loops until `done`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountDeleteStepResponse {
+    pub done: bool,
+    /// `drive_sweep` while provider files are being deleted, then `finalizing`.
+    pub phase: String,
+    /// Known-remaining provider files (best-effort; more pages may follow).
+    pub remaining: i64,
 }
 
 // ---------------------------------------------------------------------------
@@ -1197,7 +1207,6 @@ pub struct StorageLinkSession {
     pub auth_url: String,
     pub expires_at: String,
     pub linked_account_email: Option<String>,
-    pub account_display_name: Option<String>,
     pub error_message: Option<String>,
 }
 

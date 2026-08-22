@@ -43,7 +43,7 @@ final class SharedWorldCreateFlowTest {
             SharedWorldCreateFlow.Outcome outcome = flow.create(
                     new CreateSharedWorldScreen.CreateRequest(
                             new LocalSaveCatalog.LocalSaveOption("save-1", "Save", source, 0L, null, Component.empty()),
-                            new StorageLinkSessionDto("storage-1", "google-drive", "linked", null, Instant.EPOCH.toString(), null, null, null),
+                            new StorageLinkSessionDto("storage-1", "google-drive", "linked", null, Instant.EPOCH.toString(), null, null),
                             "World",
                             "MOTD",
                             null,
@@ -112,7 +112,7 @@ final class SharedWorldCreateFlowTest {
             flow.create(
                     new CreateSharedWorldScreen.CreateRequest(
                             new LocalSaveCatalog.LocalSaveOption("save-1", "Save", source, 0L, null, Component.empty()),
-                            new StorageLinkSessionDto("storage-1", "google-drive", "linked", null, Instant.EPOCH.toString(), null, null, null),
+                            new StorageLinkSessionDto("storage-1", "google-drive", "linked", null, Instant.EPOCH.toString(), null, null),
                             "World",
                             "MOTD",
                             null,
@@ -251,7 +251,7 @@ final class SharedWorldCreateFlowTest {
     private static CreateSharedWorldScreen.CreateRequest request(Path source) {
         return new CreateSharedWorldScreen.CreateRequest(
                 new LocalSaveCatalog.LocalSaveOption("save-1", "Save", source, 0L, null, Component.empty()),
-                new StorageLinkSessionDto("storage-1", "google-drive", "linked", null, Instant.EPOCH.toString(), null, null, null),
+                new StorageLinkSessionDto("storage-1", "google-drive", "linked", null, Instant.EPOCH.toString(), null, null),
                 "World",
                 "MOTD",
                 null,

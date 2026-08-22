@@ -98,47 +98,8 @@ public final class DeleteSharedWorldProgressScreen extends link.sharedworld.vers
                 }));
     }
 
-    /**
-     * Owner deletes remove backups one by one so the bar shows real progress
-     * (the old single request purged everything opaquely and could sit for a
-     * long time on Drive-heavy worlds). Order falls out of the chain rules:
-     * the backend refuses the latest backup and delta bases still in use, so
-     * each round deletes the current leaves and the final world delete
-     * cleans up whatever stayed protected.
-     */
     private void deleteBackupsThenWorld() throws Exception {
-        SharedWorldApiClient api = SharedWorldClient.apiClient();
-        java.util.List<link.sharedworld.api.SharedWorldModels.WorldSnapshotSummaryDto> remaining =
-                new java.util.ArrayList<>(java.util.Arrays.asList(api.listSnapshots(this.world.id())));
-        int total = remaining.size() + 1;
-        int done = 0;
-        boolean deletedAnyThisRound = true;
-        while (!remaining.isEmpty() && deletedAnyThisRound) {
-            deletedAnyThisRound = false;
-            for (java.util.Iterator<link.sharedworld.api.SharedWorldModels.WorldSnapshotSummaryDto> iterator = remaining.iterator(); iterator.hasNext(); ) {
-                link.sharedworld.api.SharedWorldModels.WorldSnapshotSummaryDto snapshot = iterator.next();
-                try {
-                    api.deleteSnapshot(this.world.id(), snapshot.snapshotId());
-                } catch (SharedWorldApiClient.SharedWorldApiException exception) {
-                    if (isProtectedUntilWorldDelete(exception)) {
-                        continue;
-                    }
-                    throw exception;
-                }
-                iterator.remove();
-                done += 1;
-                updateProgress(done, total);
-                deletedAnyThisRound = true;
-            }
-        }
-        api.deleteWorld(this.world.id());
-        updateProgress(total, total);
-    }
-
-    /** The latest backup and in-use delta bases fall with the world itself. */
-    private static boolean isProtectedUntilWorldDelete(SharedWorldApiClient.SharedWorldApiException exception) {
-        return "cannot_delete_latest_snapshot".equals(exception.error())
-                || "snapshot_base_in_use".equals(exception.error());
+        WorldDeleteRounds.deleteBackupsThenWorld(SharedWorldClient.apiClient(), this.world.id(), this::updateProgress);
     }
 
     private void updateProgress(int done, int total) {

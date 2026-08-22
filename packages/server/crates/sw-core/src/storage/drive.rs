@@ -20,8 +20,8 @@ use sw_db::repo::{StorageAccountRecord, StorageObjectRecord};
 use sw_db::Repository;
 
 use super::{
-    BlobRange, PutBody, ResumableProbe, ResumableUploadCapable, StorageBinding, StorageProvider,
-    StorageQuota, StoredBlob,
+    AccountCleanupCapable, BlobRange, PutBody, ResumableProbe, ResumableUploadCapable, StorageBinding,
+    StorageProvider, StorageQuota, StoredBlob,
 };
 use crate::config::Config;
 use crate::http_error::{HttpError, HttpResult};
@@ -29,6 +29,7 @@ use crate::time;
 
 const DEFAULT_API_BASE: &str = "https://www.googleapis.com/drive/v3";
 const DEFAULT_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
+const DEFAULT_REVOKE_URL: &str = "https://oauth2.googleapis.com/revoke";
 const DEFAULT_RETRY_BASE_DELAY_MS: i64 = 750;
 const DEFAULT_RETRY_MAX_DELAY_MS: i64 = 8_000;
 const DEFAULT_MAX_UPLOAD_STARTS_PER_SECOND: i64 = 3;
@@ -740,6 +741,98 @@ impl StorageProvider for GoogleDriveStorageProvider {
 
     fn relay(&self) -> Option<&dyn crate::relay::RelayCapable> {
         Some(self)
+    }
+
+    fn account_cleanup(&self) -> Option<&dyn AccountCleanupCapable> {
+        Some(self)
+    }
+}
+
+#[async_trait]
+impl AccountCleanupCapable for GoogleDriveStorageProvider {
+    async fn list_account_object_ids(
+        &self,
+        binding: &StorageBinding,
+        page_token: Option<&str>,
+    ) -> HttpResult<(Vec<String>, Option<String>)> {
+        let account = self.require_account(binding).await?;
+        let mut url = format!(
+            "{}/files?spaces=appDataFolder&fields=files(id)%2CnextPageToken&pageSize=100",
+            self.api_base()
+        );
+        if let Some(token) = page_token {
+            url.push_str("&pageToken=");
+            url.push_str(&url_path_encode(token));
+        }
+        let req = DriveReq::get(url);
+        let response = self
+            .with_drive_retries(&account, DriveOp::Download, || {
+                self.drive_request_checked(
+                    &account,
+                    &req,
+                    "drive_list_failed",
+                    "Google Drive listing failed.",
+                    false,
+                )
+            })
+            .await?
+            .expect("list without allow_not_found");
+        #[derive(serde::Deserialize)]
+        struct FileEntry {
+            id: String,
+        }
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct ListPayload {
+            #[serde(default)]
+            files: Vec<FileEntry>,
+            #[serde(default)]
+            next_page_token: Option<String>,
+        }
+        let payload: ListPayload = response.json().await.map_err(|e| {
+            HttpError::new(502, "drive_list_failed", format!("Google Drive listing failed: {e}"))
+        })?;
+        Ok((payload.files.into_iter().map(|f| f.id).collect(), payload.next_page_token))
+    }
+
+    async fn delete_account_object(&self, binding: &StorageBinding, file_id: &str) -> HttpResult<()> {
+        let account = self.require_account(binding).await?;
+        let req =
+            DriveReq::new(Method::DELETE, format!("{}/files/{}", self.api_base(), url_path_encode(file_id)));
+        self.with_drive_retries(&account, DriveOp::Delete, || {
+            self.drive_request_checked(
+                &account,
+                &req,
+                "drive_delete_failed",
+                "Google Drive delete failed.",
+                true,
+            )
+        })
+        .await?;
+        Ok(())
+    }
+
+    async fn revoke_account_access(&self, binding: &StorageBinding) -> HttpResult<()> {
+        let account = self.require_account(binding).await?;
+        let Some(token) = account.refresh_token.as_deref().or(account.access_token.as_deref()) else {
+            return Ok(());
+        };
+        let url = self.config.google_oauth_revoke_url.as_deref().unwrap_or(DEFAULT_REVOKE_URL).to_string();
+        // Best-effort: a failed revoke must never block the unlink/deletion —
+        // the user can always revoke from their Google Account settings.
+        let result = self
+            .http
+            .post(url)
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(form_encode(&[("token", token)]))
+            .send()
+            .await;
+        match result {
+            Ok(r) if r.status().is_success() => {}
+            Ok(r) => tracing::warn!(status = r.status().as_u16(), "Google token revoke refused"),
+            Err(e) => tracing::warn!(cause = %e, "Google token revoke failed"),
+        }
+        Ok(())
     }
 }
 

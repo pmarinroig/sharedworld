@@ -14,5 +14,5 @@ allow_dev_google_oauth = true
 # google_oauth_client_id = "….apps.googleusercontent.com"
 # google_oauth_client_secret = "…"
 # google_oauth_redirect_uri = "http://127.0.0.1:8787/storage/google/callback"
-google_oauth_scopes = "openid email profile https://www.googleapis.com/auth/drive.appdata"
+google_oauth_scopes = "openid email https://www.googleapis.com/auth/drive.appdata"
 upload_max_body_bytes = 95000000

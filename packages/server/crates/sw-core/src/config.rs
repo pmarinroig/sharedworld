@@ -46,6 +46,9 @@ pub struct Config {
     /// Box-only test hook: the OAuth token endpoint (hard-coded to
     /// `https://oauth2.googleapis.com/token` in the worker).
     pub google_oauth_token_url: Option<String>,
+    /// Box-only test hook: the OAuth revoke endpoint (defaults to
+    /// `https://oauth2.googleapis.com/revoke`).
+    pub google_oauth_revoke_url: Option<String>,
     /// `DRIVE_*` pacing/retry knobs.
     pub drive_max_parallel_downloads: Option<i64>,
     pub drive_max_upload_preparations: Option<i64>,
@@ -100,6 +103,7 @@ impl Default for Config {
             google_oauth_scopes: None,
             google_drive_api_base: None,
             google_oauth_token_url: None,
+            google_oauth_revoke_url: None,
             drive_max_parallel_downloads: None,
             drive_max_upload_preparations: None,
             drive_max_concurrent_uploads: None,

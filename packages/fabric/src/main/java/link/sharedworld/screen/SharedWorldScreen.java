@@ -40,6 +40,7 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
     private Button deleteButton;
     private Button refreshButton;
     private Button vanillaButton;
+    private Button accountButton;
     private boolean loading;
     private boolean backendReachable = true;
     private boolean refreshInFlight;
@@ -125,6 +126,12 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
         this.vanillaButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sharedworld.vanilla"), button -> this.openVanillaServers())
                 .bounds(this.width - 118, 8, 110, 20)
                 .build());
+        this.accountButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sharedworld.account"), button -> {
+                    this.releaseWidgetFocus();
+                    link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, new AccountScreen(this));
+                })
+                .bounds(8, 8, 80, 20)
+                .build());
 
         this.repositionElements();
         this.refreshWorlds();
@@ -139,6 +146,9 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
         }
         if (this.vanillaButton != null) {
             link.sharedworld.versioned.WidgetCompat.setPosition(this.vanillaButton, this.width - 118, 8);
+        }
+        if (this.accountButton != null) {
+            link.sharedworld.versioned.WidgetCompat.setPosition(this.accountButton, 8, 8);
         }
     }
 
@@ -394,6 +404,9 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
         }
         if (this.vanillaButton != null) {
             this.vanillaButton.setFocused(false);
+        }
+        if (this.accountButton != null) {
+            this.accountButton.setFocused(false);
         }
     }
 

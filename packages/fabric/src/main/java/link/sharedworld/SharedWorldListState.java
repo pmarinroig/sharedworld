@@ -79,6 +79,11 @@ public final class SharedWorldListState {
         return index >= 0 && targetIndex >= 0 && targetIndex < this.state.cachedWorlds.size();
     }
 
+    /** Account deletion: forget the cached list in memory only (the file is deleted separately). */
+    public synchronized void resetForAccountDeletion() {
+        this.state = new State();
+    }
+
     private int indexOf(String worldId) {
         for (int index = 0; index < this.state.cachedWorlds.size(); index++) {
             if (this.state.cachedWorlds.get(index).id().equals(worldId)) {

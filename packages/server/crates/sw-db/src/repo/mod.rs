@@ -91,6 +91,12 @@ impl Repository {
         self.token_cipher.clone()
     }
 
+    /// The stored email is ciphertext at rest (like the tokens); results built
+    /// by raw queries decrypt it at the repository boundary.
+    pub(crate) fn decrypt_email(&self, v: Option<String>) -> Option<String> {
+        storage::decrypt_opt(self.token_cipher.as_deref(), v)
+    }
+
     pub fn db(&self) -> &Db {
         &self.db
     }

@@ -68,8 +68,10 @@ impl AuthService {
         match self.complete_cert_auth_checked(request, now).await {
             Ok(s) => Ok(s),
             Err(e) => {
-                // The only line production logs have for "is a real certificate being rejected?".
-                tracing::warn!(code = e.code, status = e.status, player_name = %request.player_name, player_uuid = %request.player_uuid, "SharedWorld certificate auth rejected");
+                // The only line production logs have for "is a real certificate
+                // being rejected?". The uuid alone correlates a user report;
+                // the chosen player name is PII the journal doesn't need.
+                tracing::warn!(code = e.code, status = e.status, player_uuid = %request.player_uuid, "SharedWorld certificate auth rejected");
                 Err(e)
             }
         }

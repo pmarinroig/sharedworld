@@ -343,6 +343,10 @@ pub async fn get_storage_usage(
     let quota = cached_quota(svc, &binding).await?;
     usage.quota_used_bytes = quota.used_bytes;
     usage.quota_total_bytes = quota.total_bytes;
+    // Owner-only, like the summary field (this endpoint is membership-gated).
+    if svc.repository.get_world_owner_uuid(world_id).await?.as_deref() != Some(&ctx.player_uuid) {
+        usage.account_email = None;
+    }
     Ok(usage)
 }
 
@@ -391,6 +395,11 @@ pub fn hydrate_world_summary(
     mut world: WorldSummary,
     viewer: &RequestContext,
 ) -> WorldSummary {
+    // The owner's Google address is for the owner alone; members see the
+    // world, not whose Drive it lives on.
+    if world.owner_uuid != viewer.player_uuid {
+        world.storage_account_email = None;
+    }
     if let Some(key) = world.custom_icon_storage_key.clone() {
         world.custom_icon_download = Some(sign_download_for_world(
             svc,

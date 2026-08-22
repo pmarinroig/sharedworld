@@ -297,3 +297,50 @@ async fn tokens_are_encrypted_at_rest_when_a_cipher_is_configured() {
         repo.find_storage_accounts_by_owner(StorageProviderType::GoogleDrive, "owner").await.unwrap();
     assert_eq!(by_owner[0].refresh_token.as_deref(), Some("1//refresh"));
 }
+
+/// PII pass: tokens AND the email are ciphertext at rest — a Repository
+/// without the key sees neither, one with the key round-trips them.
+#[tokio::test]
+async fn storage_account_email_and_tokens_are_encrypted_at_rest() {
+    let db = Db::open_memory().expect("db");
+    migrate::migrate(&db).expect("migrate");
+    let key = {
+        use base64::Engine;
+        let b64 = sw_db::token_cipher::TokenCipher::generate_key_b64();
+        let raw = base64::engine::general_purpose::STANDARD.decode(b64).unwrap();
+        <[u8; 32]>::try_from(raw.as_slice()).unwrap()
+    };
+    let cipher = std::sync::Arc::new(sw_db::token_cipher::TokenCipher::new(key));
+    let with_key = Repository::new(db.clone(), None).with_token_cipher(cipher);
+    let without_key = Repository::new(db, None);
+
+    let now = time::now_iso();
+    with_key
+        .create_or_update_storage_account(StorageAccountRecord {
+            id: "storage_pii".into(),
+            provider: StorageProviderType::GoogleDrive,
+            owner_player_uuid: "owner-uuid".into(),
+            external_account_id: "sub-1".into(),
+            email: Some("pau@example.com".into()),
+            display_name: None,
+            access_token: Some("at-secret".into()),
+            refresh_token: Some("rt-secret".into()),
+            token_expires_at: None,
+            created_at: now.clone(),
+            updated_at: now,
+        })
+        .await
+        .unwrap();
+
+    // Keyed reads round-trip the plaintext.
+    let seen = with_key.get_storage_account("storage_pii").await.unwrap().unwrap();
+    assert_eq!(seen.email.as_deref(), Some("pau@example.com"));
+    assert_eq!(seen.refresh_token.as_deref(), Some("rt-secret"));
+
+    // Keyless reads prove nothing personal is stored in the clear: the raw
+    // column values are `enc:v1:` blobs, surfaced as absent.
+    let raw = without_key.get_storage_account("storage_pii").await.unwrap().unwrap();
+    assert_eq!(raw.email, None);
+    assert_eq!(raw.access_token, None);
+    assert_eq!(raw.refresh_token, None);
+}
