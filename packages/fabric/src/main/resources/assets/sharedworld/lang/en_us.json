@@ -178,7 +178,7 @@
   "screen.sharedworld.edit_settings_unreadable": "Couldn't read this world's local settings, so defaults are shown. Saving settings is off until the world syncs again.",
   "screen.sharedworld.edit_status_settings_saved": "Settings saved.",
   "screen.sharedworld.storage_waiting_for_browser": "Opening your browser...",
-  "screen.sharedworld.storage_waiting_authorization": "Finish signing in with Google in your browser. We'll notice as soon as you're done.",
+  "screen.sharedworld.storage_waiting_authorization": "Finish signing in with Google in your browser.",
   "screen.sharedworld.storage_link_copied": "The sign-in link was copied. Paste it into your browser to continue.",
   "screen.sharedworld.storage_provider": "Stored in",
   "screen.sharedworld.storage_provider_google_drive": "Google Drive",
