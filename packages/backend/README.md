@@ -1,48 +1,20 @@
-# SharedWorld Backend
+# SharedWorld Lane-D Worker
 
-SharedWorld Backend is a Cloudflare Worker service responsible for session
-coordination, world metadata, ownership handoff, and storage integration.
+A thin Cloudflare Worker in front of the SharedWorld Rust server (the box,
+`packages/server`). It exists so jars released before 0.4.6 — which point at
+this worker's URL — keep working, and so blob downloads can be relayed from
+Google Drive at the edge instead of consuming the box's bandwidth.
 
-## Runtime Pieces
+- `src/lane-d.ts`: everything the worker does — forward HTTP + WebSocket
+  traffic to `BOX_URL`, and serve blob GETs directly from Drive using
+  box-signed relay tokens (Ed25519 signature, AES-GCM-sealed Drive token).
+- `src/index.ts`: entry point; refuses to run in any mode but `lane-d`.
+- `src/schema.sql` + `migrations/`: **not used by the worker anymore** — they
+  are the canonical schema history, compiled into the box by
+  `server/crates/sw-db` (do not delete or renumber).
 
-- Cloudflare Workers for the HTTP runtime
-- Cloudflare D1 for metadata and coordination state
-- Google Drive app data storage for world snapshot persistence
+Deploy with `scripts/cf-deploy.sh` (secrets: `INTERNAL_API_SECRET`,
+`RELAY_PUBLIC_KEY`, `RELAY_TOKEN_KEY`). Tests: `bun test`.
 
-## Key Files
-
-- `wrangler.toml`: Worker configuration and bindings
-- `migrations/`: D1 schema migrations
-- `.dev.vars.example`: local development variables template
-
-## Code Layout
-
-- `src/service.ts`: the facade the router talks to; wiring only
-- `src/service/`: one module per domain — worlds, members, snapshots,
-  sync-plan, session — plus `runtime-access.ts` for the shared authority guards
-- `src/runtime-protocol.ts`: pure runtime transitions and epoch/token rules
-- `src/d1-repository.ts`: the single storage implementation (D1/SQLite)
-- `src/storage.ts`, `src/storage/`: blob storage providers and Drive linking
-- `src/auth/`: Minecraft session auth
-
-Tests run the production repository against in-memory SQLite loaded with
-`src/schema.sql`, so there is no separate test-only persistence layer.
-
-## Local Run
-
-```bash
-cp .dev.vars.example .dev.vars
-npx wrangler dev --ip 127.0.0.1 --port 8787
-```
-
-## Deploy
-
-```bash
-npx wrangler deploy
-```
-
-## Apply Remote Migrations
-
-```bash
-npx wrangler d1 migrations apply sharedworld --remote
-```
+The full D1 + Durable Objects backend that used to live here was retired at
+the 2026-08-19 cutover to the box; git history has it.

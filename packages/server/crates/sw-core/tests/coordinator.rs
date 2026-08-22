@@ -166,6 +166,7 @@ fn runtime(h: &H) -> Option<WorldRuntimeRecord> {
 
 // ------------------------------------------------------------ entry/election
 
+/// [P1]
 #[tokio::test]
 async fn p1_entering_idle_world_assigns_one_host_and_later_entrants_wait() {
     let mut h = make();
@@ -179,6 +180,7 @@ async fn p1_entering_idle_world_assigns_one_host_and_later_entrants_wait() {
     assert_eq!(runtime(&h).unwrap().host_uuid.as_deref(), Some("owner-uuid"));
 }
 
+/// [P1]
 #[tokio::test]
 async fn p1_reentry_by_starting_host_replays_same_assignment() {
     let mut h = make();
@@ -203,6 +205,7 @@ async fn live_host_with_join_target_lets_members_connect() {
     assert_eq!(entry.runtime.join_target.as_deref(), Some("join.example:25565"));
 }
 
+/// [P3]
 #[tokio::test]
 async fn p3_cancelled_preferred_candidate_never_strands_world() {
     let mut h = make();
@@ -229,6 +232,7 @@ async fn p3_cancelled_preferred_candidate_never_strands_world() {
     assert_eq!(runtime(&h).unwrap().host_uuid.as_deref(), Some("third-uuid"));
 }
 
+/// [P4]
 #[tokio::test]
 async fn p4_unrefreshed_waiter_expires_out_of_candidacy() {
     let mut h = make();
@@ -244,6 +248,7 @@ async fn p4_unrefreshed_waiter_expires_out_of_candidacy() {
 
 // -------------------------------------------------------------------- fencing
 
+/// [P2]
 #[tokio::test]
 async fn p2_deposed_host_cannot_mutate_new_runtime() {
     let mut h = make();
@@ -319,6 +324,7 @@ async fn lease_expired_epoch_is_real_authority_loss() {
 
 // --------------------------------------------------- finalization / revocation
 
+/// [P6]
 #[tokio::test]
 async fn p6_revoked_host_cannot_heartbeat_but_can_finalize() {
     let mut h = make();
@@ -346,6 +352,7 @@ async fn completing_finalization_hands_off_to_preferred_waiter() {
     assert_eq!(completed.next_host_uuid.as_deref(), Some("guest-uuid"));
 }
 
+/// [P5]
 #[tokio::test]
 async fn p5_destroy_world_clears_state_and_notifies() {
     let mut h = make();
@@ -466,6 +473,7 @@ async fn successful_heartbeat_clears_armed_grace() {
     assert!(h.coordinator.store().get_warning().is_none());
 }
 
+/// [P7]
 #[tokio::test]
 async fn p7_lease_expiry_publishes_runtime_change() {
     let mut h = make();

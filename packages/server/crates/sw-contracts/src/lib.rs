@@ -1,5 +1,8 @@
-//! Wire contracts shared with the Fabric mod — a 1:1 transcription of
-//! `packages/shared/src/{contracts,realtime,sync}.ts`.
+//! Wire contracts shared with the Fabric mod — originally a 1:1
+//! transcription of `packages/shared/src/{contracts,realtime,sync}.ts`.
+//! That TS package was removed with the Cloudflare-era cleanup (2026-08);
+//! this crate is now the single source of truth (the TS original lives in
+//! git history under `packages/shared`).
 //!
 //! Field-level conventions (see `docs/server-wire.md`):
 //! * TS `T | null` (required, nullable) → `Option<T>` serialized as `null`.

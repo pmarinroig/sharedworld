@@ -5,10 +5,6 @@
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc -p tsconfig.json",
-    "dev": "npx wrangler dev --ip 127.0.0.1 --port 8787",
     "deploy": "npx wrangler deploy"
-  },
-  "dependencies": {
-    "@sharedworld/shared": "workspace:*"
   }
 }

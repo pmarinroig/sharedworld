@@ -2,75 +2,28 @@ name = "sharedworld"
 main = "src/index.ts"
 compatibility_date = "2026-03-28"
 
-[[d1_databases]]
-binding = "DB"
-database_name = "sharedworld"
-database_id = "9375862a-5ace-47ec-8e2f-5b1bad12cf34"
-
-#[[r2_buckets]]  Currently not using R2
-#binding = "BLOBS"
-#bucket_name = "sharedworld-blobs"
-
-# Persist console logs as queryable Workers Logs — without this, the auth
-# path's Mojang-status warnings only exist inside a live `wrangler tail`.
+# Persist console logs as queryable Workers Logs — without this, warnings
+# only exist inside a live `wrangler tail`.
 [observability]
 enabled = true
 
-# 0.4.5: minute tick that drains the blob GC retry queue (pending_blob_deletes)
-# a few keys at a time. Backup deletes answer as soon as the rows are gone and
-# reclaim Drive bytes after the response; whatever the post-response budget
-# cannot finish lands in the queue, and this is what empties it when no
-# request happens to come by.
+# The worker is only the lane-D front for the Rust server: forwards
+# legacy-client HTTP + WebSocket traffic to BOX_URL and relays blob downloads
+# from Google Drive. Secrets (wrangler secret put): INTERNAL_API_SECRET,
+# RELAY_PUBLIC_KEY, RELAY_TOKEN_KEY (from `swctl relay-keys-gen`).
+# The D1 database "sharedworld" still exists in Cloudflare, unbound, as a cold
+# pre-cutover snapshot — delete it from the dashboard around 2026-09-19.
 [vars]
-# Lane D (see docs/cutover-runbook.md): set MODE = "lane-d" to turn this
-# worker into a thin front for the Rust server — Drive download relay and
-# forwarding (incl. /ws) to BOX_URL; D1/DO stay bound but unused.
-# Secrets for that mode (wrangler secret put): INTERNAL_API_SECRET,
-# RELAY_PUBLIC_KEY, RELAY_TOKEN_KEY (from `swctl relay-keys-gen`), and
-# ADMIN_SECRET only while dumping coordinator state before the cutover.
-# MODE = "maintenance"   # cutover freeze: everything 503 + Retry-After, D1 untouched
 MODE = "lane-d"
 BOX_URL = "https://api.763616.xyz"
-ALLOW_DEV_AUTH = "false"
-ALLOW_DEV_INSECURE_E4MC = "false"
-ALLOW_DEV_GOOGLE_OAUTH = "false"
 
-ACTIVE_STORAGE_PROVIDER = "google-drive"
-GOOGLE_OAUTH_SCOPES = "openid email profile https://www.googleapis.com/auth/drive.appdata"
-PUBLIC_BASE_URL = "https://sharedworld.farigola777.workers.dev"
-GOOGLE_OAUTH_REDIRECT_URI = "https://sharedworld.farigola777.workers.dev/storage/google/callback"
-
-SESSION_TTL_HOURS = "168"
-SIGNED_URL_TTL_SECONDS = "900"
-
-# Largest single blob body the worker relay accepts (advertised to clients via
-# SyncPolicy.maxUploadBodyBytes). Must stay under the Cloudflare plan's
-# request-body limit — 100 MB on workers.dev — or the edge 413s first.
-UPLOAD_MAX_BODY_BYTES = "95000000"
-
-# Remote pacing levers for polling clients (pre-socket-native releases).
-# Autosave 10 min halves snapshot-driven load for every client version; the
-# runtime-poll suggestion slows old guests' 5s watcher to 15s (still well
-# under the 30s host-disconnect grace). Clients clamp to their own bounds.
-SUGGESTED_AUTOSAVE_INTERVAL_MS = "600000"
-SUGGESTED_RUNTIME_POLL_INTERVAL_MS = "15000"
-
-# Growth valve: hard ceiling on total non-deleted worlds. Generous on purpose
-# (beta has a handful); exists so unexpected virality queues politely instead
-# of becoming an unbounded D1/Workers bill. Raise via config-only deploy.
-MAX_ACTIVE_WORLDS = "1000"
-
-
-# 0.3.0 realtime: per-world runtime coordinators + per-player WebSocket
-# gateways (see docs/realtime.md in the workspace repo).
-[[durable_objects.bindings]]
-name = "WORLD_COORDINATOR"
-class_name = "WorldCoordinatorDO"
-
-[[durable_objects.bindings]]
-name = "USER_GATEWAY"
-class_name = "UserGatewayDO"
-
+# The 0.3.0 Durable Object era, retired with the 2026-08-19 cutover to the
+# box. Migration tags are append-only history: v1 created the classes, v2
+# deleted them (and their storage) after the state was imported into the box.
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["WorldCoordinatorDO", "UserGatewayDO"]
+
+[[migrations]]
+tag = "v2"
+deleted_classes = ["WorldCoordinatorDO", "UserGatewayDO"]

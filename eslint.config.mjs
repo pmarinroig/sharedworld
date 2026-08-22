@@ -15,12 +15,10 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ["packages/{backend,shared}/{src,test}/**/*.ts"],
+    files: ["packages/backend/{src,test}/**/*.ts"],
     languageOptions: {
       parserOptions: {
         project: [
-          "./packages/shared/tsconfig.json",
-          "./packages/shared/test/tsconfig.json",
           "./packages/backend/tsconfig.json",
           "./packages/backend/test/tsconfig.json"
         ],

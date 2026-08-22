@@ -74,7 +74,6 @@ describe("lane-d app", () => {
     MODE: "lane-d",
     BOX_URL: "https://box.example",
     INTERNAL_API_SECRET: "s3cret",
-    PUBLIC_BASE_URL: "https://relay.example",
   };
 
   test("everything else forwards to the box with entry origin + internal secret", async () => {
@@ -147,20 +146,8 @@ describe("lane-d app", () => {
   });
 });
 
-describe("maintenance mode (cutover freeze)", () => {
-  test("every request, including a socket upgrade, answers 503 with Retry-After and nothing touches D1", async () => {
-    // No DB / DO bindings at all: maintenance must not need them.
-    const app = createApp({ MODE: "maintenance" } as unknown as Env);
-    for (const request of [
-      new Request("https://w.example/worlds", { headers: { authorization: "Bearer x" } }),
-      new Request("https://w.example/worlds/w1/heartbeat", { method: "POST", body: "{}" }),
-      new Request("https://w.example/ws", { headers: { upgrade: "websocket", authorization: "Bearer x" } })
-    ]) {
-      const response = await app.fetch(request);
-      expect(response.status).toBe(503);
-      expect(response.headers.get("retry-after")).toBe("60");
-      expect(await response.json()).toMatchObject({ error: "maintenance", status: 503 });
-    }
-    expect(await app.scheduled()).toBe(0);
+describe("worker entry", () => {
+  test("createApp refuses anything but lane-d — the legacy backend is retired", () => {
+    expect(() => createApp({} as unknown as Env)).toThrow(/lane-d/);
   });
 });

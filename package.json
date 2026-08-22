@@ -2,17 +2,15 @@
   "name": "sharedworld",
   "private": true,
   "workspaces": [
-    "packages/shared",
     "packages/backend"
   ],
   "scripts": {
-    "test": "bun test packages/shared packages/backend",
+    "test": "bun test packages/backend",
     "test:backend": "bun test packages/backend",
-    "test:shared": "bun test packages/shared",
     "test:mod": "JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 GRADLE_USER_HOME=$HOME/.cache/sharedworld-gradle bash ./gradlew --no-daemon -p packages/fabric test",
     "build:mod": "JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 GRADLE_USER_HOME=$HOME/.cache/sharedworld-gradle bash ./gradlew --no-daemon -p packages/fabric remapJar",
-    "typecheck": "bun x tsc -p packages/shared/tsconfig.json && bun x tsc -p packages/shared/test/tsconfig.json && bun x tsc -p packages/backend/tsconfig.json && bun x tsc -p packages/backend/test/tsconfig.json",
-    "lint": "bun x eslint \"packages/{shared,backend}/{src,test}/**/*.ts\"",
+    "typecheck": "bun x tsc -p packages/backend/tsconfig.json && bun x tsc -p packages/backend/test/tsconfig.json",
+    "lint": "bun x eslint \"packages/backend/{src,test}/**/*.ts\"",
     "check": "bun run typecheck && bun run lint"
   },
   "devDependencies": {

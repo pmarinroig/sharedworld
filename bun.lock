@@ -15,12 +15,6 @@
     },
     "packages/backend": {
       "name": "@sharedworld/backend",
-      "dependencies": {
-        "@sharedworld/shared": "workspace:*",
-      },
-    },
-    "packages/shared": {
-      "name": "@sharedworld/shared",
     },
   },
   "packages": {
@@ -187,8 +181,6 @@
     "@poppinss/exception": ["@poppinss/exception@1.2.3", "", {}, "sha512-dCED+QRChTVatE9ibtoaxc+WkdzOSjYTKi/+uacHWIsfodVfpsueo3+DKpgU5Px8qXjgmXkSvhXvSCz3fnP9lw=="],
 
     "@sharedworld/backend": ["@sharedworld/backend@workspace:packages/backend"],
-
-    "@sharedworld/shared": ["@sharedworld/shared@workspace:packages/shared"],
 
     "@sindresorhus/is": ["@sindresorhus/is@7.2.0", "", {}, "sha512-P1Cz1dWaFfR4IR+U13mqqiGsLFf1KbayybWwdd2vfctdV6hDpUkgCY0nKOLLTMSoRd/jJNjtbqzf13K8DCCXQw=="],
 
