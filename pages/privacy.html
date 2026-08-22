@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SharedWorld Privacy Policy</title>
+    <meta
+      name="description"
+      content="Privacy Policy for SharedWorld, including its Google Drive app data integration and backend data handling."
+    >
+    <link rel="canonical" href="https://sharedworld.net/privacy">
+    <link rel="icon" type="image/png" href="./assets/logo-128.png">
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main class="layout layout-policy">
+      <header class="site-header">
+        <a class="brand" href="./"><img src="./assets/logo-128.png" alt="" width="26" height="26"> SharedWorld</a>
+      </header>
+
+      <article class="policy">
+        <p class="kicker">Policy</p>
+        <h1>Privacy Policy</h1>
+        <p class="meta">Last updated: August 22, 2026</p>
+        <p class="summary">
+          This policy explains what data SharedWorld stores, for how long, and
+          how you can delete it.
+        </p>
+
+        <h2>1. Data we access</h2>
+        <p>
+          When you connect Google Drive, SharedWorld asks Google for three
+          permissions: <code>openid</code>, <code>email</code>, and
+          <code>drive.appdata</code>. The <code>drive.appdata</code> permission
+          only covers a hidden folder that belongs to the app. SharedWorld
+          cannot see the rest of your Drive: not your files, documents, or
+          photos. It also does not ask for your name or profile picture.
+        </p>
+
+        <h2>2. What we store</h2>
+        <p>The SharedWorld backend stores:</p>
+        <ul>
+          <li>
+            Your Minecraft player UUID and username. Worlds, memberships, and
+            backups are tied to these.
+          </li>
+          <li>
+            If you connect a Google Drive account: an internal Google account
+            id, the account's email address, and the OAuth tokens the server
+            needs to talk to Drive. The email and tokens are stored encrypted,
+            and the encryption key is kept outside the database and its
+            backups. Other players in your worlds cannot see your email.
+          </li>
+          <li>
+            World and backup metadata, such as world names, member lists, and
+            backup indexes. The worlds themselves are stored in the owner's
+            Google Drive app folder, not on our servers.
+          </li>
+          <li>Session tokens, which expire and get cleaned up on their own.</li>
+        </ul>
+        <p>
+          We do not keep request or IP logs. Server logs are kept for at most
+          a month, and database backups for two weeks.
+        </p>
+        <p>
+          That list is everything, and each item is there because the mod
+          needs it to work. We do not use any of it for advertising, we do
+          not sell it or share it with anyone, and we do not analyze it for
+          anything beyond running and debugging the mod. This includes data
+          obtained through Google APIs. The code that handles this data is
+          in the public repository.
+        </p>
+
+        <h2>3. Routing and storage</h2>
+        <p>
+          While a world is being synced, its data passes through the
+          SharedWorld backend on the way to storage and to the other players.
+          The hosted backend is run by the project maintainer. If you point
+          the mod at a self-hosted or third-party backend instead, whoever
+          runs that backend handles your data too.
+        </p>
+
+        <h2>4. Authentication tokens</h2>
+        <p>
+          The backend uses your OAuth tokens to read and write the app's
+          folder in your Google Drive. That is the only thing they are used
+          for, and they are stored encrypted.
+        </p>
+
+        <h2>5. Sharing with other players</h2>
+        <p>
+          SharedWorld is multiplayer. If you create or join a shared world,
+          its data is sent to the other members of that world, so that any of
+          them can host it when the current host leaves.
+        </p>
+
+        <h2>6. Google API Services disclosure</h2>
+        <p>
+          SharedWorld's use and transfer of information received from Google
+          APIs will adhere to the Google API Services User Data Policy,
+          including the Limited Use requirements.
+        </p>
+
+        <h2>7. Data deletion and revoking access</h2>
+        <p>
+          In Minecraft, the Account screen (top left of the Shared Worlds
+          list) lets you disconnect your Google Drive account, which revokes
+          SharedWorld's access on Google's side and deletes the stored link.
+          It can also delete everything: the worlds and backups you own, the
+          data SharedWorld keeps in your Google Drive, your account on our
+          servers, and the mod's local files on your computer.
+        </p>
+        <p>
+          You can also cut off access without the mod. Your Google Account's
+          security settings let you revoke SharedWorld's access at any time,
+          and Google Drive's "Manage Apps" page lets you delete the app's
+          hidden data. Once access is revoked, syncing stops working until
+          you reconnect.
+        </p>
+
+        <h2>8. Contact</h2>
+        <p>
+          If you have questions, open an issue on the project's GitHub
+          repository.
+        </p>
+      </article>
+    </main>
+  </body>
+</html>

@@ -1,12 +1,12 @@
 :root {
-  color-scheme: light;
-  --bg: #f7f5f1;
-  --surface: #ffffff;
-  --border: #d9d4cc;
-  --text: #1f2328;
-  --muted: #5f6773;
-  --accent: #165a9c;
-  --accent-soft: #edf4fb;
+  color-scheme: dark;
+  --bg: #0b1120;
+  --surface: #131d33;
+  --border: #26334d;
+  --text: #e8edf6;
+  --muted: #97a3b8;
+  --accent: #4da3e8;
+  --accent-soft: rgba(77, 163, 232, 0.12);
 }
 
 * {
@@ -20,7 +20,7 @@ html {
 body {
   margin: 0;
   min-height: 100vh;
-  font-family: "Segoe UI", system-ui, sans-serif;
+  font-family: "Inter", "Segoe UI", system-ui, sans-serif;
   line-height: 1.6;
   color: var(--text);
   background: var(--bg);
@@ -32,7 +32,7 @@ a {
 }
 
 a:hover {
-  color: #0f4679;
+  color: #7cbdf0;
 }
 
 code {
@@ -55,11 +55,20 @@ code {
 }
 
 .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
   color: var(--text);
   text-decoration: none;
-  font-size: 0.95rem;
+  font-size: 0.98rem;
   font-weight: 700;
   letter-spacing: 0.02em;
+}
+
+.brand img {
+  width: 26px;
+  height: 26px;
+  image-rendering: pixelated;
 }
 
 .content,
@@ -78,11 +87,10 @@ h1,
 h2 {
   margin: 0;
   line-height: 1.2;
-  font-family: Georgia, "Times New Roman", serif;
 }
 
 h1 {
-  font-size: clamp(2.2rem, 5vw, 3.1rem);
+  font-size: clamp(2rem, 5vw, 2.7rem);
 }
 
 h2 {
@@ -91,7 +99,8 @@ h2 {
 
 .summary,
 .content p,
-.policy p {
+.policy p,
+.policy li {
   color: var(--muted);
 }
 
@@ -114,11 +123,22 @@ h2 {
   padding: 0 0.25rem;
 }
 
+.kicker {
+  display: inline-block;
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #1bd96a;
+}
+
 .policy h2 + p {
   margin-top: 0.75rem;
 }
 
-.policy p + h2 {
+.policy p + h2,
+.policy ul + h2 {
   margin-top: 2rem;
 }
 

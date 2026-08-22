@@ -3,58 +3,551 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>SharedWorld</title>
+    <title>SharedWorld · Play one Minecraft world with your friends, no server needed</title>
     <meta
       name="description"
-      content="Play with your friends without a dedicated Minecraft server. SharedWorld combines e4mc with Google Drive sync so the world can keep going when the host changes."
+      content="SharedWorld is a Fabric mod that keeps one Minecraft world in sync between friends. Whoever is online hosts, and when they leave someone else takes over. No dedicated server, no paid hosting."
     >
     <link rel="canonical" href="https://sharedworld.net/">
-    <link rel="stylesheet" href="./styles.css">
+    <link rel="icon" type="image/png" href="./assets/logo-128.png">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="SharedWorld">
+    <meta property="og:description" content="Play one Minecraft world with your friends, no server needed. The world follows the group: whoever is online hosts.">
+    <meta property="og:url" content="https://sharedworld.net/">
+    <meta property="og:image" content="https://sharedworld.net/assets/logo-512.png">
+    <meta name="twitter:card" content="summary">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b1120;
+        --bg-raise: #111a2e;
+        --card: #131d33;
+        --border: #26334d;
+        --border-soft: #1c2740;
+        --text: #e8edf6;
+        --muted: #97a3b8;
+        --blue: #4da3e8;
+        --green: #1bd96a;
+        --green-deep: #12b558;
+        --glow-blue: rgba(61, 139, 212, 0.16);
+        --glow-green: rgba(27, 217, 106, 0.10);
+      }
+
+      * { box-sizing: border-box; }
+
+      html { font-size: 16px; scroll-behavior: smooth; }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Inter", system-ui, sans-serif;
+        line-height: 1.65;
+        color: var(--text);
+        background:
+          radial-gradient(900px 480px at 75% -10%, var(--glow-blue), transparent 60%),
+          radial-gradient(700px 420px at 10% 30%, var(--glow-green), transparent 65%),
+          var(--bg);
+        background-attachment: fixed;
+      }
+
+      h1, h2, h3 {
+        font-family: "Space Grotesk", "Inter", system-ui, sans-serif;
+        line-height: 1.15;
+        margin: 0;
+        letter-spacing: -0.015em;
+      }
+
+      a { color: var(--blue); text-underline-offset: 0.16em; }
+
+      .wrap {
+        width: min(64rem, calc(100% - 2.5rem));
+        margin: 0 auto;
+      }
+
+      /* Header */
+      .site-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 1.4rem 0;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 0.65rem;
+        color: var(--text);
+        text-decoration: none;
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 700;
+        font-size: 1.15rem;
+      }
+
+      .brand img { width: 34px; height: 34px; image-rendering: pixelated; }
+
+      .header-nav {
+        display: flex;
+        align-items: center;
+        gap: 1.4rem;
+        font-size: 0.95rem;
+      }
+
+      .header-nav a.text-link { color: var(--muted); text-decoration: none; }
+      .header-nav a.text-link:hover { color: var(--text); }
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.55rem;
+        padding: 0.62rem 1.15rem;
+        border-radius: 0.6rem;
+        font-weight: 600;
+        font-size: 0.98rem;
+        text-decoration: none;
+        border: 1px solid transparent;
+        transition: transform 0.08s ease, background 0.15s ease, border-color 0.15s ease;
+      }
+
+      .btn:active { transform: translateY(1px); }
+
+      .btn-green {
+        background: var(--green);
+        color: #05240f;
+      }
+      .btn-green:hover { background: #3ce381; color: #05240f; }
+
+      .btn-ghost {
+        border-color: var(--border);
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.02);
+      }
+      .btn-ghost:hover { border-color: #3a4a6b; background: rgba(255, 255, 255, 0.05); }
+
+      .btn svg { flex: none; }
+
+      .header-nav .btn { padding: 0.5rem 0.95rem; font-size: 0.92rem; }
+
+      /* Hero */
+      .hero {
+        padding: 4.5rem 0 3.5rem;
+        text-align: center;
+      }
+
+      .hero img.mark {
+        width: 108px;
+        height: 108px;
+        image-rendering: pixelated;
+        margin-bottom: 1.6rem;
+        filter: drop-shadow(0 12px 32px rgba(61, 139, 212, 0.35));
+      }
+
+      .hero h1 {
+        font-size: clamp(2.1rem, 5.4vw, 3.4rem);
+        max-width: 21ch;
+        margin: 0 auto;
+      }
+
+      .hero h1 .accent { color: var(--green); display: block; }
+
+      .hero .sub {
+        max-width: 44rem;
+        margin: 1.3rem auto 0;
+        color: var(--muted);
+        font-size: clamp(1.02rem, 1.8vw, 1.16rem);
+      }
+
+      .hero .cta-row {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 0.9rem;
+        margin-top: 2.1rem;
+      }
+
+      .hero .cta-row .btn { padding: 0.8rem 1.5rem; font-size: 1.05rem; }
+
+      .hero .fineprint {
+        margin-top: 1rem;
+        font-size: 0.88rem;
+        color: var(--muted);
+      }
+
+      /* Stats */
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 1rem;
+        padding: 1.2rem 0 0;
+      }
+
+      .stat {
+        background: linear-gradient(180deg, rgba(255,255,255,0.025), rgba(255,255,255,0.005));
+        border: 1px solid var(--border-soft);
+        border-radius: 0.9rem;
+        padding: 1.3rem 1rem 1.15rem;
+        text-align: center;
+      }
+
+      .stat .num {
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 700;
+        font-size: clamp(1.6rem, 3vw, 2.1rem);
+        color: var(--text);
+      }
+
+      .stat .num .unit { font-size: 0.6em; color: var(--muted); font-weight: 600; }
+
+      .stat .label {
+        margin-top: 0.15rem;
+        font-size: 0.88rem;
+        color: var(--muted);
+      }
+
+      /* Sections */
+      section.block { padding: 4.2rem 0 0; }
+
+      .kicker {
+        display: inline-block;
+        font-size: 0.8rem;
+        font-weight: 600;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--green);
+        margin-bottom: 0.7rem;
+      }
+
+      section.block > .wrap > h2 {
+        font-size: clamp(1.5rem, 3vw, 2rem);
+      }
+
+      .lead {
+        color: var(--muted);
+        max-width: 46rem;
+        margin: 0.8rem 0 0;
+      }
+
+      /* How it works cards */
+      .steps {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1.1rem;
+        margin-top: 2rem;
+      }
+
+      .step {
+        background: var(--card);
+        border: 1px solid var(--border-soft);
+        border-radius: 1rem;
+        padding: 1.5rem 1.4rem;
+      }
+
+      .step .n {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 2rem;
+        height: 2rem;
+        border-radius: 0.55rem;
+        background: rgba(77, 163, 232, 0.14);
+        color: var(--blue);
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 700;
+        margin-bottom: 0.9rem;
+      }
+
+      .step h3 { font-size: 1.12rem; }
+
+      .step p {
+        margin: 0.55rem 0 0;
+        color: var(--muted);
+        font-size: 0.96rem;
+      }
+
+      /* Trust / safety */
+      .trust-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 1.1rem;
+        margin-top: 2rem;
+      }
+
+      .trust {
+        display: flex;
+        gap: 0.95rem;
+        background: var(--card);
+        border: 1px solid var(--border-soft);
+        border-radius: 1rem;
+        padding: 1.35rem 1.4rem;
+      }
+
+      .trust .icon {
+        flex: none;
+        width: 2.4rem;
+        height: 2.4rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 0.6rem;
+        background: rgba(27, 217, 106, 0.10);
+        color: var(--green);
+      }
+
+      .trust h3 { font-size: 1.05rem; }
+
+      .trust p { margin: 0.4rem 0 0; color: var(--muted); font-size: 0.95rem; }
+
+      .trust p a { color: var(--blue); }
+
+      /* Bottom CTA */
+      .bottom-cta {
+        margin-top: 4.5rem;
+        padding: 3.2rem 1.5rem;
+        text-align: center;
+        background: linear-gradient(180deg, var(--bg-raise), var(--card));
+        border-top: 1px solid var(--border-soft);
+        border-bottom: 1px solid var(--border-soft);
+      }
+
+      .bottom-cta h2 { font-size: clamp(1.5rem, 3vw, 2rem); }
+
+      .bottom-cta p { color: var(--muted); margin: 0.7rem auto 1.6rem; max-width: 38rem; }
+
+      /* Footer */
+      .site-footer {
+        padding: 2.2rem 0 2.8rem;
+      }
+
+      .site-footer .row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+      }
+
+      .site-footer nav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.6rem 1.4rem;
+        font-size: 0.92rem;
+      }
+
+      .site-footer a { color: var(--muted); text-decoration: none; }
+      .site-footer a:hover { color: var(--text); }
+
+      .site-footer .madeby {
+        font-size: 0.92rem;
+        color: var(--muted);
+      }
+
+      @media (max-width: 880px) {
+        .stats { grid-template-columns: repeat(2, 1fr); }
+        .steps { grid-template-columns: 1fr; }
+        .trust-grid { grid-template-columns: 1fr; }
+      }
+
+      @media (max-width: 560px) {
+        .header-nav a.text-link { display: none; }
+        .hero { padding-top: 3rem; }
+      }
+    </style>
   </head>
   <body>
-    <main class="layout">
-      <header class="site-header">
-        <a class="brand" href="./" aria-current="page">SharedWorld</a>
-      </header>
-
-      <article class="content">
-        <section class="page-section" aria-labelledby="sharedworld-heading">
-          <h1 id="sharedworld-heading">SharedWorld</h1>
-          <p class="summary">
-            Play with your friends without a dedicated Minecraft server.
-            SharedWorld combines
-            <a href="https://modrinth.com/mod/e4mc">e4mc</a> with Google Drive
-            sync so the world can keep going even when the host changes.
-          </p>
-        </section>
-
-        <section class="page-section" aria-labelledby="how-it-works-heading">
-          <h2 id="how-it-works-heading">How it works</h2>
-          <p>
-            Behind the scenes, the world is synced through Google Drive. The
-            first player to join a Shared World becomes the host. Other players
-            are automatically redirected to that host through <code>e4mc</code>.
-            When the host leaves, a new host is picked from the remaining
-            online players and everyone reconnects automatically.
-          </p>
-        </section>
-
-        <section class="page-section" aria-labelledby="permissions-heading">
-          <h2 id="permissions-heading">Google Drive permissions? Is this safe?</h2>
-          <p>
-            The mod only requests permission to use a private app-data folder
-            where it stores SharedWorld data. It does not get access to your
-            entire Google Drive.
-          </p>
-        </section>
-      </article>
-
-      <nav class="links" aria-label="Project links">
-        <a href="./privacy/">Privacy policy</a>
-        <a href="./terms/">Terms of service</a>
-        <a href="https://github.com/pmarinroig/sharedworld">Source code</a>
-        <a href="https://github.com/pmarinroig/sharedworld/issues">GitHub issues</a>
+    <header class="wrap site-header">
+      <a class="brand" href="./" aria-current="page">
+        <img src="./assets/logo-128.png" alt="" width="34" height="34">
+        SharedWorld
+      </a>
+      <nav class="header-nav" aria-label="Site">
+        <a class="text-link" href="#how-it-works">How it works</a>
+        <a class="text-link" href="https://github.com/pmarinroig/sharedworld">GitHub</a>
+        <a class="btn btn-green" href="https://modrinth.com/mod/sharedworld">Download</a>
       </nav>
+    </header>
+
+    <main>
+      <section class="wrap hero">
+        <img class="mark" src="./assets/logo-512.png" alt="SharedWorld logo" width="108" height="108">
+        <h1>One Minecraft world for your whole friend group. <span class="accent">No server needed.</span></h1>
+        <p class="sub">
+          SharedWorld keeps your world in sync through Google Drive and connects
+          everyone through <a href="https://modrinth.com/mod/e4mc">e4mc</a>.
+          Whoever is online hosts. When they log off, someone else takes over
+          and the world keeps going.
+        </p>
+        <div class="cta-row">
+          <a class="btn btn-green" href="https://modrinth.com/mod/sharedworld">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download on Modrinth
+          </a>
+          <a class="btn btn-ghost" href="https://github.com/pmarinroig/sharedworld">View source</a>
+        </div>
+        <p class="fineprint">Free and open source. Fabric, Minecraft 1.20.1 and newer.</p>
+
+        <div class="stats" aria-label="Project stats">
+          <div class="stat">
+            <div class="num" id="stat-downloads">1,250<span class="unit">+</span></div>
+            <div class="label">downloads</div>
+          </div>
+          <div class="stat">
+            <div class="num">180<span class="unit">+</span></div>
+            <div class="label">players</div>
+          </div>
+          <div class="stat">
+            <div class="num">260<span class="unit">+</span></div>
+            <div class="label">worlds created</div>
+          </div>
+          <div class="stat">
+            <div class="num">195<span class="unit">&nbsp;GB+</span></div>
+            <div class="label">of worlds kept in sync</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="block" id="how-it-works">
+        <div class="wrap">
+          <span class="kicker">How it works</span>
+          <h2>The world follows the group, not one computer</h2>
+          <p class="lead">
+            Normally a Minecraft world lives on one person's PC, and if they are
+            not around nobody plays. SharedWorld fixes that.
+          </p>
+          <div class="steps">
+            <div class="step">
+              <span class="n">1</span>
+              <h3>Create a shared world</h3>
+              <p>
+                Make a world from the Shared Worlds screen, or link one you
+                already have, and invite your friends by their Minecraft name.
+              </p>
+            </div>
+            <div class="step">
+              <span class="n">2</span>
+              <h3>First one online hosts</h3>
+              <p>
+                Whoever opens the world first becomes the host. Everyone else
+                joins them through e4mc, with no port forwarding and no setup.
+              </p>
+            </div>
+            <div class="step">
+              <span class="n">3</span>
+              <h3>Host leaves? Keep playing</h3>
+              <p>
+                The world syncs to Google Drive as you play. When the host logs
+                off, another player picks it up and everyone reconnects on
+                their own.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="block" id="safety">
+        <div class="wrap">
+          <span class="kicker">Privacy and safety</span>
+          <h2>Built to be trusted with your world</h2>
+          <div class="trust-grid">
+            <div class="trust">
+              <div class="icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              </div>
+              <div>
+                <h3>Your Drive stays yours</h3>
+                <p>
+                  The mod only gets a private app data folder in your Google
+                  Drive. It cannot see or touch your files, documents, or
+                  photos.
+                </p>
+              </div>
+            </div>
+            <div class="trust">
+              <div class="icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              </div>
+              <div>
+                <h3>Minimal data, encrypted</h3>
+                <p>
+                  The backend stores only what it needs to run, and encrypts
+                  your email and Drive tokens at rest. No request or IP logs.
+                  Details in the <a href="./privacy">privacy policy</a>.
+                </p>
+              </div>
+            </div>
+            <div class="trust">
+              <div class="icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+              </div>
+              <div>
+                <h3>Open source</h3>
+                <p>
+                  The mod and the backend are on
+                  <a href="https://github.com/pmarinroig/sharedworld">GitHub</a>,
+                  so you can read exactly what runs on your computer and where
+                  your world goes.
+                </p>
+              </div>
+            </div>
+            <div class="trust">
+              <div class="icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              </div>
+              <div>
+                <h3>Leave whenever you want</h3>
+                <p>
+                  The in-game Account screen can disconnect your Google account
+                  or delete every trace of SharedWorld: worlds, backups, Drive
+                  data, and local files, in one go.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="bottom-cta">
+        <div class="wrap">
+          <h2>Ready to play?</h2>
+          <p>
+            Grab the mod, sign in with Minecraft, and you and your friends can
+            be in the same world in a couple of minutes.
+          </p>
+          <a class="btn btn-green" href="https://modrinth.com/mod/sharedworld">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download on Modrinth
+          </a>
+        </div>
+      </section>
     </main>
+
+    <footer class="wrap site-footer">
+      <div class="row">
+        <nav aria-label="Project links">
+          <a href="./privacy">Privacy policy</a>
+          <a href="./terms">Terms of service</a>
+          <a href="https://github.com/pmarinroig/sharedworld">Source code</a>
+          <a href="https://github.com/pmarinroig/sharedworld/issues">GitHub issues</a>
+        </nav>
+        <span class="madeby">Made by a student on his free time.</span>
+      </div>
+    </footer>
+
+    <script>
+      // Keep the downloads number fresh without redeploying the site.
+      fetch("https://api.modrinth.com/v2/project/sharedworld")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((p) => {
+          if (!p || !p.downloads) return;
+          const el = document.getElementById("stat-downloads");
+          const n = Math.floor(p.downloads / 50) * 50;
+          if (n > 1250) {
+            el.innerHTML = n.toLocaleString("en-US") + '<span class="unit">+</span>';
+          }
+        })
+        .catch(() => {});
+    </script>
   </body>
 </html>
