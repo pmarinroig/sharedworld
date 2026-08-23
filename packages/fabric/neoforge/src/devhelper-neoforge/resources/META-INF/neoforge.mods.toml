@@ -1,0 +1,14 @@
+modLoader = "javafml"
+loaderVersion = "*"
+license = "All Rights Reserved"
+
+[[mods]]
+modId = "sharedworld_dev_helper"
+version = "${version}"
+displayName = "SharedWorld Dev Helper (NeoForge)"
+description = '''
+Local-only dev helper: loopback login bypass + hidden-window policy.
+'''
+
+[[mixins]]
+config = "sharedworld-dev-helper.mixins.json"

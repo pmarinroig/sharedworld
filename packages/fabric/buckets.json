@@ -1,12 +1,13 @@
 {
-  "//": "Single source of truth for the version-bucket matrix. Consumed by build.gradle (classic), modern/build.gradle, and scripts/verify/buckets.ts in the workspace repo. Adding a bucket means editing THIS file plus creating src/versioned/<name>/.",
+  "//": "Single source of truth for the version-bucket matrix. Consumed by build.gradle (classic), modern/build.gradle, neoforge/build.gradle, and scripts/verify/buckets.ts in the workspace repo. Adding a bucket means editing THIS file plus creating src/versioned/<name>/.",
   "defaults": {
     "classic": "1.21.11",
     "modern": "26.1"
   },
   "testedE4mc": {
     "classic": "6.2.1",
-    "modern": "6.2.1-fabric-modern"
+    "modern": "6.2.1-fabric-modern",
+    "neoforge": "6.2.1-neoforge"
   },
   "buckets": [
     {
@@ -35,7 +36,11 @@
         "1.21.11-plus",
         "1.21.6-plus",
         "all"
-      ]
+      ],
+      "neoforge": {
+        "version": "21.11.45",
+        "range": "[21.11.0,21.12)"
+      }
     },
     {
       "name": "1.21.9",
@@ -65,7 +70,11 @@
         "1.21.1-plus",
         "1.21.6-plus",
         "all"
-      ]
+      ],
+      "neoforge": {
+        "version": "21.9.16-beta",
+        "range": "[21.9.0-beta,21.10)"
+      }
     },
     {
       "name": "1.21.6",
@@ -95,7 +104,11 @@
         "1.21.1-plus",
         "1.21.6-plus",
         "all"
-      ]
+      ],
+      "neoforge": {
+        "version": "21.6.20-beta",
+        "range": "[21.6.0-beta,21.7)"
+      }
     },
     {
       "name": "1.21.1",
@@ -121,7 +134,11 @@
         "1.20.1-to-1.21.9",
         "1.21.1-plus",
         "all"
-      ]
+      ],
+      "neoforge": {
+        "version": "21.1.248",
+        "range": "[21.1.0,21.2)"
+      }
     },
     {
       "name": "1.20.1",

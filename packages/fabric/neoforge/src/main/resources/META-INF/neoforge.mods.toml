@@ -1,0 +1,43 @@
+modLoader = "javafml"
+loaderVersion = "*"
+license = "All Rights Reserved"
+issueTrackerURL = "https://sharedworld.net"
+
+[[mods]]
+modId = "sharedworld"
+version = "${version}"
+displayName = "SharedWorld"
+logoFile = "share_world_pixel_art.png"
+authors = "Bolido"
+description = '''
+Cloud-backed friend-hosted Minecraft worlds.
+'''
+
+[[mixins]]
+config = "sharedworld.mixins.json"
+
+[[mixins]]
+config = "sharedworld-versioned.mixins.json"
+
+[[dependencies.sharedworld]]
+modId = "neoforge"
+type = "required"
+versionRange = "${neoforgeRange}"
+ordering = "NONE"
+side = "CLIENT"
+
+[[dependencies.sharedworld]]
+modId = "minecraft"
+type = "required"
+versionRange = "${minecraftRange}"
+ordering = "NONE"
+side = "CLIENT"
+
+# e4mc is optional since 0.5.0: hosting can use a custom join address instead,
+# and joining never needs it (mirrors the Fabric depends -> recommends move).
+[[dependencies.sharedworld]]
+modId = "e4mc"
+type = "optional"
+versionRange = "[6.0.6,7.0)"
+ordering = "NONE"
+side = "CLIENT"

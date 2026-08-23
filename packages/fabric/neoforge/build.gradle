@@ -1,0 +1,248 @@
+plugins {
+    id "net.neoforged.moddev" version "${moddev_version}"
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = project.archives_base_name
+}
+
+// Bucket selection mirrors the classic project; only classic buckets carrying
+// a "neoforge" block are portable (no NeoForge exists for 1.20.1, and the
+// modern 26.x generation waits for a later release).
+def bucketConfig = new groovy.json.JsonSlurper().parse(file("../buckets.json"))
+def mcBuckets = bucketConfig.buckets.findAll { it.project == "classic" && it.neoforge != null }.collectEntries {
+    [(it.name): it]
+}
+def mcBucketName = providers.gradleProperty("sharedworldMcBucket").getOrElse(bucketConfig.defaults.classic)
+def mcBucket = mcBuckets[mcBucketName]
+if (mcBucket == null) {
+    throw new GradleException("Unknown NeoForge sharedworldMcBucket '${mcBucketName}'. Known buckets: ${mcBuckets.keySet()}")
+}
+def bucketJavaRelease = (mcBucket.javaRelease ?: 21) as int
+def bucketMixinCompatibilityLevel = bucketJavaRelease >= 21 ? "JAVA_21" : "JAVA_17"
+
+// Fabric's semver range ("[>=]a[ <b]") to a maven range ("[a,b)"); the
+// buckets only ever use the >=lo <hi shape.
+static String mavenRange(String fabricRange) {
+    def m = fabricRange =~ /^>=([\w.\-]+)\s*(?:<([\w.\-]+))?$/
+    if (!m.matches()) {
+        throw new GradleException("Unsupported minecraftRange shape: ${fabricRange}")
+    }
+    return m.group(2) != null ? "[${m.group(1)},${m.group(2)})" : "[${m.group(1)},)"
+}
+def minecraftMavenRange = mavenRange(mcBucket.minecraftRange as String)
+
+// The shared tree, minus the Fabric-only classes this project replaces:
+// the Fabric entrypoint shim and FabricPlatform (swapped for the NeoForge
+// pair in src/main/java here), and — on 1.21.1, the one bucket whose
+// backdrop hook uses Fabric ScreenEvents — the versioned backdrop compat
+// (replaced under src/versioned-overrides/1.21.1).
+def prepareSharedSources = tasks.register("prepareSharedSources", Sync) {
+    from("../src/main/java") {
+        exclude "link/sharedworld/fabric/**"
+        exclude "link/sharedworld/platform/FabricPlatform.java"
+    }
+    from("../src/versioned/${mcBucketName}/java") {
+        if (mcBucketName == "1.21.1") {
+            exclude "link/sharedworld/versioned/ScreenBackdropCompat.java"
+        }
+    }
+    (mcBucket.sharedVersionedDirs ?: []).each { group ->
+        from "../src/versioned/common/${group}/java"
+    }
+    into layout.buildDirectory.dir("generated/sharedMain")
+}
+
+// Dev-mod trees (e2e only, never shipped): the shared dev sources minus
+// their Fabric entrypoints, plus the NeoForge shims. Only the default bucket
+// carries the e2e driver, mirroring the classic project.
+def prepareSharedDevHelperSources = tasks.register("prepareSharedDevHelperSources", Sync) {
+    from("../src/devhelper/java") {
+        exclude "link/sharedworld/devhelper/DevHelperClient.java"
+    }
+    from "../src/devhelperVersioned/${mcBucketName}/java"
+    into layout.buildDirectory.dir("generated/sharedDevHelper")
+}
+
+def prepareSharedDevE2eSources = tasks.register("prepareSharedDevE2eSources", Sync) {
+    from("../src/devhelperE2e/java") {
+        exclude "link/sharedworld/devhelper/e2e/SharedWorldE2eDriverFabric.java"
+    }
+    into layout.buildDirectory.dir("generated/sharedDevE2e")
+}
+
+sourceSets {
+    main {
+        java.srcDirs = [prepareSharedSources, "src/main/java"] \
+                + (mcBucketName == "1.21.1" ? ["src/versioned-overrides/1.21.1/java"] : [])
+        resources.srcDirs = ["src/main/resources", "../src/versioned/${mcBucketName}/resources"]
+    }
+    test {
+        java.srcDirs = ["../src/test/java", "../src/versionedTest/${mcBucketName}/java"] \
+                + (mcBucket.sharedVersionedTestDirs ?: []).collect { "../src/versionedTest/common/${it}/java" }
+        resources.srcDirs = ["../src/test/resources"]
+    }
+    devHelper {
+        java.srcDirs = [prepareSharedDevHelperSources, "src/devhelper-neoforge/java"]
+        resources.srcDirs = ["src/devhelper-neoforge/resources", "../src/devhelper/resources"]
+        compileClasspath += sourceSets.main.compileClasspath + sourceSets.main.output
+        runtimeClasspath += output + compileClasspath + sourceSets.main.runtimeClasspath
+    }
+    devHelperE2e {
+        java.srcDirs = [prepareSharedDevE2eSources, "src/devhelperE2e-neoforge/java"]
+        resources.srcDirs = ["src/devhelperE2e-neoforge/resources"]
+        compileClasspath += sourceSets.main.compileClasspath + sourceSets.main.output + sourceSets.devHelper.output
+        runtimeClasspath += output + compileClasspath + sourceSets.main.runtimeClasspath
+    }
+}
+
+tasks.named("processDevHelperResources").configure {
+    inputs.property "version", project.version
+    inputs.property "mixinCompatibilityLevel", bucketMixinCompatibilityLevel
+    // The Fabric metadata rides along in the shared resources dir; this jar's
+    // identity is its neoforge.mods.toml.
+    exclude "fabric.mod.json"
+    filesMatching("META-INF/neoforge.mods.toml") {
+        expand "version": inputs.properties.version
+    }
+    filesMatching("sharedworld-dev-helper.mixins.json") {
+        expand "mixinCompatibilityLevel": inputs.properties.mixinCompatibilityLevel
+    }
+}
+
+tasks.named("processDevHelperE2eResources").configure {
+    inputs.property "version", project.version
+    filesMatching("META-INF/neoforge.mods.toml") {
+        expand "version": inputs.properties.version
+    }
+}
+
+// The shared resources ship almost verbatim; fabric.mod.json stays out (this
+// jar's metadata is META-INF/neoforge.mods.toml).
+processResources {
+    from("../src/main/resources") {
+        exclude "fabric.mod.json"
+    }
+    inputs.property "version", project.version
+    inputs.property "minecraftRange", minecraftMavenRange
+    inputs.property "neoforgeRange", mcBucket.neoforge.range
+    inputs.property "mixinCompatibilityLevel", bucketMixinCompatibilityLevel
+
+    filesMatching("META-INF/neoforge.mods.toml") {
+        expand "version": inputs.properties.version,
+                "minecraftRange": inputs.properties.minecraftRange,
+                "neoforgeRange": inputs.properties.neoforgeRange
+    }
+    filesMatching("sharedworld.mixins.json") {
+        expand "mixinCompatibilityLevel": inputs.properties.mixinCompatibilityLevel
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+def e2eBackendUrl = providers.gradleProperty("sharedworldE2eBackendUrl").getOrElse("http://127.0.0.1:8787")
+def e2eMarkerFile = providers.gradleProperty("sharedworldE2eMarkerFile").orNull
+def e2eCommandFile = providers.gradleProperty("sharedworldE2eCommandFile").orNull
+def e2eWorldName = providers.gradleProperty("sharedworldE2eWorldName").orNull
+def e2eScenario = providers.gradleProperty("sharedworldE2eScenario").orNull
+def e2eCustomJoinPort = providers.gradleProperty("sharedworldE2eCustomJoinPort").orNull
+def e2eDevAuthSecret = providers.gradleProperty("sharedworldDevAuthSecret").orNull
+
+neoForge {
+    version = mcBucket.neoforge.version
+
+    runs {
+        client {
+            client()
+        }
+        e2eGuest {
+            client()
+            gameDirectory = file("run-e2e-guest")
+            def guestName = "GuestB"
+            def guestUuid = "22222222-2222-2222-2222-222222222222"
+            systemProperty "sharedworld.backendUrl", e2eBackendUrl
+            systemProperty "sharedworld.devPlayerName", guestName
+            systemProperty "sharedworld.devPlayerUuid", guestUuid
+            if (e2eDevAuthSecret != null) {
+                systemProperty "sharedworld.devAuthSecret", e2eDevAuthSecret
+            }
+            systemProperty "sharedworld.e2e.role", "guest"
+            if (e2eMarkerFile != null) {
+                systemProperty "sharedworld.e2e.markerFile", e2eMarkerFile
+            }
+            if (e2eCommandFile != null) {
+                systemProperty "sharedworld.e2e.commandFile", e2eCommandFile
+            }
+            if (e2eWorldName != null) {
+                systemProperty "sharedworld.e2e.worldName", e2eWorldName
+            }
+            if (e2eScenario != null) {
+                systemProperty "sharedworld.e2e.scenario", e2eScenario
+            }
+            if (e2eCustomJoinPort != null) {
+                systemProperty "sharedworld.e2e.customJoinPort", e2eCustomJoinPort
+            }
+            programArguments.addAll("--username=${guestName}", "--uuid=${guestUuid}")
+        }
+    }
+
+    mods {
+        sharedworld {
+            sourceSet sourceSets.main
+        }
+        sharedworld_dev_helper {
+            sourceSet sourceSets.devHelper
+        }
+        sharedworld_dev_e2e {
+            sourceSet sourceSets.devHelperE2e
+        }
+    }
+
+    // The shared unit tests compile against Minecraft classes.
+    addModdingDependenciesTo sourceSets.test
+    addModdingDependenciesTo sourceSets.devHelper
+    addModdingDependenciesTo sourceSets.devHelperE2e
+}
+
+def localModsDir = file("local/mods")
+
+dependencies {
+    compileOnly "org.jspecify:jspecify:1.0.0"
+    if (localModsDir.exists()) {
+        runtimeOnly(fileTree(localModsDir).matching {
+            include "*.jar"
+        })
+    }
+    testImplementation "org.junit.jupiter:junit-jupiter:5.10.2"
+    testRuntimeOnly "org.junit.platform:junit-platform-launcher"
+}
+
+tasks.withType(JavaCompile).configureEach {
+    it.options.release = bucketJavaRelease
+    it.options.encoding = "UTF-8"
+}
+
+tasks.named("jar").configure {
+    archiveVersion = "${project.mod_version}+mc${mcBucketName}-neoforge"
+}
+
+tasks.named("test").configure {
+    useJUnitPlatform {
+        excludeTags "integration"
+    }
+    // Private tmpdir per test JVM, same rationale as the classic/modern lanes.
+    def testTmpDir = layout.buildDirectory.dir("test-tmpdir").get().asFile
+    doFirst { testTmpDir.mkdirs() }
+    systemProperty "java.io.tmpdir", testTmpDir.absolutePath
+    systemProperty "sharedworld.test.hugeDelta", System.getProperty("sharedworld.test.hugeDelta", "false")
+}
+
+java {
+    sourceCompatibility = JavaVersion.toVersion(bucketJavaRelease)
+    targetCompatibility = JavaVersion.toVersion(bucketJavaRelease)
+}

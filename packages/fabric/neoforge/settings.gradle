@@ -1,0 +1,22 @@
+// Build project for the NeoForge port (0.5.0). It shares the source tree of
+// the classic project one directory up; only the loader shims and toolchain
+// differ (ModDevGradle, no loom, no remapping — NeoForge 1.20.5+ runs
+// official Mojang mappings, the same names the shared tree compiles against).
+pluginManagement {
+    repositories {
+        maven {
+            name = "NeoForged"
+            url = "https://maven.neoforged.net/releases"
+        }
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+// The machine carries only JDK 25; NeoForge's toolchain tasks require the
+// bucket's Java (21), so Gradle provisions it itself.
+plugins {
+    id "org.gradle.toolchains.foojay-resolver-convention" version "1.0.0"
+}
+
+rootProject.name = "sharedworld-mod-neoforge"
