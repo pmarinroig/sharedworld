@@ -29,7 +29,7 @@ public final class RedeemInviteScreen extends link.sharedworld.versioned.Version
         int centerX = this.width / 2;
         this.codeBox = new EditBox(this.font, centerX - 100, 106, 200, 20, Component.translatable("screen.sharedworld.code_hint"));
         this.codeBox.setMaxLength(32);
-        this.codeBox.setHint(Component.translatable("screen.sharedworld.code_hint"));
+        this.codeBox.setHint(SharedWorldText.hint("screen.sharedworld.code_hint"));
         this.addRenderableWidget(this.codeBox);
         this.setInitialFocus(this.codeBox);
 

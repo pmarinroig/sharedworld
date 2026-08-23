@@ -100,7 +100,7 @@ public final class SettingsScreen extends link.sharedworld.versioned.VersionedSc
         this.savedCustomJoinAddress = blankOr(link.sharedworld.SharedWorldClientConfigStore.shared().customJoinAddress(), "");
         this.customJoinBox = new EditBox(this.font, 0, 0, 220, 20, Component.translatable("screen.sharedworld.custom_join_address"));
         this.customJoinBox.setMaxLength(260);
-        this.customJoinBox.setHint(Component.translatable("screen.sharedworld.custom_join_address_hint"));
+        this.customJoinBox.setHint(SharedWorldText.hint("screen.sharedworld.custom_join_address_hint"));
         this.customJoinBox.setValue(this.savedCustomJoinAddress);
 
         this.tabNavigationBar = link.sharedworld.versioned.TabBarCompat.create(this.tabManager, this.width, this.storageTab, this.advancedTab);

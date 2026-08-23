@@ -11,6 +11,16 @@ public final class SharedWorldText {
         return Component.translatable(key, args);
     }
 
+    /**
+     * EditBox hint text, styled dark grey explicitly: vanilla only started
+     * auto-styling unstyled hints (EditBox.DEFAULT_HINT_STYLE) on the newest
+     * versions, so older buckets would render them like typed text. Styled
+     * components bypass the auto-wrap, so this looks identical everywhere.
+     */
+    public static Component hint(String key, Object... args) {
+        return Component.translatable(key, args).withStyle(net.minecraft.ChatFormatting.DARK_GRAY);
+    }
+
     public static String string(String key, Object... args) {
         return component(key, args).getString();
     }

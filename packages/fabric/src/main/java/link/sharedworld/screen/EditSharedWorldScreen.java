@@ -134,7 +134,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
 
         this.motdBox = new EditBox(this.font, 0, 0, 240, 20, SharedWorldText.component("screen.sharedworld.motd_hint", SharedWorldApiClient.currentPlayerName()));
         this.motdBox.setMaxLength(256);
-        this.motdBox.setHint(SharedWorldText.component("screen.sharedworld.motd_hint", SharedWorldApiClient.currentPlayerName()));
+        this.motdBox.setHint(SharedWorldText.hint("screen.sharedworld.motd_hint", SharedWorldApiClient.currentPlayerName()));
 
         this.replaceWorldButton = Button.builder(
                 Component.translatable("screen.sharedworld.replace_world"),
