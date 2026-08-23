@@ -2139,6 +2139,55 @@ final class SharedWorldHostingManagerTest {
         }
     }
 
+    @Test
+    void beginHostingRetriesAfterAStartupErrorInsteadOfSwallowingTheAttempt() throws Exception {
+        // A failed attempt must not count as "already running": after the
+        // player fixes the cause (here: sets a custom join address), the retry
+        // has to start fresh instead of releasing the new lease and
+        // re-surfacing the stale error.
+        LeaseRuntimeState leaseState = new LeaseRuntimeState("world-1", 7L, "token-7", 90_000L);
+        try (HeartbeatTestServer server = new HeartbeatTestServer(leaseState)) {
+            // beginHosting canonicalizes the assigned UUID against the current
+            // identity, so this client must authenticate as the host.
+            SharedWorldApiClient hostApiClient = new SharedWorldApiClient(
+                    server.baseUrl(),
+                    HttpClient.newHttpClient(),
+                    () -> new SharedWorldApiClient.SessionIdentity(HOST_UUID, "Host", "dev:test")
+            );
+            SharedWorldHostingManager manager = manager(
+                    hostApiClient,
+                    new ManagedWorldStore(this.tempDir.resolve("managed-retry")),
+                    new RecordingSyncAccess(this.tempDir.resolve("prepared-world")),
+                    new RecordingWorldOpenController(),
+                    new InMemoryHostRecoveryStore(),
+                    worldId -> false
+            );
+            manager.setE4mcAvailableSupplier(() -> false);
+            java.util.concurrent.atomic.AtomicReference<String> address = new java.util.concurrent.atomic.AtomicReference<>();
+            manager.setCustomJoinAddressResolver(address::get);
+
+            manager.beginHosting(
+                    null,
+                    world("world-1", "Handoff World"),
+                    new SharedWorldModels.HostAssignmentDto("world-1", HOST_UUID, "Host", 7L, "token-7", null)
+            );
+            assertEquals(SharedWorldHostingManager.Phase.ERROR, manager.phase());
+            assertEquals(1, leaseState.releaseCount());
+
+            address.set("100.64.0.7:25565");
+            manager.beginHosting(
+                    null,
+                    world("world-1", "Handoff World"),
+                    new SharedWorldModels.HostAssignmentDto("world-1", HOST_UUID, "Host", 8L, "token-8", null)
+            );
+
+            assertNotEquals(SharedWorldHostingManager.Phase.ERROR, manager.phase());
+            assertEquals(8L, ((Number) getField(manager, "runtimeEpoch")).longValue());
+            // The fresh lease powers the retry; it must not be released as a duplicate.
+            assertEquals(1, leaseState.releaseCount());
+        }
+    }
+
     private SharedWorldHostingManager managerWithGate(
             SharedWorldApiClient apiClient,
             ManagedWorldStore worldStore,

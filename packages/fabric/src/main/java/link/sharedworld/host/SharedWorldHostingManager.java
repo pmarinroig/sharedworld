@@ -277,7 +277,12 @@ public final class SharedWorldHostingManager {
     }
 
     public void beginHosting(Screen launchingScreen, WorldSummaryDto world, HostAssignmentDto assignment, StartupMode startupMode) {
-        if (this.startupStarted.get() && this.world != null && this.world.id().equals(world.id())) {
+        // A failed attempt (Phase.ERROR) is not a running attempt: its lease is
+        // already released and nothing will ever advance it, so a retry for the
+        // same world must start fresh instead of being swallowed as a re-entry
+        // (which would release the new assignment and re-surface the stale
+        // error, e.g. right after the player fixed their custom join address).
+        if (this.startupStarted.get() && this.world != null && this.world.id().equals(world.id()) && this.phase != Phase.ERROR) {
             // Re-entry into an attempt that is already running. If the backend
             // just issued a fresh assignment (a new epoch), release it instead
             // of leaking a lease no local attempt will ever heartbeat.
