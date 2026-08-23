@@ -379,5 +379,6 @@
   "screen.sharedworld.account_deleted_body": "Totes les teves dades de SharedWorld s'han esborrat.",
   "screen.sharedworld.account_reconnect": "Reconnectar Google Drive",
   "screen.sharedworld.account_reconnect_waiting": "Acaba de connectar al teu navegador (enllac tambe copiat al porta-retalls)...",
-  "screen.sharedworld.account_reconnect_done": "Google Drive reconnectat."
+  "screen.sharedworld.account_reconnect_done": "Google Drive reconnectat.",
+  "screen.sharedworld.account_s3_link_done": "Bucket S3 connectat."
 }

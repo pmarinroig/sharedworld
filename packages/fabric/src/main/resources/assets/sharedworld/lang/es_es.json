@@ -379,5 +379,6 @@
   "screen.sharedworld.account_deleted_body": "Todos tus datos de SharedWorld han sido borrados.",
   "screen.sharedworld.account_reconnect": "Reconectar Google Drive",
   "screen.sharedworld.account_reconnect_waiting": "Termina de conectar en tu navegador (enlace tambien copiado al portapapeles)...",
-  "screen.sharedworld.account_reconnect_done": "Google Drive reconectado."
+  "screen.sharedworld.account_reconnect_done": "Google Drive reconectado.",
+  "screen.sharedworld.account_s3_link_done": "Bucket S3 conectado."
 }

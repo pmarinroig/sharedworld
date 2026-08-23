@@ -52,6 +52,8 @@ public final class SettingsScreen extends link.sharedworld.versioned.VersionedSc
     private boolean s3UnlinkArmed;
     private boolean s3UnlinkInFlight;
     private boolean reconnectInFlight;
+    /** Provider of the link flow in flight ("s3" or null = Google Drive), for the success banner. */
+    private String activeLinkProvider;
     /** Bumped to orphan a running reconnect poll (screen left, retry pressed). */
     private volatile int reconnectGeneration;
 
@@ -379,6 +381,7 @@ public final class SettingsScreen extends link.sharedworld.versioned.VersionedSc
             return;
         }
         this.reconnectInFlight = true;
+        this.activeLinkProvider = provider;
         int generation = ++this.reconnectGeneration;
         this.statusBanner.set(SharedWorldStatusBanner.Kind.INFO,
                 Component.translatable("screen.sharedworld.account_reconnect_waiting"));
@@ -425,7 +428,9 @@ public final class SettingsScreen extends link.sharedworld.versioned.VersionedSc
                 this.statusBanner.set(SharedWorldStatusBanner.Kind.ERROR, Component.literal(errorMessage));
             } else {
                 this.statusBanner.setTransient(SharedWorldStatusBanner.Kind.SUCCESS,
-                        Component.translatable("screen.sharedworld.account_reconnect_done"), SUCCESS_STATUS_TTL_MS);
+                        Component.translatable("s3".equals(this.activeLinkProvider)
+                                ? "screen.sharedworld.account_s3_link_done"
+                                : "screen.sharedworld.account_reconnect_done"), SUCCESS_STATUS_TTL_MS);
                 // Re-fetch the summary so the status lines reflect the fresh link.
                 this.accountCheckStarted = false;
                 this.accountCheckFinished = false;
