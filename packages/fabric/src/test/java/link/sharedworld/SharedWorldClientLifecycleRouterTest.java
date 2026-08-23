@@ -36,6 +36,7 @@ final class SharedWorldClientLifecycleRouterTest {
                 SharedWorldTerminalReasonKind.TERMINATED_REVOKED,
                 false,
                 false,
+                false,
                 false
         );
 
@@ -52,6 +53,7 @@ final class SharedWorldClientLifecycleRouterTest {
                 null,
                 null,
                 SharedWorldTerminalReasonKind.TERMINATED_DELETED,
+                false,
                 false,
                 false,
                 false
@@ -72,6 +74,7 @@ final class SharedWorldClientLifecycleRouterTest {
                 SharedWorldTerminalReasonKind.AUTHORITATIVE_LOSS,
                 false,
                 false,
+                false,
                 false
         );
 
@@ -87,6 +90,7 @@ final class SharedWorldClientLifecycleRouterTest {
                 null,
                 "Custom error detail",
                 SharedWorldTerminalReasonKind.AUTHORITATIVE_LOSS,
+                false,
                 false,
                 false,
                 false

@@ -51,7 +51,9 @@ public final class SharedWorldClientLifecycleRouter {
             return false;
         }
         Screen currentScreen = link.sharedworld.versioned.ClientCompat.currentScreen(client);
-        boolean onLifecycleScreen = currentScreen instanceof SharedWorldSavingScreen || currentScreen instanceof SharedWorldErrorScreen;
+        boolean onLifecycleScreen = currentScreen instanceof SharedWorldSavingScreen
+                || currentScreen instanceof SharedWorldErrorScreen
+                || currentScreen instanceof link.sharedworld.screen.ReleaseDriveReconnectScreen;
         if (!shouldForceLifecycleScreen(
                 client.level != null,
                 client.hasSingleplayerServer(),
@@ -98,6 +100,12 @@ public final class SharedWorldClientLifecycleRouter {
         if (view == null || view.blocking()) {
             return defaultSavingScreen(releaseCoordinator.activeWorldName());
         }
+        if (view.needsDriveReconnect()) {
+            // A dead Drive grant can only be repaired via the OAuth reconnect
+            // flow, and this parked screen is the only UI the router lets the
+            // player reach — so the flow lives on the screen itself.
+            return new link.sharedworld.screen.ReleaseDriveReconnectScreen(parent, titleFor(view), Component.literal(detailFor(view)));
+        }
         return new SharedWorldErrorScreen(
                 parent,
                 titleFor(view),
@@ -123,7 +131,9 @@ public final class SharedWorldClientLifecycleRouter {
         return switch (view.errorKind()) {
             case TERMINATED_DELETED -> Component.translatable("screen.sharedworld.deleted_title");
             case TERMINATED_REVOKED -> Component.translatable("screen.sharedworld.revoked_title");
-            default -> Component.translatable("screen.sharedworld.error_host_title");
+            // Not error_host_title: these screens appear while QUITTING a world,
+            // and "Could Not Start Shared World" read as the wrong direction.
+            default -> Component.translatable("screen.sharedworld.release_error_title");
         };
     }
 

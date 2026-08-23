@@ -426,7 +426,8 @@ public final class SharedWorldReleaseCoordinator {
                     forced.reasonKind,
                     forced.reasonKind == SharedWorldTerminalReasonKind.RECOVERABLE_REMOTE_FAILURE,
                     !forced.blocking && canDiscardLocalReleaseState(),
-                    forced.blocking
+                    forced.blocking,
+                    false
             );
         }
         ReleaseState current = this.state;
@@ -446,7 +447,8 @@ public final class SharedWorldReleaseCoordinator {
                 current.record.phase == SharedWorldReleasePhase.ERROR_RECOVERABLE && reasonKind == SharedWorldTerminalReasonKind.RECOVERABLE_REMOTE_FAILURE,
                 canDiscardLocalReleaseState(),
                 current.record.phase != SharedWorldReleasePhase.ERROR_RECOVERABLE
-                        && !SharedWorldReleasePolicy.isClosedTerminal(current.record.phase)
+                        && !SharedWorldReleasePolicy.isClosedTerminal(current.record.phase),
+                current.errorNeedsDriveReconnect && current.record.phase == SharedWorldReleasePhase.ERROR_RECOVERABLE
         );
     }
 
@@ -467,6 +469,7 @@ public final class SharedWorldReleaseCoordinator {
         }
         current.errorMessage = null;
         current.errorKind = null;
+        current.errorNeedsDriveReconnect = false;
         current.progressState = SharedWorldReleasePolicy.blockingProgress(Component.translatable("screen.sharedworld.progress.uploading_world"));
         SharedWorldReleaseStore.ReleaseRecord updated = current.record.copy();
         updated.phase = SharedWorldReleasePolicy.resumePhaseForRetry(updated);
@@ -1244,6 +1247,17 @@ public final class SharedWorldReleaseCoordinator {
                             transitionTerminal(SharedWorldReleasePhase.TERMINATED_REVOKED, null);
                             return;
                         }
+                        // Drive-full and reauth need the host to act outside this
+                        // screen, so their messages spell out the fix and that the
+                        // changes are safe locally until the upload succeeds.
+                        if (SharedWorldApiClient.isDriveStorageFullError(error)) {
+                            failRecoverable(SharedWorldText.string("screen.sharedworld.release_upload_failed_storage_full"), SharedWorldTerminalReasonKind.RECOVERABLE_REMOTE_FAILURE);
+                            return;
+                        }
+                        if (SharedWorldApiClient.isDriveReauthRequiredError(error)) {
+                            failRecoverable(SharedWorldText.string("screen.sharedworld.release_upload_failed_reauth"), SharedWorldTerminalReasonKind.RECOVERABLE_REMOTE_FAILURE, true);
+                            return;
+                        }
                         failRecoverable(SharedWorldText.string("screen.sharedworld.release_upload_snapshot_failed", SharedWorldApiClient.friendlyErrorMessage(error)), SharedWorldTerminalReasonKind.RECOVERABLE_REMOTE_FAILURE);
                         return;
                     }
@@ -1326,6 +1340,10 @@ public final class SharedWorldReleaseCoordinator {
     }
 
     private void failRecoverable(String errorMessage, SharedWorldTerminalReasonKind errorKind) {
+        failRecoverable(errorMessage, errorKind, false);
+    }
+
+    private void failRecoverable(String errorMessage, SharedWorldTerminalReasonKind errorKind, boolean needsDriveReconnect) {
         this.nextAutoRetryAtMillis = 0L;
         ReleaseState current = this.state;
         if (current == null) {
@@ -1336,6 +1354,7 @@ public final class SharedWorldReleaseCoordinator {
         persistAndApply(updated);
         current.errorMessage = errorMessage;
         current.errorKind = errorKind;
+        current.errorNeedsDriveReconnect = needsDriveReconnect;
         clearRelayedReleaseProgress();
     }
 
@@ -1497,7 +1516,8 @@ public final class SharedWorldReleaseCoordinator {
             SharedWorldTerminalReasonKind errorKind,
             boolean canRetry,
             boolean canDiscardLocalState,
-            boolean blocking
+            boolean blocking,
+            boolean needsDriveReconnect
     ) {
     }
 
@@ -1509,6 +1529,12 @@ public final class SharedWorldReleaseCoordinator {
         private SharedWorldProgressState progressState;
         private String errorMessage;
         private SharedWorldTerminalReasonKind errorKind;
+        /**
+         * The failed upload needs a Google Drive re-link before a retry can
+         * succeed; drives the in-place reconnect screen. In-memory like
+         * errorMessage: after a restart the first failed retry re-detects it.
+         */
+        private boolean errorNeedsDriveReconnect;
         private boolean taskInFlight;
         private boolean localDisconnectRequested;
 
