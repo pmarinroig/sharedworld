@@ -5,7 +5,7 @@
 //! budget allows), plans the downloads that bring a member's cache up to the
 //! latest snapshot, and carries the relayed/direct blob transfer paths.
 //!
-//! Stale-work rule: every write path is epoch/token gated — a stale host
+//! Stale-work rule: every write path is epoch/token gated; a stale host
 //! cannot obtain signed upload URLs, open a session, or PUT bytes.
 
 use std::collections::{HashMap, HashSet};
@@ -87,7 +87,7 @@ pub async fn prepare_uploads(
     let runtime_epoch = request.runtime_epoch.unwrap_or(0);
     let runtime_token = request.host_token.as_deref();
     // Headers-only: planning consumes pack headers and ids, never member
-    // lists — no member rows, no 0027 manifest-document fetch. A missing or
+    // lists; no member rows, no 0027 manifest-document fetch. A missing or
     // corrupt manifest doc can therefore never block the upload pipeline.
     let latest = svc.repository.get_latest_snapshot_headers(world_id).await?;
     // Packs whose latest header can no longer be honoured (unstamped delta
@@ -257,7 +257,7 @@ async fn unreconstructable_pack_ids(
 /// any server code runs, so a plan that would force such a full upload fails
 /// here with the explanation attached. Fires only when no delta slot exists.
 /// How this plan's transfer URLs get signed: the backend HMAC relay signer,
-/// or store-native presigned URLs (S3, clients >= 0.4.0 — older clients
+/// or store-native presigned URLs (S3, clients >= 0.4.0; older clients
 /// attach the bearer to every URL, which S3 rejects alongside query auth, so
 /// they stay on the relay).
 enum PlanSigner {
@@ -518,7 +518,7 @@ pub async fn download_plan(
     let mut retained_paths: Vec<String> = Vec::new();
     let mut snapshot_cache: HashMap<String, Arc<SnapshotManifest>> = HashMap::new();
     let supports_delta_v2 = ctx.client_at_least(0, 4, 0);
-    // Chain recipes live only in the directory (headers path, uncached) —
+    // Chain recipes live only in the directory (headers path, uncached);
     // served manifests stay byte-stable while retention lazily upgrades
     // legacy directories in place.
     let latest_headers = svc.repository.get_latest_snapshot_headers(world_id).await?;
@@ -635,8 +635,8 @@ async fn build_pack_download_steps(
     signer: &PlanSigner,
 ) -> HttpResult<Vec<DownloadPlanStep>> {
     if let Some(steps) = chain_steps.filter(|s| !s.is_empty()) {
-        // S1 self-contained chains: the plan builds from the pack's own recipe
-        // — no base snapshot rows, no chain walk, no snapshot_chain_broken.
+        // S1 self-contained chains: the plan builds from the pack's own recipe;
+        // no base snapshot rows, no chain walk, no snapshot_chain_broken.
         return build_steps_from_chain_recipe(
             svc,
             ctx,
@@ -705,7 +705,7 @@ async fn build_pack_download_steps(
 /// Mirror of the legacy walk, driven by the stamped recipe: newest step
 /// backwards until the client's local hash matches an intermediate chain state
 /// or the anchor full is reached, then served oldest-first. Step
-/// `baseSnapshotId` is null on purpose — the recipe is snapshot-independent.
+/// `baseSnapshotId` is null on purpose; the recipe is snapshot-independent.
 fn build_steps_from_chain_recipe(
     svc: &ServiceContext,
     ctx: &RequestContext,
@@ -782,8 +782,8 @@ async fn load_snapshot_pack(
 /// True when a valid blob stamp scoped to (worldId, storageKey) names an epoch
 /// that is still the live runtime per the mirror. This replaces the
 /// coordinator round-trip on the per-artifact routes: the stamp was minted
-/// only after full authority validation at plan time, and the mirror —
-/// single-writer, coordinator-maintained — pins the epoch to the present.
+/// only after full authority validation at plan time, and the mirror
+/// (single-writer, coordinator-maintained) pins the epoch to the present.
 /// Mirror `revokedAt` is deliberately ignored, matching host-authority
 /// validation (a revoked host may finish its uploads; finalize is the gate).
 async fn stamp_authorized(
@@ -900,7 +900,7 @@ pub async fn create_blob_upload_session(
 
 /// Confirms a finished direct upload. The server never trusts the client's
 /// word: it probes the provider session itself and records the provider's
-/// reported file id and size. Idempotent — a lost response is safely retried.
+/// reported file id and size. Idempotent; a lost response is safely retried.
 pub async fn commit_blob_upload_session(
     svc: &ServiceContext,
     ctx: &RequestContext,
@@ -1054,7 +1054,7 @@ pub async fn sweep_expired_upload_sessions(
 // ---------------------------------------------------------------------------
 
 /// Blob bytes flow through the server; host authority is re-checked from the
-/// runtime headers stamped onto the signed upload URL — via the HMAC blob
+/// runtime headers stamped onto the signed upload URL; via the HMAC blob
 /// stamp when present and current (no coordinator call), else the coordinator.
 pub async fn upload_storage_blob(
     svc: &ServiceContext,
@@ -1100,8 +1100,8 @@ pub async fn upload_storage_blob(
         None => {
             // Chunked upload with no Content-Length: shipped clients (Java
             // HttpClient with a progress-wrapped InputStream publisher) send
-            // these, so a 411 here breaks real relays. Buffer ONCE — a single
-            // copy stays small because the relay ceiling does — and stream to
+            // these, so a 411 here breaks real relays. Buffer ONCE; a single
+            // copy stays small because the relay ceiling does, and stream to
             // the provider with the now-known length.
             let buffered = PutBody::Stream { stream: input.body, len: None }.into_bytes().await?;
             let len = buffered.len() as i64;
@@ -1190,7 +1190,7 @@ pub fn max_upload_body_bytes(svc: &ServiceContext) -> i64 {
     positive(svc.config.upload_max_body_bytes, DEFAULT_MAX_UPLOAD_BODY_BYTES)
 }
 
-/// Terminal preflight for a full Drive. Uses the 15-min cached quota — the
+/// Terminal preflight for a full Drive. Uses the 15-min cached quota; the
 /// check only fires when the account is genuinely at capacity, and clears
 /// within one cache TTL of the user freeing space. Unlinked worlds and unknown
 /// quotas pass (a missing check must not block uploads).

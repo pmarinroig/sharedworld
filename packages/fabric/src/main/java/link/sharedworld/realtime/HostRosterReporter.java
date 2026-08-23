@@ -14,7 +14,7 @@ import java.util.function.Supplier;
 /**
  * Host-side room presence (0.3.0): polls the integrated server's player list
  * locally (free) and pushes the FULL roster over the realtime channel only
- * when it changes — the same local-poll/push-on-change pattern as gamerule
+ * when it changes; the same local-poll/push-on-change pattern as gamerule
  * detection, so no per-bucket event hooks are needed. The backend
  * coordinator treats the roster as authoritative for "who is online in the
  * server" while this hosting session reports one.

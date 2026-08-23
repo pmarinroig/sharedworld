@@ -539,7 +539,7 @@ final class WorldSyncCoordinatorDownloadTest {
         BuiltPack pack = buildPackArtifact(null, Map.of("data/new.txt", "fresh-pack".getBytes()));
 
         try (SyncTestHttpServer server = new SyncTestHttpServer()) {
-            // 404: the blob is simply absent — a protocol outcome, not a
+            // 404: the blob is simply absent; a protocol outcome, not a
             // transport blip; retrying would only mask the real problem.
             server.setDownloadPlan(new DownloadPlanDto(
                     WORLD_ID,

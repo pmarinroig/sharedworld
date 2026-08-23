@@ -19,7 +19,7 @@ pub async fn enter_session(
     now: Instant,
 ) -> HttpResult<EnterSessionResponse> {
     let actor = session_actor_of(svc, ctx, world_id).await?;
-    // Access verdicts first — without touching coordinator state.
+    // Access verdicts first; without touching coordinator state.
     if !actor.membership_active {
         let a = actor.clone();
         svc.realtime

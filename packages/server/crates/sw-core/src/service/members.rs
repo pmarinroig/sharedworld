@@ -161,7 +161,7 @@ pub async fn kick_member(
         .call(world_id, move |c| Box::pin(async move { c.member_revoked(&removed, now).await }))
         .await?;
     publish_world_event(svc, world_id, RealtimeEventKind::MembershipChanged).await?;
-    // The kicked player misses the member fan-out — and needs the push most.
+    // The kicked player misses the member fan-out, and needs the push most.
     svc.realtime.notify_users(
         RealtimeEvent {
             world_id: world_id.to_string(),

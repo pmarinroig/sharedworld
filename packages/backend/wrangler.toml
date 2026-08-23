@@ -2,7 +2,7 @@ name = "sharedworld"
 main = "src/index.ts"
 compatibility_date = "2026-03-28"
 
-# Persist console logs as queryable Workers Logs — without this, warnings
+# Persist console logs as queryable Workers Logs; without this, warnings
 # only exist inside a live `wrangler tail`.
 [observability]
 enabled = true
@@ -12,7 +12,7 @@ enabled = true
 # from Google Drive. Secrets (wrangler secret put): INTERNAL_API_SECRET,
 # RELAY_PUBLIC_KEY, RELAY_TOKEN_KEY (from `swctl relay-keys-gen`).
 # The D1 database "sharedworld" still exists in Cloudflare, unbound, as a cold
-# pre-cutover snapshot — delete it from the dashboard around 2026-09-19.
+# pre-cutover snapshot; delete it from the dashboard around 2026-09-19.
 [vars]
 MODE = "lane-d"
 BOX_URL = "https://api.763616.xyz"

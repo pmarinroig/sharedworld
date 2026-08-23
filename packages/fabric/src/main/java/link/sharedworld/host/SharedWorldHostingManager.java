@@ -45,7 +45,7 @@ public final class SharedWorldHostingManager {
     // The literal default lives in its own constant so the backend parity
     // test can read it; the dev property (same pattern as
     // sharedworld.dev.superpackShardMaxBytes) lets failure-UX e2e scenarios
-    // shrink the cadence locally — ServerPacing can never speed a loop up.
+    // shrink the cadence locally; ServerPacing can never speed a loop up.
     private static final long DEFAULT_AUTOSAVE_INTERVAL_MS = 5 * 60_000L;
     private static final long AUTOSAVE_INTERVAL_MS =
             Long.getLong("sharedworld.dev.autosaveIntervalMs", DEFAULT_AUTOSAVE_INTERVAL_MS);
@@ -61,7 +61,7 @@ public final class SharedWorldHostingManager {
     // Socket-native (0.4.1): while the realtime channel is connected the
     // coordinator renews the lease from socket keepalives (one probe per 90s,
     // no HTTP needed) and settings/membership/deletion changes trigger
-    // immediate heartbeats via pushes — so the periodic live heartbeat is a
+    // immediate heartbeats via pushes, so the periodic live heartbeat is a
     // pure safety net at five minutes. The 0.3.3 half-open caveat that pinned
     // this at 60s is retired: the channel now enforces an ack-deadline, so
     // "connected" implies inbound traffic within the last 45s and a half-open
@@ -223,7 +223,7 @@ public final class SharedWorldHostingManager {
          * Whether a singleplayer server is open that is NOT the given managed working copy.
          * Guards publish against attaching to a foreign world (e.g. a vanilla singleplayer world
          * the player opened while a stuck attempt was still in OPENING_WORLD). False when no
-         * server is open at all — a world that is still opening is not foreign.
+         * server is open at all; a world that is still opening is not foreign.
          */
         default boolean isForeignServerOpen(Path expectedWorkingCopy) {
             return false;
@@ -446,7 +446,7 @@ public final class SharedWorldHostingManager {
             return false;
         }
         if (this.clientWorldGate.isForeignServerOpen(this.worldStore.workingCopy(this.world.id()))) {
-            // The open integrated server is not this attempt's managed working copy — the player's
+            // The open integrated server is not this attempt's managed working copy; the player's
             // own world must never be published or otherwise touched; fail the attempt instead.
             fail(SharedWorldText.string("screen.sharedworld.hosting_foreign_world_open"), null);
             return true;
@@ -518,13 +518,13 @@ public final class SharedWorldHostingManager {
 
     /**
      * The live heartbeat keeps its base cadence while the realtime channel is
-     * down (it is the lease), but stretches to a safety net while connected —
+     * down (it is the lease), but stretches to a safety net while connected;
      * the coordinator extends the lease from socket keepalives, and pushed
      * settings/membership changes request an immediate heartbeat instead.
      */
     private boolean shouldAttemptLiveHeartbeat(long now) {
-        // A pushed settings/membership change bypasses the base cadence —
-        // only retry pacing applies — so kicks and settings edits reach the
+        // A pushed settings/membership change bypasses the base cadence;
+        // only retry pacing applies, so kicks and settings edits reach the
         // running server within about a second, not a heartbeat interval.
         if (this.immediateHeartbeatRequested) {
             return HostLifecyclePolicy.shouldAttemptHeartbeat(now, 0L, this.lastHeartbeatAttemptAt, 0L, HEARTBEAT_RETRY_INTERVAL_MS);
@@ -1265,7 +1265,7 @@ public final class SharedWorldHostingManager {
                 }
                 LOGGER.warn("SharedWorld autosave failed", exception);
                 // Sticky error state (C2): pre-0.4.2 a failing autosave loop
-                // was one log line and a phase snap back to RUNNING — players
+                // was one log line and a phase snap back to RUNNING; players
                 // lost hours before learning nothing was saving. The state
                 // survives until a save SUCCEEDS; recordAutosaveError decides
                 // which failures reach chat and when.
@@ -1298,7 +1298,7 @@ public final class SharedWorldHostingManager {
     }
 
     /**
-     * A full Drive and a dead Drive authorization never heal on their own —
+     * A full Drive and a dead Drive authorization never heal on their own;
      * both stay broken until the host acts, so both are announced immediately
      * and with their own instructions. Everything else may be a transient blip.
      */

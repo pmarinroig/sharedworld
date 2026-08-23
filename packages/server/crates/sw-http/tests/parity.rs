@@ -1,5 +1,5 @@
 //! Ports of `backend/test/parity/*`: the mod ↔ backend contracts that nothing
-//! at build time links — route table, error codes/reasons, timing constants —
+//! at build time links (route table, error codes/reasons, timing constants)
 //! plus config parity with the worker's `Env` (every `wrangler.toml` knob has
 //! a `Config` field), all checked against the real Java/TS sources.
 
@@ -95,7 +95,7 @@ async fn test_app() -> axum::Router {
 
 /// A route "exists" when the router does not answer with its own
 /// `404 not_found` fallback (auth extractors and handlers answer anything
-/// else — 401, 400, 404 world_not_found — before the fallback would).
+/// else (401, 400, 404 world_not_found) before the fallback would).
 async fn backend_serves(app: &axum::Router, method: &str, template: &str) -> bool {
     use tower::ServiceExt;
     let req = axum::http::Request::builder()

@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * The no-silent-rollback guard's local half: does the working copy differ
  * from the hashes it last synced/uploaded at? Answered from the baseline
- * sidecar + a (cached) scan — no backend, no bodies for unchanged packs.
+ * sidecar + a (cached) scan; no backend, no bodies for unchanged packs.
  */
 final class WorldSyncCoordinatorLocalChangesTest {
     private static final String WORLD_ID = "world-1";

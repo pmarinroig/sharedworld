@@ -103,7 +103,7 @@ public final class SharedWorldClientLifecycleRouter {
         if (view.needsDriveReconnect()) {
             // A dead Drive grant can only be repaired via the OAuth reconnect
             // flow, and this parked screen is the only UI the router lets the
-            // player reach — so the flow lives on the screen itself.
+            // player reach, so the flow lives on the screen itself.
             return new link.sharedworld.screen.ReleaseDriveReconnectScreen(parent, titleFor(view), Component.literal(detailFor(view)));
         }
         return new SharedWorldErrorScreen(

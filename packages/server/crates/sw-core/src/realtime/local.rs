@@ -1,6 +1,6 @@
 //! Box wiring: the coordinator effects and persistence over the repository
 //! and the in-process gateway (`DoCoordinatorEffects` + `LocalRealtimeService`
-//! rolled into one — there is no remote coordinator anymore).
+//! rolled into one; there is no remote coordinator anymore).
 
 use std::sync::Arc;
 

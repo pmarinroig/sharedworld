@@ -321,7 +321,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         int doomed = this.settingsForm.backupsDeletedBySave(this.snapshots.size());
         if (doomed > 0) {
             // Under the max-backups button (third row of the left column): the
-            // one thing worth a warning here — lowering the cap below what is
+            // one thing worth a warning here; lowering the cap below what is
             // stored deletes backups the moment the settings are saved.
             this.drawWrappedText(
                     guiGraphics,
@@ -445,7 +445,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
     /**
      * C4: the quota as a bar, because "13.8 / 15.0 GB" reads as fine while
      * 92% reads as a problem. Warns at >=90% and shouts when the Drive is
-     * effectively full — the state that silently stopped a real user's
+     * effectively full; the state that silently stopped a real user's
      * backups.
      */
     private void renderQuotaBar(GuiGraphics guiGraphics, int left, int top, int width) {
@@ -789,7 +789,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
     /**
      * Ticked rows win over the highlighted one; either way it is a single
      * request (0.4.5 bulk endpoint) that answers as soon as the backups are
-     * gone — Drive space is reclaimed by the backend afterwards.
+     * gone; Drive space is reclaimed by the backend afterwards.
      */
     private void deleteSnapshots() {
         List<String> ids = this.markedBackupIds();

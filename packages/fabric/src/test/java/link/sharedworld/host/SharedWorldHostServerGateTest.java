@@ -20,7 +20,7 @@ final class SharedWorldHostServerGateTest {
     }
 
     @Test
-    @DisplayName("[P9] a hosting flag alone cannot open the gate — server identity must also match")
+    @DisplayName("[P9] a hosting flag alone cannot open the gate; server identity must also match")
     void staleFlagAloneCannotOpenTheGate() {
         SharedWorldDevSessionBridge.setHostingSharedWorld(true);
         // No managed server is running: identity fails, so the stale flag is

@@ -76,14 +76,14 @@ impl ServiceContext {
                 None
             }
             _ => {
-                // One key present, one missing — what a quoting mistake in the
+                // One key present, one missing; what a quoting mistake in the
                 // TOML looks like (a stray `""` opens a multi-line string).
                 tracing::error!("only one of relay_signing_key_b64 / relay_token_key_b64 is configured; relay tokens disabled");
                 None
             }
         };
         // 0027: the document resolver is built over the provider, which is
-        // built over this repository — so it is attached post-construction.
+        // built over this repository, so it is attached post-construction.
         repository.attach_manifest_document_reader(Arc::new(
             crate::storage::manifest_doc::ProviderManifestDocumentReader::new(storage_provider.clone()),
         ));

@@ -10,7 +10,7 @@ import java.util.List;
 
 /**
  * Consent gate for AUTOMATIC host takeovers: the previous host left and the
- * backend elected this player, but they never pressed anything — hosting must
+ * backend elected this player, but they never pressed anything; hosting must
  * not start (world download, port opening, lease ownership) without an
  * explicit yes. Declining hands the lease back gracefully so the next waiter
  * is elected instead. Closing the screen counts as declining.

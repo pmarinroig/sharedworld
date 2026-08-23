@@ -1,6 +1,6 @@
 //! MinIO-lite in-process S3 stand-in: enough of the S3 HTTP surface (PUT /
 //! GET with Range / HEAD / DELETE / ListObjectsV2) for the REAL
-//! `S3StorageProvider` — SigV4 header auth, streaming PUT, presigned URLs —
+//! `S3StorageProvider` (SigV4 header auth, streaming PUT, presigned URLs)
 //! to run against it. Shared by the sw-core provider tests and the
 //! integration server's S3 e2e mode. Signatures are not verified (the SigV4
 //! vectors pin that in sw-core unit tests); requests must merely CARRY auth

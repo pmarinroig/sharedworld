@@ -14,7 +14,7 @@ abstract class MinecraftDisconnectMixin {
     // wrapper) through clearLevel(Screen), so the method itself cannot distinguish why it
     // ran. The pause-screen gate approximates "user pressed Disconnect / Save and Quit":
     // both intentional leaves run while the PauseScreen is showing, while error teardowns
-    // almost never do — mis-marking a connection drop as user-initiated would break the
+    // almost never do; mis-marking a connection drop as user-initiated would break the
     // guest rejoin watcher. Programmatic disconnects are covered by the 1.20.1
     // ClientCompat.disconnectFromWorld, which fires the hook itself (consuming the release
     // pass-through) exactly like the newer versions' wrapper methods do.

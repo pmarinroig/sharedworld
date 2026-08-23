@@ -403,7 +403,7 @@ pub struct WorldSettings {
     pub max_backups: Option<Option<i64>>,
 }
 
-/// `UpdateWorldSettingsRequest` — the body is validated field by field by the
+/// `UpdateWorldSettingsRequest`; the body is validated field by field by the
 /// service (400 invalid_world_settings), so it is carried loosely here.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -1,5 +1,5 @@
 //! Account-scoped operations: Google Drive unlink and full account deletion.
-//! Nothing here existed in the TS worker — the lane-D forwarder passes these
+//! Nothing here existed in the TS worker; the lane-D forwarder passes these
 //! routes through to the box untouched.
 
 use sw_contracts::{AccountDeleteStepResponse, StorageProviderType};
@@ -26,7 +26,7 @@ const DRIVE_SWEEP_BUDGET_MS: u64 = 8_000;
 /// (orphan rows from linking a second Google account included), revokes the
 /// app's OAuth grant, and wipes the account-scoped index rows.
 ///
-/// Blocked while any active world is still bound to one of those accounts —
+/// Blocked while any active world is still bound to one of those accounts;
 /// worlds bind to the account row's id, so deleting the row would orphan
 /// their storage permanently (re-linking mints a fresh row id).
 pub async fn unlink_storage_account(
@@ -133,8 +133,8 @@ pub async fn delete_account_step(
                 "Delete your shared worlds before deleting your account.",
             ));
         }
-        // Drive sweep: delete everything the app holds for these accounts —
-        // including files whose index rows were lost — budgeted per call by
+        // Drive sweep: delete everything the app holds for these accounts,
+        // including files whose index rows were lost, budgeted per call by
         // count AND wall clock: real Drive deletes run sequentially and a
         // step must answer well inside the client's request timeout.
         {
@@ -155,7 +155,7 @@ pub async fn delete_account_step(
                 loop {
                     // A dead grant (revoked at Google, refresh token gone)
                     // must not trap the user in an undeletable account: skip
-                    // the sweep for it — they can clear the leftover app data
+                    // the sweep for it; they can clear the leftover app data
                     // from Drive's own Manage Apps settings.
                     let (ids, next_page) = match cleanup.list_account_object_ids(&binding, None).await {
                         Ok(page) => page,
@@ -193,12 +193,12 @@ pub async fn delete_account_step(
             }
         }
         // Storage is empty: revoke and drop the storage rows (shares the
-        // unlink path, guard included — re-checks against racing world creation).
+        // unlink path, guard included; re-checks against racing world creation).
         unlink_storage_accounts_for_providers(svc, ctx, &providers, now).await?;
     }
 
     // Finalize. Leave (or tear down) any world the player is still a member
-    // of — the client deletes owned worlds beforehand for progress fidelity,
+    // of; the client deletes owned worlds beforehand for progress fidelity,
     // this is the backstop that also covers guest memberships.
     for world in svc.repository.list_worlds_for_player(&ctx.player_uuid).await? {
         worlds::delete_world(svc, ctx, &world.id, now).await?;

@@ -55,7 +55,7 @@ public final class SharedWorldHostPermissionPolicy {
 
     /**
      * Lenient lookup key for grant maps: hyphen-insensitive, case-insensitive, and
-     * never throws — an unparseable profile UUID simply never matches a grant.
+     * never throws; an unparseable profile UUID simply never matches a grant.
      */
     public static String commandGrantKey(String uuid) {
         return uuid == null ? "" : uuid.replace("-", "").toLowerCase(java.util.Locale.ROOT);

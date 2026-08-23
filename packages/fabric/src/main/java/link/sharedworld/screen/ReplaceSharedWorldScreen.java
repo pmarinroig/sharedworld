@@ -13,7 +13,7 @@ import net.minecraft.network.chat.Component;
 
 /**
  * Picks the local save (from the saves list or an arbitrary folder) that will
- * REPLACE the shared world's content, behind a two-click confirm — replacing
+ * REPLACE the shared world's content, behind a two-click confirm; replacing
  * overwrites the world for every member.
  */
 public final class ReplaceSharedWorldScreen extends link.sharedworld.versioned.VersionedScreen implements LocalSaveSelectionList.Host {

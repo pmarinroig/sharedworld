@@ -462,7 +462,7 @@ public final class SharedWorldApiClient {
         body.put("files", files);
         body.put("nonRegionPack", nonRegionPack);
         body.put("regionBundles", regionBundles);
-        // Plan computation only — no server-side write — so a transport blip
+        // Plan computation only, no server-side write, so a transport blip
         // is retried instead of aborting the whole create/sync.
         return requestWithTransportRetry("POST", "/worlds/" + worldId + "/uploads/prepare", body, UploadPlanDto.class, SNAPSHOT_REQUEST_TIMEOUT);
     }
@@ -501,7 +501,7 @@ public final class SharedWorldApiClient {
     /**
      * POST with the local state in the body: the pre-0.3.1 GET carried it in
      * x-sharedworld-* headers, which overflow edge header limits on worlds
-     * with many files. Requires a backend new enough to route the POST —
+     * with many files. Requires a backend new enough to route the POST;
      * the backend always deploys before the mod releases.
      */
     public DownloadPlanDto downloadPlan(String worldId, LocalFileDescriptorDto[] files, LocalPackDescriptorDto nonRegionPack, LocalPackDescriptorDto[] regionBundles) throws IOException, InterruptedException {
@@ -510,7 +510,7 @@ public final class SharedWorldApiClient {
         body.put("files", files);
         body.put("nonRegionPack", nonRegionPack);
         body.put("regionBundles", regionBundles);
-        // Plan computation only — no server-side write — safe to retry.
+        // Plan computation only, no server-side write, safe to retry.
         return requestWithTransportRetry("POST", "/worlds/" + worldId + "/downloads/plan", body, DownloadPlanDto.class);
     }
 
@@ -612,7 +612,7 @@ public final class SharedWorldApiClient {
         long bodySize = Files.size(bodyFile);
         // The progress wrapper must still declare the body length: a bare
         // ofInputStream publisher has unknown length, which makes the JDK
-        // client send Transfer-Encoding: chunked with NO Content-Length —
+        // client send Transfer-Encoding: chunked with NO Content-Length,
         // and a known length is what lets the relay stream the body to
         // storage instead of buffering it.
         HttpRequest.BodyPublisher bodyPublisher = progressListener == null
@@ -676,7 +676,7 @@ public final class SharedWorldApiClient {
      * with {@code Range: bytes=N-} (206 appends, a 200 from an older backend
      * truncates and restarts), so a flaky link pays for the bytes it lost,
      * not the whole blob. Progress is bounded by the stall watchdog instead
-     * of a whole-exchange deadline — a healthy multi-GB transfer has no
+     * of a whole-exchange deadline; a healthy multi-GB transfer has no
      * upper duration, a stalled one is aborted and retried. The gunzip
      * variant decompresses only after the raw part completes, keeping resume
      * arithmetic in compressed bytes.
@@ -1072,7 +1072,7 @@ public final class SharedWorldApiClient {
      * deliberately NOT checked. The server is the authority on token lifetime:
      * a genuinely expired token comes back as a 401 that request() already
      * recovers from with one automatic re-auth. Trusting the local clock here
-     * turned a skewed clock into a full Mojang handshake on every API call —
+     * turned a skewed clock into a full Mojang handshake on every API call,
      * and from there into self-inflicted session-server rate limiting. An
      * unparseable expiry still marks the record as corrupt.
      */
@@ -1249,7 +1249,7 @@ public final class SharedWorldApiClient {
     }
 
     /**
-     * host_not_active refined by the backend: this host's own lease lapsed —
+     * host_not_active refined by the backend: this host's own lease lapsed;
      * nobody took over. False for older backends (no reason field) and for
      * genuine replacements, so callers can keep the takeover copy for those.
      */
@@ -1270,7 +1270,7 @@ public final class SharedWorldApiClient {
      * The single user-facing rendering of any SharedWorld failure: the
      * backend's human message when one exists, a friendly offline/unreachable
      * string for connectivity failures, otherwise the deepest non-blank cause
-     * message — never null and never a bare JDK socket string for the
+     * message; never null and never a bare JDK socket string for the
      * connectivity cases players actually hit.
      */
     public static String friendlyErrorMessage(Throwable error) {
@@ -1286,7 +1286,7 @@ public final class SharedWorldApiClient {
                 return link.sharedworld.SharedWorldText.string("screen.sharedworld.error_internet_unreachable");
             }
             if (cause instanceof java.net.http.HttpTimeoutException) {
-                // The JDK's message is the bare "request timed out" — players
+                // The JDK's message is the bare "request timed out"; players
                 // saw it verbatim on create/sync screens.
                 return link.sharedworld.SharedWorldText.string("screen.sharedworld.error_request_timed_out");
             }
@@ -1385,8 +1385,8 @@ public final class SharedWorldApiClient {
     static final Duration DEFAULT_REQUEST_TIMEOUT = Duration.ofSeconds(20);
     /**
      * Snapshot planning and finalization scale with the world (hundreds of
-     * packs, delta-chain validation, and — before the backend moved it off
-     * the response path — hourly retention). A finalize that outlives a
+     * packs, delta-chain validation, and, before the backend moved it off
+     * the response path, hourly retention). A finalize that outlives a
      * flat 20s budget has almost always SUCCEEDED server-side; giving up
      * early made the release lane report a transient failure, retry, and
      * on the next attempt discover "no changes since" the snapshot it had
@@ -1507,8 +1507,8 @@ public final class SharedWorldApiClient {
 
     /**
      * Retriable: connection-level failures and 5xx responses without a
-     * meaningful protocol code. Auth unavailability is excluded — the session
-     * layer already performs its own full re-attempt — as is every 4xx
+     * meaningful protocol code. Auth unavailability is excluded; the session
+     * layer already performs its own full re-attempt; as is every 4xx
      * protocol outcome.
      */
     public static boolean isRetryableTransportError(Throwable error) {
@@ -1529,7 +1529,7 @@ public final class SharedWorldApiClient {
                     // release uploads on their first blip.
                     || cause instanceof javax.net.ssl.SSLException
                     // Mid-stream breaks (stall abort, reset, early EOF) leave
-                    // a resumable .swpart behind — the retry picks it up.
+                    // a resumable .swpart behind; the retry picks it up.
                     || cause instanceof BlobStreamInterruptedException) {
                 return true;
             }

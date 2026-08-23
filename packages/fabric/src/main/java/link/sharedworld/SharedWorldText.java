@@ -63,7 +63,7 @@ public final class SharedWorldText {
         return truncate(text, maxWidth, fontProbe(font));
     }
 
-    /** Leading-ellipsized text fitting maxWidth ("...minecraft/saves/My World") — for paths, whose tail is the informative part. */
+    /** Leading-ellipsized text fitting maxWidth ("...minecraft/saves/My World"); for paths, whose tail is the informative part. */
     public static String truncateLeading(net.minecraft.client.gui.Font font, String text, int maxWidth) {
         return truncateLeading(text, maxWidth, fontProbe(font));
     }

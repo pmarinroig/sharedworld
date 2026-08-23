@@ -22,7 +22,7 @@ pub struct AuthService {
 }
 
 fn valid_player_name(name: &str) -> bool {
-    // /^\w{1,16}$/ — JS \w = [A-Za-z0-9_]
+    // /^\w{1,16}$/; JS \w = [A-Za-z0-9_]
     (1..=16).contains(&name.len()) && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 

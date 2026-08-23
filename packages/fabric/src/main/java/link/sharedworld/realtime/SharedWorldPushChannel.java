@@ -37,7 +37,7 @@ import java.util.concurrent.TimeUnit;
 public final class SharedWorldPushChannel {
     private static final Logger LOGGER = LoggerFactory.getLogger("sharedworld");
 
-    /** Wire vocabulary mirrored from shared/src/realtime.ts — keep in sync. */
+    /** Wire vocabulary mirrored from shared/src/realtime.ts; keep in sync. */
     public static final int PROTOCOL_VERSION = 1;
     public static final String KEEPALIVE_REQUEST = "sw-keepalive";
     public static final String KEEPALIVE_RESPONSE = "sw-keepalive-ack";
@@ -46,7 +46,7 @@ public final class SharedWorldPushChannel {
     /**
      * Two missed keepalive acks plus margin. The server answers keepalives at
      * the edge (auto-response), so a healthy socket ALWAYS has inbound traffic
-     * within one keepalive interval — silence past this deadline means the
+     * within one keepalive interval; silence past this deadline means the
      * socket is half-open (NAT death, suspended laptop, hung backend) and must
      * be dropped so consumers fall back and the reconnect loop takes over.
      * This is what makes isConnected() honest enough to hang slow safety-net
@@ -276,7 +276,7 @@ public final class SharedWorldPushChannel {
         if (generation != connectionGeneration || text == null) {
             return;
         }
-        // EVERY inbound frame proves the socket is not half-open — including
+        // EVERY inbound frame proves the socket is not half-open, including
         // the keepalive ack (edge-answered) and the welcome frame.
         lastInboundAtNanos = nanoClock.getAsLong();
         if (KEEPALIVE_RESPONSE.equals(text)) {
@@ -308,7 +308,7 @@ public final class SharedWorldPushChannel {
     private void sendKeepalive() {
         long silenceMs = (nanoClock.getAsLong() - lastInboundAtNanos) / 1_000_000L;
         if (silenceMs > ACK_DEADLINE_MS) {
-            LOGGER.info("SharedWorld realtime channel half-open ({}ms without inbound traffic) — reconnecting", silenceMs);
+            LOGGER.info("SharedWorld realtime channel half-open ({}ms without inbound traffic); reconnecting", silenceMs);
             dropTransport(true);
             return;
         }
@@ -369,7 +369,7 @@ public final class SharedWorldPushChannel {
 
     /**
      * Jitter grows with the backoff (half of it, at least 500 ms) so a fleet
-     * that lost its sockets together — a backend restart, a box reboot —
+     * that lost its sockets together (a backend restart, a box reboot)
      * comes back spread over the whole window instead of in 500 ms bursts.
      * At the active cap that is 15–22.5 s, still inside the 30 s socket grace.
      */

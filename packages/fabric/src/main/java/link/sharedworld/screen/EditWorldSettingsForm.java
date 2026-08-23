@@ -37,7 +37,7 @@ final class EditWorldSettingsForm {
     /**
      * C3: retained-backup cap cycle; null = age policy only. Descending so each
      * click asks for less Drive space; 1 (0.4.5) keeps only the current
-     * snapshot — no restorable backups at all.
+     * snapshot; no restorable backups at all.
      */
     private static final Integer[] MAX_BACKUPS_STEPS = { null, 100, 50, 25, 10, 5, 3, 1 };
     private Integer maxBackups;
@@ -105,7 +105,7 @@ final class EditWorldSettingsForm {
 
     /**
      * Prefill order: saved backend settings, then the local working copy's
-     * level.dat (difficulty/game mode only — their NBT shape is stable across
+     * level.dat (difficulty/game mode only; their NBT shape is stable across
      * versions, unlike gamerule keys), then vanilla defaults.
      */
     void populate(WorldSettingsDto saved) {
@@ -193,7 +193,7 @@ final class EditWorldSettingsForm {
     /**
      * How many stored backups the pending (unsaved) cap would delete on save:
      * positive only when the player lowered the cap this session below the
-     * number of snapshots the world has. Automatic (null) never counts — its
+     * number of snapshots the world has. Automatic (null) never counts; its
      * schedule is not a hard cap.
      */
     int backupsDeletedBySave(int storedSnapshots) {

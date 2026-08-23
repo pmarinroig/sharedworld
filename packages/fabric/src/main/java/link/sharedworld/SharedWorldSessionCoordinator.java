@@ -20,7 +20,7 @@ public final class SharedWorldSessionCoordinator {
 
     /**
      * Two-stage observe cadence: snappy for the first moments of a waiting
-     * flow (connect handoffs resolve in seconds), then relaxed — pushed
+     * flow (connect handoffs resolve in seconds), then relaxed; pushed
      * runtime-changed events collapse the wait to an immediate observe via
      * refreshWaitingNow() anyway.
      */
@@ -439,7 +439,7 @@ public final class SharedWorldSessionCoordinator {
         // A departure rejoin only makes sense for a player who is INSIDE the
         // departed world right now. Without this, a stale observation (zombie
         // session, deferred push) yanked players off whatever screen they
-        // were on — and could convert straight into hosting.
+        // were on, and could convert straight into hosting.
         SharedWorldPlaySessionTracker.ActiveWorldSession current = this.clientShell.currentPlaySession();
         if (current == null
                 || current.role() != SharedWorldPlaySessionTracker.SessionRole.GUEST
@@ -451,8 +451,8 @@ public final class SharedWorldSessionCoordinator {
         this.clientShell.clearPlaySession();
         this.clientShell.setScreen(this.sessionUi.waiting(parent, worldId, worldName, null));
         // No takeover confirmation on this path: the player was IN the world
-        // seconds ago and is now on the visible (cancellable) waiting screen
-        // — continuity is the feature. The guards above are what prevent the
+        // seconds ago and is now on the visible (cancellable) waiting screen;
+        // continuity is the feature. The guards above are what prevent the
         // auto-host-from-the-menu bug; the confirmation is reserved for
         // crash-RESUMED waits, where the intent may be days old.
         beginJoinAttempt(
@@ -532,7 +532,7 @@ public final class SharedWorldSessionCoordinator {
                 true,
                 true,
                 // A crash-resumed WAITING flow was never a user decision to
-                // host — keep the takeover confirmation in front of it.
+                // host; keep the takeover confirmation in front of it.
                 true
         );
     }
@@ -600,7 +600,7 @@ public final class SharedWorldSessionCoordinator {
             }
             clearPersistedRecoveryIfMatches(resumedRecoveryFingerprint);
             if (automaticTakeover) {
-                // The player never asked to host — they were pulled here by a
+                // The player never asked to host; they were pulled here by a
                 // host-departure rejoin. The backend has already assigned the
                 // lease, so this is a real decision: host, or hand the lease
                 // back (gracefully, so the next waiter is elected).
@@ -1008,7 +1008,7 @@ public final class SharedWorldSessionCoordinator {
 
         Screen uncleanShutdownWarning(Screen parent, String worldId, String worldName, WorldRuntimeStatusDto runtimeStatus);
 
-        /** "The host left — take over hosting?" decision for automatic takeovers. */
+        /** "The host left; take over hosting?" decision for automatic takeovers. */
         Screen confirmTakeover(Screen parent, String worldName, Runnable accept, Runnable decline);
     }
 

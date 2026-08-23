@@ -1,6 +1,6 @@
 //! Load generator for the Rust server: `--worlds` worlds, each with a host and
 //! `--guests` guests, driven at the real protocol cadences divided by
-//! `--time-scale` (10 → a 30 s heartbeat every 3 s). Dev auth only — point it
+//! `--time-scale` (10 → a 30 s heartbeat every 3 s). Dev auth only; point it
 //! at `swcore --dev` (any storage provider; blobs are tiny).
 //!
 //! Per world: host logs in, creates the world + invite, uploads a first

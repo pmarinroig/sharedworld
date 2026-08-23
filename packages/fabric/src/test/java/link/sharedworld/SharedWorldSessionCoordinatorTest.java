@@ -821,7 +821,7 @@ final class SharedWorldSessionCoordinatorTest {
             harness.runUntilIdle();
 
             // Continuity is the feature: the player was in this world seconds
-            // ago and sat on the (cancellable) waiting screen — no dialog.
+            // ago and sat on the (cancellable) waiting screen; no dialog.
             assertEquals(0, harness.takeoverConfirmations);
             assertTrue(harness.clientShell.actions().contains("setScreen:host-acquired"));
         } finally {

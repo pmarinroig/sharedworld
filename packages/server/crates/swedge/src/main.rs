@@ -1,4 +1,4 @@
-//! `swedge` — the rarely-restarted front door: TLS (ACME), HTTP reverse
+//! `swedge`; the rarely-restarted front door: TLS (ACME), HTTP reverse
 //! proxy to `swcore` over a Unix socket, and WebSocket ownership across core
 //! restarts (frames multiplexed to the core over a second Unix socket).
 

@@ -4,7 +4,7 @@
 -- directory column on the snapshots row itself: an unchanged 300-pack world
 -- used to write (and later retention-delete) 300 header rows plus their
 -- index entries per autosave. Member FILE rows keep the proven 0021
--- inheritance machinery unchanged. The legacy table is retained — rows
+-- inheritance machinery unchanged. The legacy table is retained; rows
 -- written by a pre-0026 worker mid-deploy stay readable (readers fall back
 -- where packs_json IS NULL, and global storage-key scans union both
 -- representations).

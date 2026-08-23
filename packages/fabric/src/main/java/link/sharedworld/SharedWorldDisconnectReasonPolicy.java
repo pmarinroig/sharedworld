@@ -11,7 +11,7 @@ import net.minecraft.network.chat.contents.TranslatableContents;
  * network drop, host quitting into a handoff); a kick or ban is the server
  * deliberately removing the player, and auto-rejoining would undo it on the
  * spot (field finding: a kicked guest bounced straight back in). Only the
- * vanilla translatable reasons are classifiable — a /kick with a custom
+ * vanilla translatable reasons are classifiable; a /kick with a custom
  * free-text reason arrives as a literal and still recovers; the SharedWorld
  * membership ban does not depend on this (the revocation push ends the
  * session authoritatively).

@@ -1,4 +1,4 @@
-//! `swcore` — the SharedWorld core server: HTTP/WS services over SQLite.
+//! `swcore`; the SharedWorld core server: HTTP/WS services over SQLite.
 //! Serves on a TCP listener (dev / behind a proxy) and, in production, over
 //! Unix sockets for `swedge` (Phase 8).
 
@@ -40,7 +40,7 @@ struct Args {
     #[arg(long, env = "SW_DEV_PROFILE", default_value_t = false)]
     dev: bool,
     /// Integration-harness mode (requires the `testkit` build feature): the Bun
-    /// integration profile — dev auth, mock OAuth, fake Drive, `/__test/*`.
+    /// integration profile; dev auth, mock OAuth, fake Drive, `/__test/*`.
     #[arg(long, env = "SW_INTEGRATION", default_value_t = false)]
     integration: bool,
     /// Log as JSON lines (default: human-readable when stdout is a TTY).

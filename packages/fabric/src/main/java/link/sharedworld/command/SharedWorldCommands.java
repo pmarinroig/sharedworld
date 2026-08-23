@@ -195,8 +195,8 @@ public final class SharedWorldCommands {
      * Reroute a vanilla /ban into the SharedWorld membership ban while a shared
      * world is hosted; returns true when the vanilla execution must be
      * cancelled. e4mc's "restoreDedicatedCommands" registers vanilla's ban on
-     * integrated servers, where it would kick any target from the server —
-     * including the hosting player, tearing the session down with no release —
+     * integrated servers, where it would kick any target from the server,
+     * including the hosting player, tearing the session down with no release,
      * and record it in a banned-players.json that outlives the session on
      * whichever machine happened to host. Outside a hosted shared world the
      * vanilla command keeps its e4mc-given behavior.
@@ -226,7 +226,7 @@ public final class SharedWorldCommands {
     }
 
     /**
-     * Cancel a vanilla /whitelist mutation (on/off/add/remove/reload — e4mc
+     * Cancel a vanilla /whitelist mutation (on/off/add/remove/reload; e4mc
      * restores the command on integrated servers) while a shared world is
      * hosted: membership is the only join authority, and an enabled whitelist
      * would silently refuse legit members. Reads (/whitelist list) stay

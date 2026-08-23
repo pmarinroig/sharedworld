@@ -8,7 +8,7 @@ import net.minecraft.network.chat.Component;
 
 /**
  * Terminal screen after a full account deletion. Every exit lands on the
- * vanilla multiplayer screen — never back into SharedWorld UI, which would
+ * vanilla multiplayer screen; never back into SharedWorld UI, which would
  * re-authenticate and recreate an account.
  */
 public final class AccountDeletedScreen extends link.sharedworld.versioned.VersionedScreen {

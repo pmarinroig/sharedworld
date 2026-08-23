@@ -9,9 +9,9 @@ import java.nio.file.Path;
 
 /**
  * Replaces a shared world's content from a local save. The lease comes from the
- * ordinary enterSession host path — when a runtime is live the backend answers
+ * ordinary enterSession host path; when a runtime is live the backend answers
  * connect/wait instead of host, which is exactly the busy protection replace
- * needs — and the upload rides {@link InitialSnapshotUploadPipeline}, so the
+ * needs, and the upload rides {@link InitialSnapshotUploadPipeline}, so the
  * working copy reset forces a full (non-delta) snapshot and every other client
  * re-downloads cleanly. On failure the lease is released without a snapshot, so
  * the previous latest snapshot stays authoritative; the world is never deleted.

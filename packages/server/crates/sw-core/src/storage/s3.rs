@@ -410,7 +410,7 @@ impl AccountCleanupCapable for S3StorageProvider {
         let conn = self.require_connection(binding).await?;
         // Query params must be part of the SigV4 canonical request; reuse the
         // presign-style canonicalization by signing a GET with query via
-        // header auth is more involved — ListObjectsV2 rides a presigned URL
+        // header auth is more involved; ListObjectsV2 rides a presigned URL
         // instead, which signs the query naturally.
         let mut query = format!("list-type=2&max-keys=1000&prefix={}", sigv4_encode(&conn.key_prefix));
         if let Some(token) = page_token {
@@ -551,7 +551,7 @@ fn probe_status_message(step: &str, status: u16) -> String {
             "The bucket was not found while {step} (HTTP 404). Check the bucket name and endpoint URL."
         ),
         301 | 307 => format!(
-            "The endpoint redirected while {step} (HTTP {status}) — usually a wrong region. Check the region."
+            "The endpoint redirected while {step} (HTTP {status}); usually a wrong region. Check the region."
         ),
         _ => format!("The bucket refused {step} (HTTP {status})."),
     }
@@ -591,7 +591,7 @@ fn presign_with_query(
 
 /// Minimal ListObjectsV2 XML extraction: `<Key>` values and the
 /// `<NextContinuationToken>`. The XML is machine-generated and flat, so a
-/// scan is enough — no XML dependency.
+/// scan is enough; no XML dependency.
 fn parse_list_objects(xml: &str) -> (Vec<String>, Option<String>) {
     let mut keys = Vec::new();
     let mut rest = xml;

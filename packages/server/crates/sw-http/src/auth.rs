@@ -73,7 +73,7 @@ pub fn bearer_of(parts: &Parts) -> Result<&str, HttpError> {
 }
 
 /// Like [`Auth`], but a valid lane-D relay token (`x-sharedworld-relay-token`,
-/// verified with the box's own public key) also authenticates — the CF relay
+/// verified with the box's own public key) also authenticates; the CF relay
 /// forwards blob GETs it could not serve itself without the client's bearer
 /// (new clients never attach one to the relay origin).
 pub struct AuthOrRelayToken(pub RequestContext);

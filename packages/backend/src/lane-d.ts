@@ -2,7 +2,7 @@ import type { Env } from "./env.ts";
 
 /**
  * Lane D (MODE = "lane-d"): the worker keeps only what is free on
- * Cloudflare — egress. It is a thin front for the Rust server ("the box"):
+ * Cloudflare; egress. It is a thin front for the Rust server ("the box"):
  *
  * - `GET /worlds/:id/storage/blob/*` with a valid relay token → stream the
  *   blob straight from Google Drive (the box minted the token at plan time;

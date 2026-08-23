@@ -14,7 +14,7 @@ import org.spongepowered.asm.mixin.injection.Redirect;
  *
  * On 26.2 the window is already created hidden (Window.createGlfwWindow
  * hints GLFW_VISIBLE=false) and the Minecraft constructor shows it
- * explicitly once client init finishes — so here the fix is suppressing
+ * explicitly once client init finishes, so here the fix is suppressing
  * that one glfwShowWindow call instead of adding a creation hint.
  */
 @Mixin(Minecraft.class)

@@ -168,7 +168,7 @@ final class WorldSyncSupport {
     /**
      * Bounded retry for blob transport failures only. Integrity failures
      * (hash mismatches, missing delta bases) throw before or after the
-     * transfer itself and are never retried — sync fails closed on those.
+     * transfer itself and are never retried; sync fails closed on those.
      * A retried transfer restarts its progress reporting, which can briefly
      * overstate the progress bar; correctness is unaffected.
      * <p>
@@ -233,7 +233,7 @@ final class WorldSyncSupport {
 
     /**
      * A pack whose descriptor can be answered from the scan cache without
-     * writing the pack body. The body is built at most once, on first demand —
+     * writing the pack body. The body is built at most once, on first demand;
      * a no-change sync never asks for it, which is what turns the pre-plan
      * "pack the whole world into temp files" pass into pure metadata work.
      *
@@ -281,7 +281,7 @@ final class WorldSyncSupport {
         /**
          * Blob storage keys are derived from the hash the plan saw, so a body
          * whose bytes hash differently from an already-announced descriptor
-         * must never be uploaded — that would store content under the wrong
+         * must never be uploaded; that would store content under the wrong
          * key and break every future download of it. The fresh hash is
          * recorded in the cache first so the retry plans against the truth.
          */

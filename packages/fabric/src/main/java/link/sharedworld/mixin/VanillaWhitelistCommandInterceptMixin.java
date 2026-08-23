@@ -13,8 +13,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 /**
  * Vanilla registers /whitelist only on dedicated servers, but e4mc's
  * "restoreDedicatedCommands" brings it back on integrated ones. On a hosted
- * shared world, membership is the only join authority — an enabled whitelist
- * would silently refuse legit members — so every mutation is refused with a
+ * shared world, membership is the only join authority; an enabled whitelist
+ * would silently refuse legit members, so every mutation is refused with a
  * pointer at the SharedWorld screen while /whitelist list stays readable.
  * The raw Collection parameters match every bucket (GameProfile before
  * 1.21.9, NameAndId after; erasure keeps the descriptors identical).

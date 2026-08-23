@@ -19,7 +19,7 @@ import java.util.Set;
 /**
  * Backups tab list. Besides the single highlighted row (details panel,
  * restore), the owner can tick any number of non-latest rows through the
- * checkbox at the right edge and delete them in one request (0.4.5) —
+ * checkbox at the right edge and delete them in one request (0.4.5);
  * deleting a day of autosaves one confirm at a time was the complaint that
  * motivated it. Ticks survive reloads only for rows that still exist.
  */

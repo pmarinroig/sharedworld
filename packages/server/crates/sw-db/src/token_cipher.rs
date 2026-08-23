@@ -61,7 +61,7 @@ impl TokenCipher {
     }
 
     /// Decrypts `enc:v1:` values; passes plaintext through; `None` when an
-    /// encrypted value cannot be opened (wrong key) — treated as absent.
+    /// encrypted value cannot be opened (wrong key); treated as absent.
     pub fn decrypt(&self, stored: &str) -> Option<String> {
         let Some(b64) = stored.strip_prefix(PREFIX) else { return Some(stored.to_string()) };
         let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(b64).ok()?;

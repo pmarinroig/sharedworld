@@ -14,14 +14,14 @@ import java.util.List;
  * The one place SharedWorld ever asks before touching unsaved progress. Shown
  * during host startup when the working copy holds changes that were never
  * uploaded (a release that failed or was abandoned) AND the shared copy has
- * moved on since — the only case with no automatic answer: uploading
+ * moved on since; the only case with no automatic answer: uploading
  * supersedes the other host's newer version (restorable from Backups),
  * discarding deletes this computer's changes. Every other case is resolved
  * silently (publish-first when the shared copy is unchanged; plain sync when
  * nothing actually differs).
  *
  * <p>Discard needs a second click. Closing or the countdown cancels the
- * startup with the working copy intact — an unanswered dialog must neither
+ * startup with the working copy intact; an unanswered dialog must neither
  * hold the host lease forever nor decide about data on its own.
  */
 public final class LocalChangesConflictScreen extends link.sharedworld.versioned.VersionedScreen {

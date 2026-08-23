@@ -104,7 +104,7 @@ public final class SharedWorldGuestCacheWarmer implements link.sharedworld.realt
     }
 
     /**
-     * Snapshot id off a merged beat (disconnected fallback lane) — no extra
+     * Snapshot id off a merged beat (disconnected fallback lane); no extra
      * fetch needed, the beat already carried the id. Called on the beat's
      * background executor; gates mirror the tick's.
      */

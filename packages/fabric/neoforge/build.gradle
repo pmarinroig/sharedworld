@@ -24,7 +24,7 @@ if (mcBucket == null) {
 def bucketJavaRelease = (mcBucket.javaRelease ?: 21) as int
 def bucketMixinCompatibilityLevel = bucketJavaRelease >= 21 ? "JAVA_21" : "JAVA_17"
 // The e2e driver compiles against default-bucket-only Minecraft APIs, so it
-// rides along (and gets compiled) only there — mirroring the classic project.
+// rides along (and gets compiled) only there; mirroring the classic project.
 def isDefaultMcBucket = mcBucketName == bucketConfig.defaults.classic
 
 // Fabric's semver range ("[>=]a[ <b]") to a maven range ("[a,b)"); the
@@ -40,8 +40,8 @@ def minecraftMavenRange = mavenRange(mcBucket.minecraftRange as String)
 
 // The shared tree, minus the Fabric-only classes this project replaces:
 // the Fabric entrypoint shim and FabricPlatform (swapped for the NeoForge
-// pair in src/main/java here), and — on 1.21.1, the one bucket whose
-// backdrop hook uses Fabric ScreenEvents — the versioned backdrop compat
+// pair in src/main/java here), and (on 1.21.1, the one bucket whose
+// backdrop hook uses Fabric ScreenEvents) the versioned backdrop compat
 // (replaced under src/versioned-overrides/1.21.1).
 def prepareSharedSources = tasks.register("prepareSharedSources", Sync) {
     from("../src/main/java") {

@@ -627,7 +627,7 @@ async fn put_streams_a_known_length_body_through_a_resumable_session_without_bea
     assert_eq!(requests[1].path, "/resumable/stream-1");
     assert_eq!(requests[1].content_range.as_deref(), Some("bytes 0-6/7"));
     assert_eq!(requests[1].body_text, "payload");
-    // The session URL is the credential — the byte PUT must not carry ours.
+    // The session URL is the credential; the byte PUT must not carry ours.
     assert_eq!(requests[1].auth, None);
 
     let object = f.object("worlds/w1/big.bin").await.unwrap();

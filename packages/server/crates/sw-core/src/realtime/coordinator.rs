@@ -969,7 +969,7 @@ impl WorldCoordinator {
 
     // ------------------------------------------------------------ lifecycle
 
-    /// P5: world deleted — drop every trace and tell the (former) members.
+    /// P5: world deleted; drop every trace and tell the (former) members.
     pub async fn destroy_world(&mut self, recipients: Vec<String>) -> HttpResult<()> {
         if let Some(host) = self.store.get_runtime().and_then(|r| r.host_uuid) {
             self.effects.set_host_watch(&self.world_id, &host, false).await;
@@ -1112,7 +1112,7 @@ impl WorldCoordinator {
 
     /// Verify with a probe before declaring the host gone; repair link state
     /// when reachable. `Ok(None)` = genuinely unreachable; `Err` propagates
-    /// (renewal aborted, expiry skipped — the safe failure).
+    /// (renewal aborted, expiry skipped; the safe failure).
     async fn rescue_reachable_host(
         &mut self,
         runtime: &WorldRuntimeRecord,
@@ -1139,7 +1139,7 @@ impl WorldCoordinator {
         let assigned =
             assign_host_starting(&self.world_id, candidate, epoch_baseline(resolved), now, random_id("rt"));
         self.store.put_runtime(&assigned.runtime);
-        // lastEpoch moves only on retire — a live epoch must not look released.
+        // lastEpoch moves only on retire; a live epoch must not look released.
         self.store.set_room_players(None);
         let connected = self.effects.set_host_watch(&self.world_id, &candidate.player_uuid, true).await;
         self.store.set_host_link(&HostLink { connected, grace_deadline_at: None });

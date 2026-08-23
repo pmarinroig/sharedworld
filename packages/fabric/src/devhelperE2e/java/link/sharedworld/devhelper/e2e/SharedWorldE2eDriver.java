@@ -160,7 +160,7 @@ public final class SharedWorldE2eDriver {
     /**
      * When set, hosting goes through the SHIPPED custom-join-address path
      * (config store + publishMode + tracker pin) instead of the driver's
-     * captureAssignedDomain injection — real 0.5.0 coverage.
+     * captureAssignedDomain injection; real 0.5.0 coverage.
      */
     private String customJoinPort;
     private boolean customJoinConfigured;
@@ -511,7 +511,7 @@ public final class SharedWorldE2eDriver {
             }
             case OP_DRILL_AWAIT_COMMAND -> {
                 // The host (owner) grants the guest command permission through the
-                // real in-game /op — the same chat-command path a player uses.
+                // real in-game /op; the same chat-command path a player uses.
                 if (minecraft.player == null) {
                     return;
                 }
@@ -574,7 +574,7 @@ public final class SharedWorldE2eDriver {
                     // The field-reported footgun verbatim: the hosting owner types
                     // /ban on themselves. e4mc restores vanilla's ban on integrated
                     // servers; SharedWorld must reroute it into the membership ban,
-                    // whose guards refuse owner and self targets — the session
+                    // whose guards refuse owner and self targets; the session
                     // survives and no local banlist entry appears.
                     minecraft.player.connection.sendCommand("ban " + minecraft.player.getName().getString());
                     this.markers.emit("ban-drill-sent", null);
@@ -795,7 +795,7 @@ public final class SharedWorldE2eDriver {
      * The create screen stands in a browser's place in dev-mock OAuth mode:
      * the auth URL it receives is the backend's own callback, and one GET
      * completes the link (the screen's poller then flips to linked). The URL
-     * is read from the screen's storageLink field on the tick thread —
+     * is read from the screen's storageLink field on the tick thread;
      * reflection instead of the clipboard because GLFW clipboard access off
      * the render thread segfaults under X11.
      */

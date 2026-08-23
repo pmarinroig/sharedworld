@@ -1,4 +1,4 @@
-//! `swctl` — operator tooling for the SharedWorld server: migrations, the
+//! `swctl`; operator tooling for the SharedWorld server: migrations, the
 //! usage snapshot (`scripts/cf-stats.sh` port), D1 dump import.
 
 use std::path::PathBuf;
@@ -51,7 +51,7 @@ enum Cmd {
     RelayKeysGen,
     /// Mint a demo relay token with throwaway keys (cross-language parity test).
     RelayTokenDemo,
-    /// Parse a swcore TOML and print which knobs are set (values masked) —
+    /// Parse a swcore TOML and print which knobs are set (values masked);
     /// run it after every edit of /etc/sharedworld/swcore.toml.
     ConfigCheck {
         #[arg(long, default_value = "/etc/sharedworld/swcore.toml")]
@@ -59,7 +59,7 @@ enum Cmd {
     },
     /// Live view: scrape /metrics twice, `interval` seconds apart, and print
     /// per-route request rate, rows read/written per request, socket and
-    /// coordinator gauges — "are we doing tons of X" from a terminal.
+    /// coordinator gauges; "are we doing tons of X" from a terminal.
     Top {
         #[arg(long, default_value = "http://127.0.0.1:9464/metrics")]
         metrics: String,
@@ -182,7 +182,7 @@ fn import_d1(db_path: &std::path::Path, dump: &std::path::Path) -> anyhow::Resul
     //
     // Statements are split here and prepared one by one: handing SQLite the
     // whole multi-hundred-MB dump makes every prepare copy the remaining text
-    // (quadratic — a 280 MB export took >45 min that way). One transaction
+    // (quadratic; a 280 MB export took >45 min that way). One transaction
     // with journaling/sync off on a private connection (the pool's readers
     // would block the journal-mode change) turns it into a sub-minute bulk
     // load; the pool then reopens it in WAL as usual.
@@ -311,7 +311,7 @@ fn import_coordinators(db_path: &std::path::Path, dump: &std::path::Path) -> any
                     v["tokenAmnesty"] = serde_json::Value::Bool(true);
                     // Cutover grace: the maintenance window ate the host's
                     // heartbeats, so every live deadline is measured from the
-                    // box's clock, not the worker's last sighting — otherwise
+                    // box's clock, not the worker's last sighting; otherwise
                     // the first alarm would expire a host that is merely
                     // waiting for the new address. Hosts get a full lease
                     // (150 s) to reconnect; a host that never comes back

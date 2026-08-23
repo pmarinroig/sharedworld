@@ -18,7 +18,7 @@ public final class WorldSettingsReader {
 
     /**
      * One atomic server-thread read of everything the host persists:
-     * the managed gamerules plus the current difficulty (0.3.0 — in-game
+     * the managed gamerules plus the current difficulty (0.3.0; in-game
      * /difficulty persists like /gamerule does). A null difficulty means
      * "unknown, report nothing for it".
      */

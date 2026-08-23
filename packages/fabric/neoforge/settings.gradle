@@ -1,6 +1,6 @@
 // Build project for the NeoForge port (0.5.0). It shares the source tree of
 // the classic project one directory up; only the loader shims and toolchain
-// differ (ModDevGradle, no loom, no remapping — NeoForge 1.20.5+ runs
+// differ (ModDevGradle, no loom, no remapping; NeoForge 1.20.5+ runs
 // official Mojang mappings, the same names the shared tree compiles against).
 pluginManagement {
     repositories {

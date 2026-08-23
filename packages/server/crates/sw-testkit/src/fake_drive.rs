@@ -1,8 +1,8 @@
 //! `FakeDriveProvider`: an in-memory resumable-capable provider standing in
 //! for Google Drive. It behaves like the real Drive provider where the service
-//! layer can observe the difference — `storage_objects` rows are the
+//! layer can observe the difference; `storage_objects` rows are the
 //! authoritative index, sessions carry received bytes, and probes report the
-//! provider's own view — so direct-upload and Drive-binding paths can be
+//! provider's own view, so direct-upload and Drive-binding paths can be
 //! exercised without a network.
 
 use std::collections::HashMap;

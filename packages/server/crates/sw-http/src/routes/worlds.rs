@@ -84,7 +84,7 @@ async fn get_world(
 ) -> ApiResult<Response> {
     let world_id = param(&p, "worldId")?;
     let svc = state.svc();
-    // A null etag means no access — fall through so the service raises its fresh 403/404.
+    // A null etag means no access; fall through so the service raises its fresh 403/404.
     let etag = worlds::world_etag(&svc, &ctx, &world_id, time::now()).await?;
     if let Some(etag) = &etag {
         if if_none_match_satisfied(&headers, etag) {

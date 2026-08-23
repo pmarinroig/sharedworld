@@ -50,7 +50,7 @@ impl IntoResponse for ApiError {
 
 pub type ApiResult<T> = Result<T, ApiError>;
 
-/// `json(data)` — JSON body with the worker's content-type.
+/// `json(data)`; JSON body with the worker's content-type.
 pub fn json_response<T: serde::Serialize>(status: StatusCode, value: &T) -> Response {
     let body = serde_json::to_vec(value).expect("json");
     let mut resp = Response::new(axum::body::Body::from(body));
@@ -64,7 +64,7 @@ pub fn ok_json<T: serde::Serialize>(value: &T) -> Response {
     json_response(StatusCode::OK, value)
 }
 
-/// `ok()` — 204.
+/// `ok()`; 204.
 pub fn no_content() -> Response {
     StatusCode::NO_CONTENT.into_response()
 }

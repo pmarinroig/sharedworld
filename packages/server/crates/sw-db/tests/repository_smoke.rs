@@ -302,7 +302,7 @@ async fn tokens_are_encrypted_at_rest_when_a_cipher_is_configured() {
     assert_eq!(by_owner[0].refresh_token.as_deref(), Some("1//refresh"));
 }
 
-/// PII pass: tokens AND the email are ciphertext at rest — a Repository
+/// PII pass: tokens AND the email are ciphertext at rest; a Repository
 /// without the key sees neither, one with the key round-trips them.
 #[tokio::test]
 async fn storage_account_email_and_tokens_are_encrypted_at_rest() {

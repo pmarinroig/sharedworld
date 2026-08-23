@@ -64,7 +64,7 @@ public final class SharedWorldGuestRuntimeWatcher implements link.sharedworld.re
     }
 
     /**
-     * The session — never a poll — is the authority for "what am I
+     * The session, never a poll, is the authority for "what am I
      * watching". This is also the bootstrap fix: pre-0.4.1, activeWorldId
      * was only assigned by the poll tick, so a session that had not polled
      * yet silently ignored every pushed observation.

@@ -191,7 +191,7 @@ impl Repository {
                         .cloned()
                         .unwrap_or_default();
                     if members.is_empty() && members_sid != snapshot_id {
-                        tracing::warn!(snapshot_id, pack_id = %entry.pack_id, members_snapshot_id = %members_sid, "SharedWorld snapshot pack inherited zero member rows — donor missing?");
+                        tracing::warn!(snapshot_id, pack_id = %entry.pack_id, members_snapshot_id = %members_sid, "SharedWorld snapshot pack inherited zero member rows; donor missing?");
                     }
                     Ok(members)
                 },

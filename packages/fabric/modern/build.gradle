@@ -11,7 +11,7 @@ base {
 
 // Buckets for the unobfuscated Minecraft generation; same idea as the classic project,
 // but built without mappings or remapping. Select with -PsharedworldMcBucket=,
-// defaulting per buckets.json — the single source of truth shared with the classic
+// defaulting per buckets.json; the single source of truth shared with the classic
 // project and the workspace verify scripts.
 def bucketConfig = new groovy.json.JsonSlurper().parse(file("../buckets.json"))
 def mcBuckets = bucketConfig.buckets.findAll { it.project == "modern" }.collectEntries {
@@ -240,7 +240,7 @@ tasks.named("test").configure {
     }
     // Private tmpdir per test JVM: the temp-leak tests snapshot
     // java.io.tmpdir for sharedworld-* entries, and the release gate runs
-    // the classic and modern lanes' test JVMs concurrently — a shared OS
+    // the classic and modern lanes' test JVMs concurrently; a shared OS
     // tmpdir makes those snapshots race the other lane's temp churn.
     def testTmpDir = layout.buildDirectory.dir("test-tmpdir").get().asFile
     doFirst { testTmpDir.mkdirs() }

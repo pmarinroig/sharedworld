@@ -1,7 +1,7 @@
 //! Google Drive blob store (`storage/drive.ts`): appDataFolder objects named
 //! `sharedworld-<base64url(storageKey)>`, indexed authoritatively by the
-//! `storage_objects` table. Bodies always stream — a GB-scale pack must never
-//! be buffered — and every Drive call runs through the retry ladder plus the
+//! `storage_objects` table. Bodies always stream; a GB-scale pack must never
+//! be buffered, and every Drive call runs through the retry ladder plus the
 //! per-account upload-start pacer.
 
 use std::sync::Arc;
@@ -140,7 +140,7 @@ pub struct GoogleDriveStorageProvider {
     repository: Repository,
     config: Arc<Config>,
     http: reqwest::Client,
-    /// Per-account upload-start pacer. One process, one map — what the
+    /// Per-account upload-start pacer. One process, one map; what the
     /// worker's static per-isolate map could never be.
     limiters: DashMap<String, Arc<Mutex<AccountRequestLimiter>>>,
 }
@@ -386,7 +386,7 @@ impl GoogleDriveStorageProvider {
 
     /// Terminal handling: log it (a 4xx never reaches the >=500 response
     /// logging, so this is the only record), and turn a missing-consent 403
-    /// into the re-link path — Google's granular consent lets a user finish
+    /// into the re-link path; Google's granular consent lets a user finish
     /// OAuth without granting Drive access, which is invisible until here.
     async fn final_drive_failure(
         &self,
@@ -490,7 +490,7 @@ impl GoogleDriveStorageProvider {
 
     /// Relayed upload as a pass-through: a resumable session (already paced,
     /// retried and id-reusing) plus ONE streaming PUT of the whole body. The
-    /// stream cannot be replayed, so there is no mid-transfer retry — the
+    /// stream cannot be replayed, so there is no mid-transfer retry; the
     /// client's own relay retry re-sends the blob.
     async fn put_streaming(
         &self,
@@ -519,7 +519,7 @@ impl GoogleDriveStorageProvider {
         if status != 200 && status != 201 {
             let text = response.text().await.unwrap_or_default();
             if status == 403 && is_storage_quota_exceeded_body(Some(&text)) {
-                // Terminal user condition — a 502 here made shipped clients
+                // Terminal user condition; a 502 here made shipped clients
                 // burn their transport retries against a full Drive.
                 return Err(drive_storage_full_error());
             }
@@ -668,7 +668,7 @@ impl StorageProvider for GoogleDriveStorageProvider {
             return Ok(None);
         };
 
-        // The body streams straight through — GB-scale blobs must never be
+        // The body streams straight through; GB-scale blobs must never be
         // buffered. Retries above cover response establishment only; a
         // mid-stream break reaches the client, which resumes via Range.
         let status = if response.status().as_u16() == 206 { 206 } else { 200 };
@@ -822,7 +822,7 @@ impl AccountCleanupCapable for GoogleDriveStorageProvider {
             return Ok(());
         };
         let url = self.config.google_oauth_revoke_url.as_deref().unwrap_or(DEFAULT_REVOKE_URL).to_string();
-        // Best-effort: a failed revoke must never block the unlink/deletion —
+        // Best-effort: a failed revoke must never block the unlink/deletion;
         // the user can always revoke from their Google Account settings.
         let result = self
             .http
@@ -1067,7 +1067,7 @@ impl ResumableUploadCapable for GoogleDriveStorageProvider {
         let account = self.require_account(binding).await?;
         let req =
             DriveReq::new(Method::DELETE, format!("{}/files/{}", self.api_base(), url_path_encode(file_id)));
-        // Cleanup only — an orphaned Drive file must never fail the request
+        // Cleanup only; an orphaned Drive file must never fail the request
         // that discovered it.
         if let Err(error) = self
             .drive_request_checked(&account, &req, "drive_delete_failed", "Google Drive delete failed.", true)

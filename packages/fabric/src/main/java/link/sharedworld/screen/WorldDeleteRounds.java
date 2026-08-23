@@ -11,7 +11,7 @@ import java.util.List;
 /**
  * Owner-side world deletion: backups go one by one so callers can show real
  * progress (a single opaque delete request could sit for a long time on
- * Drive-heavy worlds). Order falls out of the chain rules — the backend
+ * Drive-heavy worlds). Order falls out of the chain rules; the backend
  * refuses the latest backup and delta bases still in use, so each round
  * deletes the current leaves and the final world delete cleans up whatever
  * stayed protected.

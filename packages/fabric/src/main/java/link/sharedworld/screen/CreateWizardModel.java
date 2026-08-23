@@ -47,7 +47,7 @@ final class CreateWizardModel {
 
     /**
      * The account check answered. When the account is usable and the player is
-     * still parked on the connect step, move straight to picking a world —
+     * still parked on the connect step, move straight to picking a world;
      * returning players should never see the Drive step again.
      */
     boolean onStorageAccountChecked(boolean linkedAndHealthy) {

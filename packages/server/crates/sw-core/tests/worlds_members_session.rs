@@ -161,7 +161,7 @@ async fn world_lifecycle_through_services() {
 }
 
 /// [P8] Effects whose membership read fails make the initial host claim lose
-/// the way a concurrent claimant would — after the world/membership rows
+/// the way a concurrent claimant would; after the world/membership rows
 /// already exist. The failed create must compensate, not strand them.
 struct SeedLosingEffects;
 

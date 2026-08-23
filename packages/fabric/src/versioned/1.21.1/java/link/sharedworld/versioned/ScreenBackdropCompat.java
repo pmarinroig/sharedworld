@@ -4,7 +4,7 @@ import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
 
 /**
  * Version-specific screen-backdrop install hook. 1.21/1.21.1 draw the screen
- * background (including the blur pass) inside Screen.render — after any content a
+ * background (including the blur pass) inside Screen.render; after any content a
  * subclass drew first, which blurs that content. This before-render hook restores the
  * newer draw-background-first order; VersionedScreen suppresses the vanilla pass.
  */

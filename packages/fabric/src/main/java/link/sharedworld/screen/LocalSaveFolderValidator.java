@@ -14,7 +14,7 @@ import java.nio.file.Path;
 /**
  * Validates an arbitrary folder chosen as a world source (create-from-folder
  * and replace-world flows): it must be a readable vanilla save, not saved by a
- * NEWER Minecraft (opening it would corrupt it — same guardrail as hosting),
+ * NEWER Minecraft (opening it would corrupt it; same guardrail as hosting),
  * and not one of SharedWorld's own managed world directories (self-import).
  */
 final class LocalSaveFolderValidator {

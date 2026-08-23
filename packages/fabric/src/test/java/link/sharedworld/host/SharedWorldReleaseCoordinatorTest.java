@@ -166,7 +166,7 @@ final class SharedWorldReleaseCoordinatorTest {
                     "the coordinator requested a local disconnect: " + harness.clientShell.actions());
 
             // The world then closes through a path that never consults the
-            // disconnect hook — the race that used to leave the flag armed.
+            // disconnect hook; the race that used to leave the flag armed.
             harness.clientShell.setLocalServerState(false, false, false);
             harness.tickRelease();
             harness.runUntilIdle();
@@ -819,7 +819,7 @@ final class SharedWorldReleaseCoordinatorTest {
      * Field crash loop (0.4.2): alt-F4 while parked on the upload-failed retry
      * screen persists an ERROR_RECOVERABLE record, but errorKind lives only in
      * memory. On the next launch the restored view surfaced a null errorKind,
-     * which NPE'd the lifecycle router's screen switch on the first menu tick —
+     * which NPE'd the lifecycle router's screen switch on the first menu tick;
      * on every launch, until config/sharedworld-release.json was deleted.
      */
     @Test

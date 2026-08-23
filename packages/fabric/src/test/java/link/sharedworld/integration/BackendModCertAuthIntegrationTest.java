@@ -26,7 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * the certificate payload is built here exactly like vanilla
  * ProfilePublicKey.Data#signedPayload builds it (big-endian uuid msb | lsb |
  * expiry millis | SPKI DER) and signed with the integration backend's fake
- * Mojang services key — so a layout disagreement between the Java and TS
+ * Mojang services key, so a layout disagreement between the Java and TS
  * sides fails this test rather than production logins.
  */
 @Tag("integration")

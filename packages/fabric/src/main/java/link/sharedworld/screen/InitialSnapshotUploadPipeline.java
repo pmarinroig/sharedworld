@@ -25,8 +25,8 @@ import java.util.stream.Stream;
  * copy+upload, reset the working copy (which also clears delta baselines, so
  * the upload is a full snapshot), copy the source save in minus local-only
  * files, upload with the lease's exact epoch/token, and always release the
- * lease afterwards. A release failure after a committed snapshot is cosmetic —
- * the lease expires on its own — and must never fail the operation.
+ * lease afterwards. A release failure after a committed snapshot is cosmetic;
+ * the lease expires on its own, and must never fail the operation.
  */
 final class InitialSnapshotUploadPipeline {
     private static final Logger LOGGER = LoggerFactory.getLogger("sharedworld-initial-upload");

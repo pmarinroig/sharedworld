@@ -21,8 +21,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Error-code fidelity: every HTTP path of the client — including the
- * hand-rolled downloadPlan and blob transfers — must surface backend error
+ * Error-code fidelity: every HTTP path of the client, including the
+ * hand-rolled downloadPlan and blob transfers, must surface backend error
  * codes as SharedWorldApiException so the terminal-state classifiers
  * (deleted world, membership revoked, host not active) see them.
  */

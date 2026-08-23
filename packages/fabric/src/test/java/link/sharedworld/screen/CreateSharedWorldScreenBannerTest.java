@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * The create screen's storage-banner policy. The load-bearing case: a create
  * failure restores the wizard with a sticky error banner, and the storage
  * banner refresh that runs in the same init() (and again when the async
- * storage-account check completes) must NOT wipe it — it used to, which made
+ * storage-account check completes) must NOT wipe it; it used to, which made
  * every create failure land the user back on the screen with no message at
  * all (the "loading finished, then nothing happened" field report).
  */

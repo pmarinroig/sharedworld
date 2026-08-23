@@ -3,12 +3,12 @@
 //! provider instead of per-file rows. The document deliberately carries NO
 //! snapshot identity and NO pack headers: headers stay solely in the pack
 //! directory (one source of truth, readable without a provider round-trip),
-//! and an identity-free document hashes identically for identical content —
+//! and an identity-free document hashes identically for identical content,
 //! so a restore, whose members are unchanged, reuses the existing object at
 //! zero cost instead of uploading a duplicate.
 //!
 //! Canonical bytes are the JSON serialization of the document with packs
-//! sorted by packId (`localeCompare`) and files by path — matching the
+//! sorted by packId (`localeCompare`) and files by path; matching the
 //! ordering the legacy row loader produces, because assembled manifests must
 //! stay byte-identical per snapshot id (the manifest cache assumes
 //! immutability).
@@ -80,7 +80,7 @@ pub fn parse_manifest_document(bytes: &[u8]) -> HttpResult<SnapshotManifestDocum
     let parsed: serde_json::Value = serde_json::from_slice(bytes)
         .map_err(|_| manifest_unavailable("Snapshot manifest document is not valid JSON."))?;
     // A future format version must never be silently misread as empty member
-    // lists — that would corrupt download plans, not 404 them.
+    // lists; that would corrupt download plans, not 404 them.
     if parsed.get("formatVersion").and_then(serde_json::Value::as_i64)
         != Some(MANIFEST_DOCUMENT_FORMAT_VERSION)
         || !parsed.get("packs").is_some_and(serde_json::Value::is_array)

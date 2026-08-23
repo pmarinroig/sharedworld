@@ -173,8 +173,8 @@ pub async fn delete_snapshot(
 /// Deletes a set of backups in one pass: one write batch, one unreferenced-key
 /// computation for the whole set (keys shared between the deleted backups are
 /// resolved once), and the response goes out as soon as the rows are gone. The
-/// rows are the source of truth — a deleted backup can no longer be restored
-/// and no longer counts as used storage — so the provider deletes run after
+/// rows are the source of truth; a deleted backup can no longer be restored
+/// and no longer counts as used storage, so the provider deletes run after
 /// the response under a time budget, with the remainder queued for the cron
 /// sweep. Before 0.4.5 every Drive delete ran inline, which put a big backup
 /// past the mod's 20s request timeout even though the rows were already gone.
@@ -213,7 +213,7 @@ pub async fn delete_snapshots(
     // S1: edges come only from non-self-contained referrers, so stamped
     // snapshots pin nothing and old backups become individually deletable.
     // The residual 409 covers only legacy snapshots that still resolve their
-    // chains by walking base snapshot rows — and only when the dependant is
+    // chains by walking base snapshot rows, and only when the dependant is
     // not itself part of this deletion.
     let deleting: HashSet<&String> = delete_ids.iter().collect();
     let delta_bases = svc.repository.list_snapshot_delta_bases(world_id).await?;
@@ -264,7 +264,7 @@ pub async fn finalize_snapshot(
     // One header cache for validation, chain accounting and recipe stamping,
     // primed with every base snapshot the request references in a fixed
     // number of queries: the three passes used to each load the same bases
-    // one at a time (three sequential round-trips per base per pass — ~18s of
+    // one at a time (three sequential round-trips per base per pass; ~18s of
     // finalize wall time on delta-heavy worlds).
     let mut request = request.clone();
     let mut headers_cache = prefetch_base_snapshot_headers(svc, world_id, &request).await?;
@@ -278,13 +278,13 @@ pub async fn finalize_snapshot(
     // their immediate retention passes.
     //
     // It runs AFTER the response whenever the runtime allows: the snapshot is
-    // durable the moment persist_snapshot returns, while the retention pass —
-    // provider deletes with retry ladders, legacy-chain upgrades — was
+    // durable the moment persist_snapshot returns, while the retention pass
+    // (provider deletes with retry ladders, legacy-chain upgrades) was
     // measured at 19-46s inline, past the mod's 20s request timeout. The pass
     // is cutoff-safe: blob deletes run under a time budget and the remainder
     // is queued for the bounded sweeps.
     //
-    // 0.4.6: an owner cap (maxBackups) is a hard limit, not a schedule — with
+    // 0.4.6: an owner cap (maxBackups) is a hard limit, not a schedule; with
     // the hourly slot alone a "None" world accumulated one backup per save for
     // up to an hour. A capped world runs the pass on every finalize (cheap when
     // nothing exceeds the cap); uncapped worlds keep the hourly cadence.
@@ -311,7 +311,7 @@ pub async fn finalize_snapshot(
 /// 0027 write path: persist the snapshot with its pack member lists as one
 /// content-addressed manifest document in the world's storage instead of
 /// per-file rows, falling back to legacy rows when the document cannot be
-/// written (autosave availability beats format purity — the provider was
+/// written (autosave availability beats format purity; the provider was
 /// necessarily reachable seconds earlier for the artifact uploads, but a flake
 /// here must not fail the snapshot). The document upload strictly precedes the
 /// row batch: an orphaned doc left by a failed batch is inert
@@ -327,7 +327,7 @@ pub async fn persist_snapshot(
     headers_cache: &mut SnapshotHeadersCache,
 ) -> HttpResult<SnapshotManifest> {
     // Stamped here so BOTH producers (finalize and restore) emit
-    // self-contained snapshots — restore republishes packs whose recipes
+    // self-contained snapshots; restore republishes packs whose recipes
     // inherit from the restored-from snapshot's directory.
     let mut request = request.clone();
     stamp_chain_steps(svc, world_id, &mut request, headers_cache).await?;
@@ -345,7 +345,7 @@ pub async fn persist_snapshot(
             }
         }
     }
-    // Row-batch failures propagate as always — only the doc write falls back.
+    // Row-batch failures propagate as always; only the doc write falls back.
     let manifest =
         svc.repository.finalize_snapshot(world_id, &ctx.actor(), &request, now, manifest_storage_key).await?;
     Ok((*manifest).clone())
@@ -460,7 +460,7 @@ async fn purge_world_snapshots_inner(
 /// surviving delta permanently unreconstructable. Keep the transitive closure
 /// of delta bases reachable from every kept snapshot. (Inherited pack MEMBER
 /// rows need no such protection: `delete_snapshots` promotes them to a
-/// surviving heir, so member donors are freely prunable — keeping them here
+/// surviving heir, so member donors are freely prunable; keeping them here
 /// would transitively retain nearly every autosave and defeat retention.)
 async fn expand_keep_set_with_delta_bases(
     svc: &ServiceContext,
@@ -556,7 +556,7 @@ fn iso_prefix(created_at: &str, n: usize) -> &str {
 
 /// Deletes blobs whose last referencing rows are already gone. With a
 /// `budget_ms`, deletes stop once the budget elapses and every remaining key
-/// is queued for the bounded sweeps instead — the caller is running after the
+/// is queued for the bounded sweeps instead; the caller is running after the
 /// response and may be reclaimed by the runtime at any moment past that.
 pub async fn delete_unreferenced_blobs(
     svc: &ServiceContext,
@@ -675,7 +675,7 @@ async fn sweep_due_pending_blob_deletes_inner(
 /// so the only thing that can resurrect a queued key is a snapshot created
 /// after the enqueue. The re-check is therefore scoped to the account's
 /// snapshots created since the oldest enqueue in the batch (with created_at
-/// slack) instead of the whole fleet's directories — the per-key fleet scan
+/// slack) instead of the whole fleet's directories; the per-key fleet scan
 /// cost ~875k rows read each on 2026-08-17.
 async fn retry_pending_blob_deletes(
     svc: &ServiceContext,
@@ -1088,7 +1088,7 @@ async fn validate_manifest_file_base(
 /// The parent snapshot's copy of a pack the request carries forward unchanged
 /// (same id, artifact hash, storage key and transfer mode). The upload plan
 /// echoes such packs' headers verbatim from the latest snapshot, base
-/// references included — and since S1 those base snapshot ROWS are
+/// references included, and since S1 those base snapshot ROWS are
 /// legitimately deletable (self-contained recipes and the GC legs keep the
 /// bytes). So a carried-forward pack must be judged by its parent's already
 /// validated header, never by whether its original base row still exists:
@@ -1166,7 +1166,7 @@ async fn validate_snapshot_pack_base(
 /// v2 delta bookkeeping rules: a v2 delta pack must report its true blob size
 /// (the accumulator's input) and stay under the depth ceiling; non-delta packs
 /// must not claim a delta format. `chain_delta_bytes` is never accepted from
-/// the client — finalize computes it from the base row.
+/// the client; finalize computes it from the base row.
 fn validate_snapshot_pack_delta_v2_fields(pack: &SnapshotPack) -> HttpResult<()> {
     let Some(version) = pack.delta_format_version else { return Ok(()) };
     if version != DELTA_V2_FORMAT_VERSION {
@@ -1289,7 +1289,7 @@ fn is_zero_or_null_chain_depth(value: Option<i64>) -> bool {
 /// Server-side accumulator: for every pack in the request, stamp
 /// `chainDeltaBytes` before persisting. Full packs restart the chain at 0; v2
 /// delta packs extend their base's accumulator by their own blob size; v1
-/// delta packs stay NULL (unaccounted — the planner will force a re-full).
+/// delta packs stay NULL (unaccounted; the planner will force a re-full).
 /// Never trusts a client-sent accumulator.
 async fn compute_chain_delta_bytes(
     svc: &ServiceContext,
@@ -1377,13 +1377,13 @@ fn base_chain_accumulator(base_pack: Option<&SnapshotPack>) -> Option<i64> {
 }
 
 /// Server-stamped self-contained chains (S1): every pack in the request gets a
-/// `chainSteps` recipe — full packs anchor a fresh chain, delta packs extend
+/// `chainSteps` recipe; full packs anchor a fresh chain, delta packs extend
 /// their base pack's steps. Client-sent values are always overwritten (same
 /// trust model as `chainDeltaBytes`). When the base is a legacy snapshot with
 /// no steps of its own, the chain is synthesized once by walking the legacy
 /// base headers here, so the FIRST stamped snapshot is already independent of
 /// every older snapshot row. A broken/unresolvable legacy chain leaves
-/// `chainSteps` null — that pack keeps the walk-based download path.
+/// `chainSteps` null; that pack keeps the walk-based download path.
 async fn stamp_chain_steps(
     svc: &ServiceContext,
     world_id: &str,
@@ -1537,7 +1537,7 @@ async fn require_snapshot_for_validation(
 ) -> HttpResult<SnapshotManifest> {
     // Headers-only on purpose: delta validation and chainDeltaBytes read base
     // HEADERS (hash/transferMode/chainDepth/chainDeltaBytes) plus loose rows,
-    // never pack member lists — so finalize stays independent of the 0027
+    // never pack member lists, so finalize stays independent of the 0027
     // manifest document and a missing doc can never block the next snapshot
     // (the world heals by snapshotting again).
     snapshot_headers_cached(svc, world_id, snapshot_id, snapshot_cache).await?.ok_or_else(|| {

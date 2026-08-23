@@ -71,7 +71,7 @@ final class SharedWorldCreateFlow {
             this.pipeline.run(uploadLease, request.save().directory(), progressSink);
         } catch (Throwable throwable) {
             // The snapshot is finalized as the last step of the upload, so any failure reaching
-            // here means no usable snapshot exists — delete the half-created world so a
+            // here means no usable snapshot exists; delete the half-created world so a
             // snapshot-less ghost never lingers in the player's world list.
             deleteCreatedWorldQuietly(createdWorld.id(), throwable);
             throw throwable;

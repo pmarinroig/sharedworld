@@ -227,7 +227,7 @@ final class SharedWorldApiClientSessionTest {
     void anExpiredLookingPersistedTokenIsStillTriedAgainstTheServer() throws Exception {
         // The server is the authority on token lifetime. Discarding sessions
         // by the LOCAL clock meant a skewed clock re-ran the full auth
-        // handshake on every call — self-inflicted rate limiting. A genuinely
+        // handshake on every call; self-inflicted rate limiting. A genuinely
         // expired token surfaces as a 401 that request() recovers from.
         String baseUrl = startServer();
         this.server.createContext("/worlds", exchange -> writeJson(exchange, 200, "[]"));

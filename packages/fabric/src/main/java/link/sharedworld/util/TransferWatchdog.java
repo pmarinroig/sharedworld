@@ -12,7 +12,7 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * Stall detector for blob transfers. java.net.http has no read timeout, and a
  * whole-exchange deadline is wrong for transfers whose healthy duration is
- * unbounded (a multi-GB blob on a slow link) — the correct signal is "no bytes
+ * unbounded (a multi-GB blob on a slow link); the correct signal is "no bytes
  * moved for a while". The transfer pulses this watchdog on every chunk of
  * progress; when the stall window elapses without a pulse, the watchdog closes
  * the transfer's underlying stream, which surfaces in the transfer thread as

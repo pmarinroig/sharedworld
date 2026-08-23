@@ -46,7 +46,7 @@ impl Repository {
     }
 
     /// Active worlds whose storage binding points at any storage account the
-    /// player owns — the unlink / delete-account guard. Counts every bound
+    /// player owns; the unlink / delete-account guard. Counts every bound
     /// world regardless of owner: unlinking under someone else's world (a
     /// pre-fix shared-Google-account binding) would orphan it just the same.
     pub async fn count_active_worlds_bound_to_player_accounts(
@@ -101,7 +101,7 @@ impl Repository {
     }
 
     /// Account deletion: removes a world row and everything hanging off it,
-    /// in FK order. Callers pass tombstoned worlds — an active world must go
+    /// in FK order. Callers pass tombstoned worlds; an active world must go
     /// through `delete_world_for_player` first (realtime teardown, blob GC).
     pub async fn hard_delete_world(&self, world_id: &str) -> Result<(), DbError> {
         let w = world_id.to_string();

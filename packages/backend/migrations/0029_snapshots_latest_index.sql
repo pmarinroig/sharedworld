@@ -1,7 +1,7 @@
 -- 0029: latest-snapshot lookups. The world-list and world-details paths (and
 -- their ETag change-facts, i.e. the 60s 304 poll) resolved "latest snapshot
 -- per world" with a ROW_NUMBER() window that read EVERY snapshot of every
--- member world on each call — measured at ~53% of all D1 rows read/day. The
+-- member world on each call; measured at ~53% of all D1 rows read/day. The
 -- replacement is a correlated `ORDER BY created_at DESC, id DESC LIMIT 1`
 -- per world; SQLite only turns that into a 1-row reverse index walk when the
 -- index also carries the `id` tiebreak (otherwise it sorts the partition in a

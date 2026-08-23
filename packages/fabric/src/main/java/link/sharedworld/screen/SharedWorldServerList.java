@@ -398,7 +398,7 @@ public final class SharedWorldServerList extends link.sharedworld.versioned.Vers
 
     /**
      * The status icon and player count's drawn rectangles. The renderer and
-     * the tooltip hover tests both read from here — they diverged once
+     * the tooltip hover tests both read from here; they diverged once
      * (hover rects were computed from a different origin and width constant
      * than the drawn pixels), which made tooltips trigger next to, instead
      * of on, their targets.

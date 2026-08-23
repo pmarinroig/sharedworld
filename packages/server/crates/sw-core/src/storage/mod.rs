@@ -149,7 +149,7 @@ impl StoredBlob {
         }
     }
 
-    /// Buffer the whole body (manifest documents, icons — never world blobs).
+    /// Buffer the whole body (manifest documents, icons; never world blobs).
     pub async fn into_bytes(self) -> HttpResult<Bytes> {
         let mut out = Vec::with_capacity(self.size.unwrap_or(0).max(0) as usize);
         let mut body = self.body;
@@ -266,8 +266,8 @@ pub trait ResumableUploadCapable: Send + Sync {
 }
 
 /// Optional provider capability behind account unlink / account deletion:
-/// enumerate everything the app holds for an account — including files that
-/// lost their `storage_objects` row — and revoke the app's OAuth access.
+/// enumerate everything the app holds for an account, including files that
+/// lost their `storage_objects` row, and revoke the app's OAuth access.
 #[async_trait]
 pub trait AccountCleanupCapable: Send + Sync {
     /// One page of provider file ids for the bound account's app data.
@@ -300,7 +300,7 @@ pub trait TransferPresigner: Send + Sync {
 
 #[async_trait]
 pub trait StorageProvider: Send + Sync {
-    /// The default provider for new unlinked worlds — NOT necessarily the
+    /// The default provider for new unlinked worlds; NOT necessarily the
     /// provider a given binding routes to.
     fn provider(&self) -> StorageProviderType;
     async fn exists(&self, binding: &StorageBinding, storage_key: &str) -> HttpResult<bool>;

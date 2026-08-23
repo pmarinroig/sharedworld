@@ -889,7 +889,7 @@ public final class SharedWorldModels {
     }
 
     /**
-     * Presence heartbeat response. Only the pacing suggestion is consumed —
+     * Presence heartbeat response. Only the pacing suggestion is consumed;
      * older clients never parsed this body at all, so every field is additive.
      */
     public record PresenceHeartbeatResponseDto(
@@ -903,9 +903,9 @@ public final class SharedWorldModels {
 
     /**
      * The merged guest beat (0.4.1 backend): a FLAT superset of the presence
-     * ack carrying the resolved runtime status (minus its updatedAt — the
+     * ack carrying the resolved runtime status (minus its updatedAt; the
      * presence ack owns that name) plus the latest snapshot id. One call
-     * replaces the old runtime poll, presence beat, and snapshot-id check —
+     * replaces the old runtime poll, presence beat, and snapshot-id check;
      * used only for reconnect resync, push-triggered probes, and the
      * disconnected fallback lane.
      */

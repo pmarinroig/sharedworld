@@ -1,5 +1,5 @@
 -- 0028: GC retry queue. Blob deletes that fail against the provider (Drive
--- 429/5xx) used to be dropped on the floor permanently — the unreferenced-key
+-- 429/5xx) used to be dropped on the floor permanently; the unreferenced-key
 -- computation only ever runs once, at snapshot deletion time. Failed deletes
 -- now enqueue here and are retried by a bounded opportunistic sweep on the
 -- upload-session and retention paths (no cron exists; all sweeps are

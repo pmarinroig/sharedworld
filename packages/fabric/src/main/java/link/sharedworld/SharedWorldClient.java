@@ -121,7 +121,7 @@ public final class SharedWorldClient {
                 // the 5-minute safety-net cadence would otherwise be the only
                 // way a host learns its world vanished; a runtime push whose
                 // payload contradicts our own hosting state (foreign host or
-                // epoch, non-hosting phase) is probed the same way — the
+                // epoch, non-hosting phase) is probed the same way; the
                 // heartbeat's 409/403/404 remains the verdict.
                 if (("settings-changed".equals(event.kind())
                         || "membership-changed".equals(event.kind())
@@ -234,14 +234,14 @@ public final class SharedWorldClient {
         }
         if (session == null && client.getConnection() == null) {
             // The keyed lookup missed (connection-key mismatch on a deferred
-            // DISCONNECT), but no newer connection took over — so whatever
+            // DISCONNECT), but no newer connection took over, so whatever
             // session the tracker still holds belongs to the world that just
             // closed. Without this fallback that session became a ZOMBIE:
             // presence was never withdrawn (the player stayed on rosters)
             // and a later runtime-changed push could auto-host the player
-            // from the world list screen. The key guard's real purpose —
-            // an old connection's disconnect must not tear down a NEW live
-            // session — is preserved by the getConnection() == null check.
+            // from the world list screen. The key guard's real purpose
+            // (an old connection's disconnect must not tear down a NEW live
+            // session) is preserved by the getConnection() == null check.
             session = PLAY_SESSION_TRACKER.currentSession();
         }
         presenceManager.onDisconnect(session);
@@ -291,7 +291,7 @@ public final class SharedWorldClient {
 
     /**
      * Safety net for guest-session ends that fire NO event at all (neither
-     * the intent mixin nor the PLAY disconnect — e.g. the host dying behind a
+     * the intent mixin nor the PLAY disconnect; e.g. the host dying behind a
      * relay that never closes the local channel). The client is the authority
      * on whether a connection exists; a tracked guest session with no
      * connection and no level for two seconds is dead, and it ends through
@@ -388,7 +388,7 @@ public final class SharedWorldClient {
      * Account deletion, final step: stop everything that could silently
      * re-authenticate (a fresh handshake would recreate the just-deleted
      * account), forget in-memory state, and delete every SharedWorld file on
-     * this machine — config JSONs and the whole game-dir tree, playable world
+     * this machine; config JSONs and the whole game-dir tree, playable world
      * copies included. Deliberately re-entering the SharedWorld UI afterwards
      * starts over like a fresh install.
      */

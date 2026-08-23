@@ -78,7 +78,7 @@ pub struct Config {
     /// `S3_LINK_ENABLED`: ops kill switch for the S3 bring-your-own-bucket
     /// link flow (the browser form and new s3 link sessions).
     pub s3_link_enabled: bool,
-    /// `ALLOW_INSECURE_S3_ENDPOINT`: dev/test only — accept http:// and
+    /// `ALLOW_INSECURE_S3_ENDPOINT`: dev/test only; accept http:// and
     /// private-network S3 endpoints (local MinIO).
     pub allow_insecure_s3_endpoint: bool,
     /// Testkit routes enabled (requires the `testkit` feature too).

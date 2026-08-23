@@ -11,7 +11,7 @@ import link.sharedworld.host.SharedWorldHostPermissionPolicy;
  * Pure authorization and name-resolution rules for SharedWorld's in-game
  * commands. Backend-mutating commands (/op, /deop, /ban) execute on the host's
  * machine with the host's backend credentials, so the backend can only honor
- * them when the host IS the owner — hence the double check here.
+ * them when the host IS the owner; hence the double check here.
  */
 public final class SharedWorldCommandGuards {
     private SharedWorldCommandGuards() {

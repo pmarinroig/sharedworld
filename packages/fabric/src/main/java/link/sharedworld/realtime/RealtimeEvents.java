@@ -9,7 +9,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * Main-thread dispatch hub for pushed realtime events. The channel feeds it
  * (already on the main thread); consumers subscribe once at init. Connection
  * state is exposed so consumers stretch their polling fallbacks while
- * connected — push accelerates polling, it never replaces its correctness.
+ * connected; push accelerates polling, it never replaces its correctness.
  */
 public final class RealtimeEvents {
     private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger("sharedworld");
@@ -28,7 +28,7 @@ public final class RealtimeEvents {
 
     /**
      * Monotonic count of dispatched events. Screens compare it against the
-     * value they saw at their last refresh instead of subscribing — no
+     * value they saw at their last refresh instead of subscribing; no
      * per-screen listener lifecycle to leak.
      */
     public long eventCount() {

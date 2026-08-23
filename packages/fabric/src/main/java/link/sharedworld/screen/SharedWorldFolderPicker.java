@@ -7,7 +7,7 @@ import java.nio.file.Path;
 
 /**
  * Native pick-a-folder dialog. Like the icon picker, tinyfd blocks the calling
- * (render) thread until the dialog closes — acceptable for an explicit user
+ * (render) thread until the dialog closes; acceptable for an explicit user
  * action on a menu screen.
  */
 final class SharedWorldFolderPicker {

@@ -3,7 +3,7 @@
 //! Two variants from one canonical core: header auth for the box's own
 //! bucket calls (streaming-friendly via `UNSIGNED-PAYLOAD`), and query-string
 //! presigning for direct client PUT/GET. Hand-rolled on the hmac/sha2 crates
-//! already in the tree — the AWS SDKs would drag in a whole second HTTP stack
+//! already in the tree; the AWS SDKs would drag in a whole second HTTP stack
 //! for four request shapes. Path-style addressing only.
 
 use hmac::digest::KeyInit;
@@ -144,7 +144,7 @@ pub fn presign(method: &str, target: &S3Target, creds: &S3Creds, expires_secs: i
 }
 
 /// Presign with additional (already AWS-encoded, `k=v&k=v`) query parameters
-/// merged into the canonical query — ListObjectsV2 and friends.
+/// merged into the canonical query; ListObjectsV2 and friends.
 pub fn presign_with_extra_query(
     method: &str,
     target: &S3Target,
@@ -213,7 +213,7 @@ mod tests {
     }
 
     /// The exact worked example from AWS's "Authenticating Requests: Using
-    /// Query Parameters (AWS Signature Version 4)" S3 documentation —
+    /// Query Parameters (AWS Signature Version 4)" S3 documentation;
     /// virtual-hosted examplebucket/test.txt, 24h expiry, 20130524T000000Z.
     #[test]
     fn presign_reproduces_aws_conformance_vector() {
@@ -249,7 +249,7 @@ mod tests {
         };
         let url = presign("GET", &target, &creds, 86400, test_now());
         // The AWS example is virtual-hosted (bucket in host); ours is
-        // path-style, so the signature differs — but every query component
+        // path-style, so the signature differs, but every query component
         // and the URI shape must match the spec exactly.
         assert!(url.starts_with("https://s3.amazonaws.com/examplebucket/test.txt?"));
         assert!(url.contains("X-Amz-Algorithm=AWS4-HMAC-SHA256"));

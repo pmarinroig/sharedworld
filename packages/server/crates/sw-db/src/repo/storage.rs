@@ -358,7 +358,7 @@ impl Repository {
             .await
     }
 
-    /// Which of the given keys have object rows — one batched query.
+    /// Which of the given keys have object rows; one batched query.
     pub async fn list_existing_storage_keys(
         &self,
         provider: StorageProviderType,

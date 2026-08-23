@@ -238,7 +238,7 @@ public final class WorldSyncCoordinator {
 
     /**
      * True when the working copy's packs differ from the hashes recorded at
-     * its last sync or upload — i.e. it holds progress no published snapshot
+     * its last sync or upload; i.e. it holds progress no published snapshot
      * has. Answered from the scan cache when nothing changed (no pack bodies
      * are built for cached packs); a missing sidecar counts as changed, the
      * conservative answer for a decision about overwriting local data.
@@ -360,7 +360,7 @@ public final class WorldSyncCoordinator {
         boolean shardedLocal = !localSuperpackShards.isEmpty();
         // Artifacts are lazy: descriptors answer the plan request, and a body
         // is only built if the plan actually bases a delta on the state this
-        // client just reported (rare — a stale or missing cached baseline).
+        // client just reported (rare; a stale or missing cached baseline).
         List<WorldSyncSupport.LazyArtifact> localRegionBundles = new ArrayList<>(WorldSyncSupport.lazyRegionBundleArtifacts(localRegionFiles, scanCache));
         if (shardedLocal) {
             localRegionBundles.addAll(WorldSyncSupport.lazyGroupedArtifacts(localSuperpackShards, scanCache));
@@ -711,7 +711,7 @@ public final class WorldSyncCoordinator {
         boolean canUseDelta = upload.deltaStorageKey() != null
                 // 0.4.0 clients write v2 deltas only, into delta2 slots the
                 // backend offers to capable clients; an old backend (field
-                // absent) gets full artifacts — no v1 writer remains.
+                // absent) gets full artifacts; no v1 writer remains.
                 && Integer.valueOf(2).equals(upload.deltaFormatVersion())
                 && upload.baseHash() != null
                 && upload.baseSnapshotId() != null

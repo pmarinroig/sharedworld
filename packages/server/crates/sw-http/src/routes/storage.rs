@@ -360,7 +360,7 @@ fn render_storage_form_page(status: u16, inner: &str) -> Response {
     resp
 }
 
-/// The browser-facing result page for the Google Drive link callback — the
+/// The browser-facing result page for the Google Drive link callback; the
 /// only HTML the backend serves (`router/link-result-page.ts`).
 pub fn render_storage_link_page(
     status: u16,

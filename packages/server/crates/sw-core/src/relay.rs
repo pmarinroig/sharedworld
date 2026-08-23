@@ -5,7 +5,7 @@
 //! access token sealed with AES-256-GCM (nonce‖ciphertext, AAD = file id)
 //! under a key only the box and the worker hold. The box signs with an
 //! Ed25519 key; the worker holds only the public half (a worker compromise
-//! cannot mint upload authority — `SIGNING_SECRET` never leaves the box).
+//! cannot mint upload authority; `SIGNING_SECRET` never leaves the box).
 
 use std::collections::HashMap;
 use std::sync::Arc;

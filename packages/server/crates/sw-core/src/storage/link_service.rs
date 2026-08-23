@@ -100,7 +100,7 @@ pub struct S3LinkForm {
 }
 
 /// SSRF guard for the user-supplied endpoint: https only, origin only (no
-/// path/query/credentials), and no obviously-internal hosts — unless the dev
+/// path/query/credentials), and no obviously-internal hosts; unless the dev
 /// flag allows local MinIO. Returns the normalized origin.
 pub fn validate_s3_endpoint(raw: &str, allow_insecure: bool) -> Result<String, String> {
     let trimmed = raw.trim().trim_end_matches('/');
@@ -638,7 +638,7 @@ impl StorageLinkService {
                 super::super::service::signer::url_encode(state)
             );
         }
-        // No `profile`: the account's display name is PII we never use — the
+        // No `profile`: the account's display name is PII we never use; the
         // email (from the `email` scope) is the only human-readable handle.
         let scope = self
             .config

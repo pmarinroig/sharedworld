@@ -11,7 +11,7 @@ import java.util.function.LongSupplier;
  *
  * Authority rule (the zombie-session invariant):
  * A tracked session must always describe the CURRENT connection. The fabric
- * PLAY DISCONNECT event is a best-effort input, not the authority — on relayed
+ * PLAY DISCONNECT event is a best-effort input, not the authority; on relayed
  * transports (e4mc dialtone, observed on 26.x) the underlying channel can stay
  * open after a manual quit and the event never fires. Every lifecycle boundary
  * therefore re-establishes the invariant itself: a new PLAY join evicts any

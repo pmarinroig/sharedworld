@@ -2,7 +2,7 @@
 -- back the scans that the per-statement FullscanStep metric flagged under
 -- load: the per-login expired-session sweep, per-world invite lookups and
 -- resets, the hourly challenge prune, and the GC drain's due-scan. Plain
--- indexes only — the database stays exportable back to D1 unchanged.
+-- indexes only; the database stays exportable back to D1 unchanged.
 CREATE INDEX IF NOT EXISTS idx_user_sessions_expires ON user_sessions (expires_at);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_player ON user_sessions (player_uuid);
 CREATE INDEX IF NOT EXISTS idx_invite_codes_world_status_created ON invite_codes (world_id, status, created_at);

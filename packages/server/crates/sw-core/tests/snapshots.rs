@@ -94,7 +94,7 @@ fn full_pack(pack_id: &str, hash: &str, storage_key: &str) -> SnapshotPack {
     }
 }
 
-/// v1 delta pack (no `deltaFormatVersion`) — the legacy chain shape.
+/// v1 delta pack (no `deltaFormatVersion`); the legacy chain shape.
 fn delta_pack_v1(
     pack_id: &str,
     hash: &str,
@@ -351,7 +351,7 @@ async fn a_failed_document_write_falls_back_to_row_manifests() {
         "2026-01-01T01:00:00.000Z",
     )
     .await;
-    // The snapshot still landed — as legacy member rows.
+    // The snapshot still landed; as legacy member rows.
     assert_eq!(manifest_storage_key(&env, &manifest.snapshot_id).await, None);
     assert_eq!(member_row_count(&env, &manifest.snapshot_id).await, 2);
     let served = snapshots::latest_manifest(&env.svc, &owner(), &world.id).await.unwrap().unwrap();
@@ -675,7 +675,7 @@ async fn a_carried_forward_pack_survives_its_base_snapshot_row() {
     let s3_headers = env.repo.get_snapshot_headers(&world.id, &s3.snapshot_id).await.unwrap().unwrap();
     assert_eq!(s3_headers.packs[0].chain_steps.as_ref().unwrap().len(), 2);
 
-    // The base row goes away (a manual backup delete — allowed for stamped
+    // The base row goes away (a manual backup delete; allowed for stamped
     // referrers since S1).
     env.repo.delete_snapshots(&world.id, std::slice::from_ref(&s1.snapshot_id)).await.unwrap();
     assert!(env.repo.get_snapshot_headers(&world.id, &s1.snapshot_id).await.unwrap().is_none());

@@ -16,7 +16,7 @@ import java.util.concurrent.CompletableFuture;
  * The quit-time upload failed because the Google Drive grant is dead. The
  * lifecycle router parks navigation on the release error screen until the
  * upload is resolved, which makes the usual repair path (SettingsScreen's
- * Reconnect button) unreachable — so the same forced-consent OAuth round
+ * Reconnect button) unreachable, so the same forced-consent OAuth round
  * (see SettingsScreen#onReconnectPressed) runs right here, and a successful
  * reconnect retries the upload immediately.
  */

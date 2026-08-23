@@ -406,8 +406,8 @@ final class DownloadPlanApplier {
     }
 
     /**
-     * One bundle's full pipeline — download/reconstruct, whole-artifact hash
-     * check, extract, per-file hash check — self-cleaning on failure so a
+     * One bundle's full pipeline; download/reconstruct, whole-artifact hash
+     * check, extract, per-file hash check; self-cleaning on failure so a
      * sibling task's crash never strands this task's temps.
      */
     private DownloadedBundle downloadAndExtractBundle(DownloadPackPlanDto bundle, int fileIndex) throws IOException, InterruptedException {

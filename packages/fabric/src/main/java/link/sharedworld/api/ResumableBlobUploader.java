@@ -23,7 +23,7 @@ import java.util.concurrent.ExecutionException;
  * Chunked resumable upload against a provider session URI (Google Drive
  * shape): PUT chunks with {@code Content-Range: bytes s-e/total}, a 308
  * answer's {@code Range} header is the server's high-water mark, the final
- * chunk answers 200/201. No SharedWorld credential is ever attached — the
+ * chunk answers 200/201. No SharedWorld credential is ever attached; the
  * session URI is the credential.
  *
  * <p>Owns its retry classification: Drive 429/5xx and transport breaks
@@ -53,7 +53,7 @@ public final class ResumableBlobUploader {
     }
 
     /**
-     * Thrown when Google refuses the bytes because the Drive is FULL — a
+     * Thrown when Google refuses the bytes because the Drive is FULL; a
      * terminal user condition. Retrying cannot help (pre-0.4.2 this burned
      * the whole 5-attempt ladder against it), so it aborts the transfer
      * immediately and carries a code the autosave classifier recognizes.
@@ -251,7 +251,7 @@ public final class ResumableBlobUploader {
         @Override
         public void close() {
             // Marks the stream aborted (stall watchdog) without closing the
-            // shared channel — later chunks and retries still need it.
+            // shared channel; later chunks and retries still need it.
             this.closed = true;
         }
     }

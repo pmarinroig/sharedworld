@@ -27,7 +27,7 @@ base {
 // One source tree builds one jar per Minecraft "bucket": a range of Minecraft versions that
 // share the same API surface for everything SharedWorld touches. Version-specific code lives
 // in src/versioned/<bucket>/ and is swapped in per build. Select with -PsharedworldMcBucket=.
-// The bucket matrix lives in buckets.json — the single source of truth shared with the
+// The bucket matrix lives in buckets.json; the single source of truth shared with the
 // modern project and the workspace verify scripts.
 def bucketConfig = new groovy.json.JsonSlurper().parse(file("buckets.json"))
 def mcBuckets = bucketConfig.buckets.findAll { it.project == "classic" }.collectEntries {
@@ -481,7 +481,7 @@ tasks.named("test").configure {
     }
     // Private tmpdir per test JVM: the temp-leak tests snapshot
     // java.io.tmpdir for sharedworld-* entries, and the release gate runs
-    // the classic and modern lanes' test JVMs concurrently — a shared OS
+    // the classic and modern lanes' test JVMs concurrently; a shared OS
     // tmpdir makes those snapshots race the other lane's temp churn.
     def testTmpDir = layout.buildDirectory.dir("test-tmpdir").get().asFile
     doFirst { testTmpDir.mkdirs() }

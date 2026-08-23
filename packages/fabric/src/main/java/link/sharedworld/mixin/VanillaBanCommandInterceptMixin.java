@@ -14,7 +14,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 /**
  * Vanilla registers /ban only on dedicated servers, but e4mc's
  * "restoreDedicatedCommands" brings it back on integrated ones, where it can
- * kick any target — the hosting player included — and stores bans in a local
+ * kick any target, the hosting player included, and stores bans in a local
  * banned-players.json that outlives the session. While a shared world is
  * hosted, execution reroutes to SharedWorld's membership ban (same guards and
  * feedback as the /ban literal SharedWorld registers itself); other sessions

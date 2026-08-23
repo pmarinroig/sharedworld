@@ -146,7 +146,7 @@ async fn presigned_urls_work_end_to_end_without_backend_auth() {
     let ctx = presigner.presign_context(&f.binding).await.unwrap();
 
     // A bare reqwest client (no bearer, no SigV4 headers) PUTs and GETs via
-    // the query-auth URLs — exactly what the mod does with SignedBlobUrlDto.
+    // the query-auth URLs; exactly what the mod does with SignedBlobUrlDto.
     let client = reqwest::Client::new();
     let put = ctx.presign_put("packs/full/aa/aaaa.pack");
     assert!(put.url.contains("X-Amz-Signature="));

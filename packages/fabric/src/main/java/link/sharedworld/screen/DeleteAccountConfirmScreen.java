@@ -6,8 +6,8 @@ import net.minecraft.network.chat.Component;
 
 /**
  * The last stop before full account deletion. The copy is deliberately blunt:
- * it enumerates exactly what is destroyed — including the local playable world
- * copies — and the red-flag button needs a second click to fire.
+ * it enumerates exactly what is destroyed, including the local playable world
+ * copies, and the red-flag button needs a second click to fire.
  */
 public final class DeleteAccountConfirmScreen extends link.sharedworld.versioned.VersionedScreen {
     private final SettingsScreen parent;

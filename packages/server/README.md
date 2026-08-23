@@ -2,7 +2,7 @@
 
 The self-hosted SharedWorld backend: a 1:1 port of the Cloudflare worker in
 `../backend` (same routes, bodies, error codes, WebSocket frames, SQL schema and
-migrations) running on one box with SQLite. Clients cannot tell the two apart —
+migrations) running on one box with SQLite. Clients cannot tell the two apart;
 the Java integration suite and the two-client e2e run unchanged against either.
 
 ```

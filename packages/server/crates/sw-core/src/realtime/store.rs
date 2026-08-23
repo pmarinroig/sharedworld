@@ -1,6 +1,6 @@
 //! Coordinator store + effects seams (`CoordinatorStore`/`CoordinatorEffects`).
 //!
-//! The store is synchronous (single-threaded per world by construction —
+//! The store is synchronous (single-threaded per world by construction;
 //! the actor serializes calls). [`KvStore`] mirrors the DO's kv table
 //! exactly (same keys, same JSON shapes) so a coordinator dump from the
 //! worker imports as-is; persistence is flushed by the actor after each
@@ -271,6 +271,6 @@ pub trait CoordinatorEffects: Send + Sync {
     /// returns whether the host's socket is connected now.
     async fn set_host_watch(&self, world_id: &str, host_uuid: &str, watching: bool) -> bool;
     /// Last keepalive seen on the host's socket. `Err` = probe failed
-    /// (callers skip expiry — never forfeit a possibly healthy host).
+    /// (callers skip expiry; never forfeit a possibly healthy host).
     async fn probe_host_reachability(&self, host_uuid: &str) -> Result<Option<Instant>, crate::HttpError>;
 }

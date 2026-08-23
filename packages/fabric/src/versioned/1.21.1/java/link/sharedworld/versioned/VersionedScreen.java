@@ -92,7 +92,7 @@ public abstract class VersionedScreen extends Screen {
 
     /**
      * 1.21/1.21.1 render the background (panorama + blur + menu gradient) INSIDE
-     * Screen.render, after any content the subclass drew first — blurring that
+     * Screen.render, after any content the subclass drew first; blurring that
      * content. ScreenBackdropCompat draws the backdrop before render() instead,
      * and this override suppresses the vanilla mid-render pass.
      */

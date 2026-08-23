@@ -33,7 +33,7 @@ public abstract class VersionedSelectionList<E extends ObjectSelectionList.Entry
 
     /**
      * Vanilla derives the scrollbar x from the centered-row geometry, which for
-     * SharedWorld's near-full-width rows lands past the widget's right edge —
+     * SharedWorld's near-full-width rows lands past the widget's right edge;
      * rendering the bar outside the bounds that mouse clicks are hit-tested
      * against, so it could never be dragged. Pin it just inside the right edge.
      */

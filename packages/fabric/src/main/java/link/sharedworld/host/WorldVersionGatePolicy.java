@@ -5,7 +5,7 @@ package link.sharedworld.host;
  * snapshot was written by a NEWER Minecraft must not be opened by an older client (vanilla
  * would downgrade-corrupt it); older snapshots are fine because vanilla upgrades them.
  * Guests joining a live host on a different Minecraft version cannot connect anyway
- * (protocol mismatch) — the gate exists to say so clearly before vanilla's cryptic error.
+ * (protocol mismatch); the gate exists to say so clearly before vanilla's cryptic error.
  */
 public final class WorldVersionGatePolicy {
     private WorldVersionGatePolicy() {

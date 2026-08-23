@@ -212,7 +212,7 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
     /**
      * A child screen finished an operation. The outcome is already visible in
      * the list itself (a row appears, disappears, or gets selected), so no
-     * textual confirmation is shown — just land with the affected world
+     * textual confirmation is shown; just land with the affected world
      * selected so the action buttons are live instead of greyed out.
      */
     public void onChildOperationFinished(String message, String selectWorldId) {
@@ -414,7 +414,7 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
 
     private long autoRefreshIntervalMs() {
         // While the realtime channel is connected, changes arrive as pushes
-        // and the timer is only a safety net — stretch it well out.
+        // and the timer is only a safety net; stretch it well out.
         if (SharedWorldClient.realtimeEvents().isConnected()) {
             return AUTO_REFRESH_PUSH_FALLBACK_MS;
         }

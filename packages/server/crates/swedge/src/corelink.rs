@@ -234,7 +234,7 @@ impl CoreLink {
             protocol: PROTOCOL_VERSION,
             edge_version: env!("CARGO_PKG_VERSION").into(),
         });
-        // Replay every open socket (core restart) — including those whose
+        // Replay every open socket (core restart), including those whose
         // open was still pending: they are re-opened as fresh WsOpen.
         let snapshot: Vec<(ConnId, Arc<ConnState>)> =
             self.conns.lock().iter().map(|(k, v)| (*k, v.clone())).collect();

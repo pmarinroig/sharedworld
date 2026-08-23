@@ -14,7 +14,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  *
  * On 26.1 window creation moved to the static Window.createGlfwWindow (the
  * GPU backend supplies the context hints), the window is still created
- * visible, and nothing calls glfwShowWindow later — so hinting
+ * visible, and nothing calls glfwShowWindow later, so hinting
  * GLFW_VISIBLE=false right before glfwCreateWindow keeps it hidden for the
  * process lifetime.
  */

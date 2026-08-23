@@ -38,8 +38,8 @@ public final class SharedWorldPack {
     }
 
     /**
-     * Describes the pack these files would build — same id, hash, size, and
-     * manifest as {@link #buildPack} — without writing any bytes. The size
+     * Describes the pack these files would build (same id, hash, size, and
+     * manifest as {@link #buildPack}) without writing any bytes. The size
      * comes from the deterministic layout math (sorted entries, declared
      * sizes, fixed alignment); the hash must be supplied by a caller that
      * already knows it (the scan cache keyed by member fingerprint).
@@ -132,7 +132,7 @@ public final class SharedWorldPack {
     /**
      * Header offsets were computed from the scanned size before any bytes were
      * copied, so a file that changes size mid-pack would silently corrupt every
-     * later entry's offset — that mismatch must abort the pack.
+     * later entry's offset; that mismatch must abort the pack.
      */
     private static void writeEntryBody(DataOutputStream output, PackEntryData entry) throws IOException {
         if (entry.overrideBytes() != null) {

@@ -16,7 +16,7 @@ import net.neoforged.neoforge.event.RegisterCommandsEvent;
 
 /**
  * The NeoForge entrypoint: a thin shim that initializes the loader-neutral
- * core and wires NeoForge's events to it — the mirror of the Fabric
+ * core and wires NeoForge's events to it; the mirror of the Fabric
  * SharedWorldFabricClient. The core initializes inside FMLClientSetupEvent
  * (Minecraft.getInstance() is reliably usable there), and the game-bus
  * listeners register only after init so no tick can observe a half-built core.

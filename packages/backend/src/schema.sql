@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS snapshots (
   minecraft_version TEXT,
   -- 0026 pack directory: the snapshot's pack HEADERS as a JSON array
   -- (incl. membersSnapshotId + memberCount/memberTotalSize). NULL only on
-  -- rows written by pre-0026 workers — readers fall back to snapshot_packs.
+  -- rows written by pre-0026 workers; readers fall back to snapshot_packs.
   packs_json TEXT,
   -- 0026 finalize-time aggregates over the snapshot's loose (non-pack) files.
   loose_file_count INTEGER,
@@ -243,7 +243,7 @@ CREATE INDEX IF NOT EXISTS idx_snapshots_manifest_storage_key
   ON snapshots (manifest_storage_key)
   WHERE manifest_storage_key IS NOT NULL;
 
--- 0028: GC retry queue — failed provider deletes retried by bounded
+-- 0028: GC retry queue: failed provider deletes retried by bounded
 -- opportunistic sweeps (rows dropped without deleting if re-referenced).
 CREATE TABLE IF NOT EXISTS pending_blob_deletes (
   provider TEXT NOT NULL,

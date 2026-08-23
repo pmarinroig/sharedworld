@@ -16,7 +16,7 @@ import java.util.concurrent.CompletableFuture;
 /**
  * Runs the whole account deletion: every world first (backups round by round,
  * exactly like the single-world delete flow), then the bounded DELETE /account
- * loop, then the local wipe. Deliberately unescapable — a half-deleted account
+ * loop, then the local wipe. Deliberately unescapable; a half-deleted account
  * is resumable, but wandering off mid-flow helps nobody.
  */
 public final class DeleteAccountProgressScreen extends link.sharedworld.versioned.VersionedScreen {

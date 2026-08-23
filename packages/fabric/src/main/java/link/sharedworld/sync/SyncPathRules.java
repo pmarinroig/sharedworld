@@ -43,7 +43,7 @@ public final class SyncPathRules {
 
     /**
      * Splits the non-region file set into capped shard groups, or returns an
-     * empty list when the whole set fits in one pack — the single "non-region"
+     * empty list when the whole set fits in one pack; the single "non-region"
      * superpack then stays wire-identical to pre-0.3.1 clients. Grouping is by
      * top-level directory (root files form one group) with deterministic
      * midpoint splits, so unchanged shards keep their ids and hashes across

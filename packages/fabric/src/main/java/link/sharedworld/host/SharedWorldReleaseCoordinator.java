@@ -1459,7 +1459,7 @@ public final class SharedWorldReleaseCoordinator {
      * result must be dropped. Releasing the taskInFlight mutex is NOT part of
      * that staleness decision: a parked (ERROR_RECOVERABLE) or closed attempt
      * only ignores the task's effects. Holding the mutex there would wedge the
-     * attempt with no task in flight and no way to schedule another — a
+     * attempt with no task in flight and no way to schedule another; a
      * restored ERROR_RECOVERABLE record's activation-time reconciliation
      * always completes while parked, so it would freeze retry forever.
      */

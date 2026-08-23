@@ -842,7 +842,7 @@ final class SharedWorldHostingManagerTest {
         manager.setRealtimeConnectedSupplier(() -> true);
 
         manager.requestImmediateHeartbeat();
-        // 5s after the last heartbeat: well inside the base cadence — the
+        // 5s after the last heartbeat: well inside the base cadence; the
         // immediate trigger must bypass it (only retry pacing applies).
         driveLiveLease.invoke(manager, 1_005_000L);
         assertEquals(1, background.size());

@@ -10,7 +10,7 @@ import java.util.concurrent.Executor;
 /**
  * Guest presence, socket-native (0.4.1): while the realtime channel is
  * healthy the guest sends a single world-presence frame on session start and
- * after every reconnect — the socket itself is the liveness, so there is NO
+ * after every reconnect; the socket itself is the liveness, so there is NO
  * periodic beat at all. The merged HTTP beat (presence POST answering with
  * runtime + lastSnapshotId) survives as exactly three things: the reconnect
  * resync, the push-triggered kick/deletion probe (403/404 stay the only

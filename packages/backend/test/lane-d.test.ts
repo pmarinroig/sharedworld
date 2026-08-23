@@ -147,7 +147,7 @@ describe("lane-d app", () => {
 });
 
 describe("worker entry", () => {
-  test("createApp refuses anything but lane-d — the legacy backend is retired", () => {
+  test("createApp refuses anything but lane-d; the legacy backend is retired", () => {
     expect(() => createApp({} as unknown as Env)).toThrow(/lane-d/);
   });
 });

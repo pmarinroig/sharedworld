@@ -163,8 +163,8 @@ public final class ManagedWorldStore {
      * once the session's final upload lands. While it exists, the working
      * copy may hold progress that no backup has, so a later host start must
      * publish it (or ask) before the download sync is allowed to overwrite
-     * it. Lives in the world container — never inside the working copy,
-     * which is scanned and uploaded whole — and outside the mod's config
+     * it. Lives in the world container; never inside the working copy,
+     * which is scanned and uploaded whole, and outside the mod's config
      * directory, so it survives reinstalls and "delete the config" advice.
      */
     public record LocalChangesMarker(String hostPlayerUuid, String since) {
@@ -296,8 +296,8 @@ public final class ManagedWorldStore {
     }
 
     /**
-     * The capture mirror is persistent by design — it is what makes the next
-     * capture incremental — so the post-upload cleanup hook leaves it alone
+     * The capture mirror is persistent by design; it is what makes the next
+     * capture incremental, so the post-upload cleanup hook leaves it alone
      * while still disposing of any legacy one-shot staging directory.
      */
     public void deleteSnapshotStagingCopy(Path stagingDirectory) throws IOException {

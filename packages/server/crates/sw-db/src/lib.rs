@@ -1,6 +1,6 @@
 //! SQLite persistence for SharedWorld: connection pool with a single writer
 //! thread, instrumented statements, migrations, and the repository (a port
-//! of the worker's `d1-repository.ts` — same SQL, same semantics).
+//! of the worker's `d1-repository.ts`; same SQL, same semantics).
 
 pub mod collate;
 pub mod error;

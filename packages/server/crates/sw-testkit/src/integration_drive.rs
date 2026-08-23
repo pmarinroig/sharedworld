@@ -1,5 +1,5 @@
 //! `IntegrationDriveProvider`: port of the Bun harness's
-//! `FakeGoogleDriveStorageProvider` — a resumable-capable stand-in for Google
+//! `FakeGoogleDriveStorageProvider`; a resumable-capable stand-in for Google
 //! Drive whose session URLs point back at the backend's own
 //! `/__fake-drive/upload/:id` endpoint (faithful 308/Range/`bytes */N`
 //! semantics), with memory or disk-backed blob bytes and the
@@ -50,7 +50,7 @@ struct FakeSession {
 
 /// E2E failure injection (`POST /__test/drive-mode`): which Drive failure
 /// every storage *operation* (put, session create, register, chunk PUT)
-/// reports. Deliberately NOT wired into `quota()` — the quota preflight is
+/// reports. Deliberately NOT wired into `quota()`; the quota preflight is
 /// 15-min cached server-side, which would make injected failures racy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DriveFailKind {

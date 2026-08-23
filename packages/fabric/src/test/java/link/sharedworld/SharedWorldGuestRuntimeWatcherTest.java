@@ -10,7 +10,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * Socket-native watcher: no polling — observations arrive as pushed runtime
+ * Socket-native watcher: no polling; observations arrive as pushed runtime
  * payloads or merged-beat runtime slices, all funneled through the same
  * departure-verdict logic. These tests pin the semantics the old poll suite
  * pinned: departure only on authoritative observations, one-shot per

@@ -16,7 +16,7 @@ import link.sharedworld.api.SharedWorldModels.WorldRuntimeStatusDto;
  * backend state that can never revert to "this epoch is live again".
  *
  * Stale-work rule:
- * Anything ambiguous (missing status, unknown phase) stays CONTINUE — only the vanilla
+ * Anything ambiguous (missing status, unknown phase) stays CONTINUE; only the vanilla
  * connection remains the backstop there. A departure must never be inferred from a guess.
  *
  * Authority source:

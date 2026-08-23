@@ -154,7 +154,7 @@ final class SharedWorldPlaySessionTrackerTest {
      * The 26.x dialtone story: a manual guest leave whose PLAY disconnect
      * event never fires (the relay channel stays open) must not survive into
      * the next session. The new connection reaching PLAY is itself proof the
-     * old session is dead — it gets evicted right there, before the hosting
+     * old session is dead; it gets evicted right there, before the hosting
      * registration, so an unkeyed reader (the runtime watcher) can never see
      * the stale guest session inside the new hosting's startup window.
      */

@@ -8,7 +8,7 @@ import java.util.Optional;
  * behind this interface, so the whole client core compiles for Fabric and
  * NeoForge alike. Each loader's jar ships exactly one implementation
  * ({@link FabricPlatform} on Fabric, NeoForgePlatform on NeoForge) and the
- * holder finds it by probing the class names — no ordering requirement, which
+ * holder finds it by probing the class names; no ordering requirement, which
  * matters because the mixin config plugin runs before any mod entrypoint.
  */
 public interface SharedWorldPlatform {

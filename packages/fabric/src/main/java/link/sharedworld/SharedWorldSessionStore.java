@@ -79,7 +79,7 @@ public final class SharedWorldSessionStore implements SharedWorldApiClient.Sessi
 
     /**
      * Account deletion: drop every persisted session from memory without
-     * rewriting the file — the file itself is deleted right after, and a save
+     * rewriting the file; the file itself is deleted right after, and a save
      * here would resurrect it.
      */
     public synchronized void resetForAccountDeletion() {
@@ -96,7 +96,7 @@ public final class SharedWorldSessionStore implements SharedWorldApiClient.Sessi
      * A malformed or missing expiry means the entry is unusable. Wall-clock
      * expiry is deliberately NOT checked (here or in the ApiClient): the
      * server is the authority on token lifetime, and trusting the local clock
-     * made a skewed clock silently drop (or refuse to save) every session —
+     * made a skewed clock silently drop (or refuse to save) every session;
      * forcing a full Mojang handshake per launch or per call.
      */
     private static boolean hasUsableExpiry(SessionTokenDto session) {
