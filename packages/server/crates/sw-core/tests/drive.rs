@@ -219,6 +219,10 @@ impl Fixture {
                 access_token: Some("valid-access-token".into()),
                 refresh_token: Some("refresh-token-1".into()),
                 token_expires_at: Some(token_expires_at),
+                s3_endpoint: None,
+                s3_region: None,
+                s3_bucket: None,
+                s3_key_prefix: None,
                 created_at: "2000-01-01T00:00:00.000Z".into(),
                 updated_at: "2000-01-01T00:00:00.000Z".into(),
             })

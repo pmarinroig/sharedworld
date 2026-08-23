@@ -26,6 +26,12 @@ google_oauth_client_secret = "CHANGE-ME"
 google_oauth_redirect_uri = "https://api.sharedworld.example/storage/google/callback"
 google_oauth_scopes = "openid email https://www.googleapis.com/auth/drive.appdata"
 
+# S3 bring-your-own-bucket linking (0.5.0). The form page needs
+# public_base_url; the endpoint validation refuses http/private hosts unless
+# allow_insecure_s3_endpoint (dev only) is set.
+s3_link_enabled = true
+# allow_insecure_s3_endpoint = false
+
 # Relay worker pacing / body limit (advertised to clients).
 upload_max_body_bytes = 95000000
 suggested_autosave_interval_ms = 600000

@@ -75,6 +75,12 @@ pub struct Config {
     /// Box-only: local filesystem blob root when `active_storage_provider` is `r2`
     /// (the fs provider stands in for R2).
     pub fs_blob_root: Option<PathBuf>,
+    /// `S3_LINK_ENABLED`: ops kill switch for the S3 bring-your-own-bucket
+    /// link flow (the browser form and new s3 link sessions).
+    pub s3_link_enabled: bool,
+    /// `ALLOW_INSECURE_S3_ENDPOINT`: dev/test only — accept http:// and
+    /// private-network S3 endpoints (local MinIO).
+    pub allow_insecure_s3_endpoint: bool,
     /// Testkit routes enabled (requires the `testkit` feature too).
     pub test_routes: bool,
 }
@@ -121,6 +127,8 @@ impl Default for Config {
             relay_token_key_b64: None,
             master_key_file: None,
             fs_blob_root: None,
+            s3_link_enabled: true,
+            allow_insecure_s3_endpoint: false,
             test_routes: false,
         }
     }
@@ -133,6 +141,7 @@ impl Config {
             allow_dev_auth: true,
             dev_auth_secret: Some("dev-secret".into()),
             allow_dev_google_oauth: true,
+            allow_insecure_s3_endpoint: true,
             signing_secret: Some("dev-signing-secret".into()),
             public_base_url: Some("http://127.0.0.1:8787".into()),
             ..Self::default()

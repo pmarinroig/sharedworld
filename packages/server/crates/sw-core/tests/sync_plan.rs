@@ -235,7 +235,7 @@ async fn config_overrides_the_drive_pacing_knobs() {
         ..sw_core::Config::dev()
     })
     .await;
-    let policy = sync_plan::sync_policy_for_provider(&env.svc);
+    let policy = sync_plan::sync_policy_for_provider(&env.svc, env.svc.storage_provider.provider());
     assert_eq!(policy.max_parallel_downloads, 2);
     assert_eq!(policy.max_concurrent_uploads, 1);
     assert_eq!(policy.max_upload_starts_per_second, 3);

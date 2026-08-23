@@ -137,6 +137,10 @@ pub enum ObserveWaitingAction {
 pub enum StorageProviderType {
     GoogleDrive,
     R2,
+    /// User-supplied S3-compatible bucket (R2/B2/MinIO...), 0.5.0. Old
+    /// clients read `storageProvider` as a plain string, so the new wire
+    /// value is display-only for them and never breaks parsing.
+    S3,
 }
 
 impl StorageProviderType {
@@ -144,12 +148,14 @@ impl StorageProviderType {
         match self {
             Self::GoogleDrive => "google-drive",
             Self::R2 => "r2",
+            Self::S3 => "s3",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "google-drive" => Some(Self::GoogleDrive),
             "r2" => Some(Self::R2),
+            "s3" => Some(Self::S3),
             _ => None,
         }
     }
@@ -502,6 +508,10 @@ pub struct CreateWorldRequest {
     pub storage_link_session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub use_linked_storage_account: Option<bool>,
+    /// 0.5.0: which linked account `use_linked_storage_account` refers to
+    /// ("google-drive" | "s3"); absent = the deployment default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linked_storage_provider: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]

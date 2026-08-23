@@ -535,7 +535,17 @@ fn config_check(path: &std::path::Path) -> anyhow::Result<()> {
         "allow_dev_auth={} allow_dev_google_oauth={} test_routes={}",
         config.allow_dev_auth, config.allow_dev_google_oauth, config.test_routes
     );
+    println!(
+        "s3_link_enabled={} allow_insecure_s3_endpoint={}",
+        config.s3_link_enabled, config.allow_insecure_s3_endpoint
+    );
     let mut problems = Vec::new();
+    if config.s3_link_enabled && config.public_base_url.is_none() {
+        problems.push("s3_link_enabled without public_base_url (the S3 link form URL needs it)");
+    }
+    if config.allow_insecure_s3_endpoint {
+        problems.push("allow_insecure_s3_endpoint enabled (never in production)");
+    }
     if config.relay_signing_key_b64.is_some() != config.relay_token_key_b64.is_some() {
         problems.push("only one relay key is set");
     }

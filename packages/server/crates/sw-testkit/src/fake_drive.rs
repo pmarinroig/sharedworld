@@ -300,11 +300,11 @@ impl StorageProvider for FakeDriveProvider {
         Ok(*self.quota.lock())
     }
 
-    fn resumable(&self) -> Option<&dyn ResumableUploadCapable> {
+    fn resumable(&self, _binding: &StorageBinding) -> Option<&dyn ResumableUploadCapable> {
         Some(self)
     }
 
-    fn account_cleanup(&self) -> Option<&dyn AccountCleanupCapable> {
+    fn account_cleanup(&self, _binding: &StorageBinding) -> Option<&dyn AccountCleanupCapable> {
         Some(self)
     }
 }

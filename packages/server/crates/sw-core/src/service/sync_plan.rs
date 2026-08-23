@@ -111,6 +111,7 @@ pub async fn prepare_uploads(
     // Drive would otherwise fail client-side with an unclassifiable 403 the
     // autosave loop retries forever.
     fail_if_drive_full(svc, &binding).await?;
+    let signer = resolve_plan_signer(svc, ctx, &binding).await?;
 
     let supports_delta_v2 = ctx.client_at_least(0, 4, 0);
     let bundles: &[LocalPackDescriptor] = request.region_bundles.as_deref().unwrap_or(&[]);
@@ -169,6 +170,7 @@ pub async fn prepare_uploads(
             runtime_token,
             bundle_keys[index].as_ref(),
             &existing,
+            &signer,
         ) {
             region_bundle_uploads.push(plan);
         }
@@ -184,15 +186,18 @@ pub async fn prepare_uploads(
         runtime_token,
         pack_keys.as_ref(),
         &existing,
+        &signer,
     );
 
     let direct_upload_available =
-        svc.storage_provider.resumable().is_some() && binding.storage_account_id.is_some();
+        svc.storage_provider.resumable(&binding).is_some() && binding.storage_account_id.is_some();
+    // Presigned uploads (S3) bypass the relay just like resumable sessions,
+    // so the relay body ceiling does not apply to them either.
     fail_on_oversized_full_upload(
         svc,
         ctx,
         non_region_pack_upload.iter().chain(region_bundle_uploads.iter()),
-        direct_upload_available,
+        direct_upload_available || signer.is_presigned(),
     )?;
     Ok(UploadPlan {
         world_id: world_id.to_string(),
@@ -200,7 +205,7 @@ pub async fn prepare_uploads(
         uploads: Vec::new(),
         non_region_pack_upload: Some(non_region_pack_upload),
         region_bundle_uploads: Some(region_bundle_uploads),
-        sync_policy: sync_policy_for_provider(svc),
+        sync_policy: sync_policy_for_provider(svc, binding.provider),
         latest_pack_ids: Some(latest_packs.iter().map(|p| p.pack_id.clone()).collect()),
         direct_upload: Some(direct_upload_available.then_some(DirectUploadPolicy {
             chunk_size_bytes: DIRECT_UPLOAD_CHUNK_BYTES,
@@ -251,6 +256,72 @@ async fn unreconstructable_pack_ids(
 /// Bodies over the relay's limit die as unexplained 413s at the edge before
 /// any server code runs, so a plan that would force such a full upload fails
 /// here with the explanation attached. Fires only when no delta slot exists.
+/// How this plan's transfer URLs get signed: the backend HMAC relay signer,
+/// or store-native presigned URLs (S3, clients >= 0.4.0 — older clients
+/// attach the bearer to every URL, which S3 rejects alongside query auth, so
+/// they stay on the relay).
+enum PlanSigner {
+    Backend,
+    Presigned(Box<dyn crate::storage::TransferPresigner>),
+}
+
+impl PlanSigner {
+    fn is_presigned(&self) -> bool {
+        matches!(self, PlanSigner::Presigned(_))
+    }
+
+    fn sign_upload(
+        &self,
+        svc: &ServiceContext,
+        world_id: &str,
+        storage_key: &str,
+        runtime_epoch: i64,
+        runtime_token: Option<&str>,
+        request_origin: Option<&str>,
+    ) -> sw_contracts::SignedBlobUrl {
+        match self {
+            PlanSigner::Backend => sign_upload_for_world(
+                svc,
+                world_id,
+                storage_key,
+                runtime_epoch,
+                runtime_token,
+                request_origin,
+            ),
+            PlanSigner::Presigned(p) => p.presign_put(storage_key),
+        }
+    }
+
+    fn sign_download(
+        &self,
+        svc: &ServiceContext,
+        world_id: &str,
+        storage_key: &str,
+        player_uuid: &str,
+        request_origin: Option<&str>,
+    ) -> sw_contracts::SignedBlobUrl {
+        match self {
+            PlanSigner::Backend => {
+                sign_download_for_world(svc, world_id, storage_key, player_uuid, request_origin)
+            }
+            PlanSigner::Presigned(p) => p.presign_get(storage_key),
+        }
+    }
+}
+
+async fn resolve_plan_signer(
+    svc: &ServiceContext,
+    ctx: &RequestContext,
+    binding: &WorldStorageBinding,
+) -> HttpResult<PlanSigner> {
+    if binding.provider == StorageProviderType::S3 && ctx.client_at_least(0, 4, 0) {
+        if let Some(presign) = svc.storage_provider.presign(binding) {
+            return Ok(PlanSigner::Presigned(presign.presign_context(binding).await?));
+        }
+    }
+    Ok(PlanSigner::Backend)
+}
+
 fn fail_on_oversized_full_upload<'a>(
     svc: &ServiceContext,
     ctx: &RequestContext,
@@ -367,6 +438,7 @@ fn prepare_grouped_artifact_upload(
     runtime_token: Option<&str>,
     candidate_keys: Option<&CandidateKeys>,
     existing_storage_keys: &HashSet<String>,
+    signer: &PlanSigner,
 ) -> Option<UploadPackPlan> {
     let pack = pack?;
     if let Some(latest) = latest_pack.filter(|l| l.hash == pack.hash) {
@@ -390,7 +462,7 @@ fn prepare_grouped_artifact_upload(
     let full_exists = existing_storage_keys.contains(&keys.full_storage_key);
     let delta_exists = keys.delta_storage_key.as_ref().is_some_and(|k| existing_storage_keys.contains(k));
     let sign = |key: &str| {
-        sign_upload_for_world(svc, world_id, key, runtime_epoch, runtime_token, ctx.request_origin.as_deref())
+        signer.sign_upload(svc, world_id, key, runtime_epoch, runtime_token, ctx.request_origin.as_deref())
     };
     Some(UploadPackPlan {
         pack: pack.clone(),
@@ -423,6 +495,12 @@ pub async fn download_plan(
     request: &UploadPlanRequest,
 ) -> HttpResult<DownloadPlan> {
     require_membership(svc, ctx, world_id).await?;
+    let binding = svc.repository.get_world_storage_binding(world_id).await?;
+    let provider = binding.as_ref().map(|b| b.provider).unwrap_or_else(|| svc.storage_provider.provider());
+    let signer = match binding.as_ref() {
+        Some(b) => resolve_plan_signer(svc, ctx, b).await?,
+        None => PlanSigner::Backend,
+    };
     let Some(latest) = svc.repository.get_latest_snapshot(world_id).await? else {
         return Ok(DownloadPlan {
             world_id: world_id.to_string(),
@@ -431,7 +509,7 @@ pub async fn download_plan(
             non_region_pack_download: Some(None),
             region_bundle_downloads: Some(Vec::new()),
             retained_paths: request.files.iter().map(|f| f.path.clone()).collect(),
-            sync_policy: sync_policy_for_provider(svc),
+            sync_policy: sync_policy_for_provider(svc, provider),
         });
     };
 
@@ -480,6 +558,7 @@ pub async fn download_plan(
                     &mut snapshot_cache,
                     PACK_DELTA_TRANSFER_MODE,
                     supports_delta_v2,
+                    &signer,
                 )
                 .await?,
             });
@@ -509,6 +588,7 @@ pub async fn download_plan(
                     &mut snapshot_cache,
                     REGION_DELTA_TRANSFER_MODE,
                     supports_delta_v2,
+                    &signer,
                 )
                 .await?,
             });
@@ -524,14 +604,14 @@ pub async fn download_plan(
         non_region_pack_download: Some(non_region_pack_download),
         region_bundle_downloads: Some(region_bundle_downloads),
         retained_paths,
-        sync_policy: sync_policy_for_provider(svc),
+        sync_policy: sync_policy_for_provider(svc, provider),
     };
     // Lane D: stamp each step with a relay token when the deployment relays
     // downloads through Cloudflare (no-op otherwise).
     if svc.relay_keys.is_some() {
-        match svc.repository.get_world_storage_binding(world_id).await? {
+        match binding.as_ref() {
             Some(binding) => {
-                crate::relay::attach_relay_tokens(svc, &binding, &mut plan, &ctx.player_uuid).await?
+                crate::relay::attach_relay_tokens(svc, binding, &mut plan, &ctx.player_uuid).await?
             }
             None => tracing::info!(world_id, "relay tokens skipped: no storage binding"),
         }
@@ -552,11 +632,20 @@ async fn build_pack_download_steps(
     snapshot_cache: &mut HashMap<String, Arc<SnapshotManifest>>,
     delta_transfer_mode: FileTransferMode,
     supports_delta_v2: bool,
+    signer: &PlanSigner,
 ) -> HttpResult<Vec<DownloadPlanStep>> {
     if let Some(steps) = chain_steps.filter(|s| !s.is_empty()) {
         // S1 self-contained chains: the plan builds from the pack's own recipe
         // — no base snapshot rows, no chain walk, no snapshot_chain_broken.
-        return build_steps_from_chain_recipe(svc, ctx, world_id, steps, local_pack_hash, supports_delta_v2);
+        return build_steps_from_chain_recipe(
+            svc,
+            ctx,
+            world_id,
+            steps,
+            local_pack_hash,
+            supports_delta_v2,
+            signer,
+        );
     }
     let mut steps: Vec<DownloadPlanStep> = Vec::new();
     let mut cursor: Option<SnapshotPack> = Some(latest_pack.clone());
@@ -578,7 +667,7 @@ async fn build_pack_download_steps(
             base_snapshot_id: pack.base_snapshot_id.clone(),
             base_hash: pack.base_hash.clone(),
             delta_format_version: pack.delta_format_version,
-            download: sign_download_for_world(
+            download: signer.sign_download(
                 svc,
                 world_id,
                 &pack.storage_key,
@@ -624,6 +713,7 @@ fn build_steps_from_chain_recipe(
     chain_steps: &[PackChainStep],
     local_pack_hash: Option<&str>,
     supports_delta_v2: bool,
+    signer: &PlanSigner,
 ) -> HttpResult<Vec<DownloadPlanStep>> {
     let mut steps: Vec<DownloadPlanStep> = Vec::new();
     for step in chain_steps.iter().rev() {
@@ -640,7 +730,7 @@ fn build_steps_from_chain_recipe(
             base_snapshot_id: None,
             base_hash: step.base_hash.clone(),
             delta_format_version: step.delta_format_version,
-            download: sign_download_for_world(
+            download: signer.sign_download(
                 svc,
                 world_id,
                 &step.storage_key,
@@ -723,7 +813,7 @@ fn require_resumable<'a>(
     svc: &'a ServiceContext,
     binding: &WorldStorageBinding,
 ) -> HttpResult<&'a dyn ResumableUploadCapable> {
-    match svc.storage_provider.resumable() {
+    match svc.storage_provider.resumable(binding) {
         Some(capable) if binding.storage_account_id.is_some() => Ok(capable),
         _ => Err(HttpError::new(
             409,
@@ -1072,9 +1162,9 @@ fn positive(value: Option<i64>, fallback: i64) -> i64 {
 
 /// Google Drive gets the conservative pacing because upload request starts are
 /// its constrained resource; other providers can be driven harder.
-pub fn sync_policy_for_provider(svc: &ServiceContext) -> SyncPolicy {
+pub fn sync_policy_for_provider(svc: &ServiceContext, provider: StorageProviderType) -> SyncPolicy {
     let config = &svc.config;
-    if svc.storage_provider.provider() == StorageProviderType::GoogleDrive {
+    if provider == StorageProviderType::GoogleDrive {
         return SyncPolicy {
             max_parallel_downloads: positive(config.drive_max_parallel_downloads, 8),
             max_concurrent_upload_preparations: positive(config.drive_max_upload_preparations, 2),

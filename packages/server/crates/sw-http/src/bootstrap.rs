@@ -69,18 +69,15 @@ pub async fn build_inner(
     let mut fs: Option<Arc<FsStorageProvider>> = None;
     let provider: Arc<dyn StorageProvider> = match provider_override {
         Some(p) => p,
-        None => match opts.config.active_storage_provider {
-            sw_contracts::StorageProviderType::R2 => {
-                let root =
-                    opts.config.fs_blob_root.clone().unwrap_or_else(|| std::path::PathBuf::from("./blobs"));
-                let f = Arc::new(FsStorageProvider::new(root));
-                fs = Some(f.clone());
-                f
+        None => {
+            // The router serves every provider; ACTIVE_STORAGE_PROVIDER only
+            // sets the default for new unlinked worlds.
+            let router = sw_core::storage::create_storage_provider(&opts.config, &repo, http.clone());
+            if opts.config.active_storage_provider == sw_contracts::StorageProviderType::R2 {
+                fs = Some(router.fs_provider());
             }
-            sw_contracts::StorageProviderType::GoogleDrive => {
-                sw_core::storage::create_storage_provider(&opts.config, &repo, http.clone())
-            }
-        },
+            router
+        }
     };
     let realtime = if opts.start_realtime_loops {
         Realtime::start(repo.clone()).await?
@@ -96,6 +93,8 @@ pub async fn build_inner(
         fs,
         test_storage: None,
         fake_drive: None,
+        drive_fail: None,
+        test_s3: None,
         test_cert_private_key_pkcs8_b64: None,
     }))
 }

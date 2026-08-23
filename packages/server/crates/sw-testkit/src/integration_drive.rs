@@ -48,6 +48,25 @@ struct FakeSession {
     parts: Vec<Bytes>,
 }
 
+/// E2E failure injection (`POST /__test/drive-mode`): which Drive failure
+/// every storage *operation* (put, session create, register, chunk PUT)
+/// reports. Deliberately NOT wired into `quota()` — the quota preflight is
+/// 15-min cached server-side, which would make injected failures racy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DriveFailKind {
+    StorageFull,
+    ReauthRequired,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DriveFailMode {
+    pub kind: Option<DriveFailKind>,
+    /// Fail this many operations then self-clear; `None` = sticky until
+    /// switched off (the release coordinator's auto-retry ladder heals
+    /// one-shot failures silently, so sticky is the default).
+    pub remaining: Option<u32>,
+}
+
 pub struct IntegrationDriveProvider {
     repo: Repository,
     public_base_url: String,
@@ -56,6 +75,7 @@ pub struct IntegrationDriveProvider {
     sessions: Mutex<HashMap<String, FakeSession>>,
     download_counts: Mutex<HashMap<String, u64>>,
     session_counter: AtomicU64,
+    fail_mode: Mutex<DriveFailMode>,
 }
 
 impl IntegrationDriveProvider {
@@ -77,6 +97,45 @@ impl IntegrationDriveProvider {
             sessions: Mutex::new(HashMap::new()),
             download_counts: Mutex::new(HashMap::new()),
             session_counter: AtomicU64::new(0),
+            fail_mode: Mutex::new(DriveFailMode::default()),
+        }
+    }
+
+    pub fn set_fail_mode(&self, mode: DriveFailMode) {
+        *self.fail_mode.lock() = mode;
+    }
+
+    /// The failure the next storage operation must report, decrementing a
+    /// bounded mode's counter.
+    fn take_failure(&self) -> Option<DriveFailKind> {
+        let mut mode = self.fail_mode.lock();
+        let kind = mode.kind?;
+        match &mut mode.remaining {
+            Some(0) => {
+                mode.kind = None;
+                mode.remaining = None;
+                None
+            }
+            Some(n) => {
+                *n -= 1;
+                if *n == 0 {
+                    mode.kind = None;
+                    mode.remaining = None;
+                }
+                Some(kind)
+            }
+            None => Some(kind),
+        }
+    }
+
+    fn failure_error(kind: DriveFailKind) -> HttpError {
+        match kind {
+            DriveFailKind::StorageFull => sw_core::storage::drive::drive_storage_full_error(),
+            DriveFailKind::ReauthRequired => HttpError::new(
+                401,
+                "drive_reauth_required",
+                "Google Drive authorization needs to be refreshed.",
+            ),
         }
     }
 
@@ -182,6 +241,22 @@ impl IntegrationDriveProvider {
                 "Client sent an Authorization header to the fake Drive upload host.".into(),
             );
         }
+        // Injected failures: the shape the client's DriveStorageFullException
+        // classifier needs is a 403 whose body mentions storageQuotaExceeded.
+        if let Some(kind) = self.take_failure() {
+            return match kind {
+                DriveFailKind::StorageFull => json_err(
+                    StatusCode::FORBIDDEN,
+                    "storageQuotaExceeded",
+                    "The user's Drive storage quota has been exceeded (storageQuotaExceeded).".into(),
+                ),
+                DriveFailKind::ReauthRequired => json_err(
+                    StatusCode::UNAUTHORIZED,
+                    "drive_reauth_required",
+                    "Google Drive authorization needs to be refreshed.".into(),
+                ),
+            };
+        }
         let mut sessions = self.sessions.lock();
         let Some(session) = sessions.get_mut(upload_id) else {
             return json_err(StatusCode::NOT_FOUND, "not_found", "Unknown or expired upload session.".into());
@@ -275,6 +350,9 @@ impl StorageProvider for IntegrationDriveProvider {
         body: PutBody,
         content_type: &str,
     ) -> HttpResult<()> {
+        if let Some(kind) = self.take_failure() {
+            return Err(Self::failure_error(kind));
+        }
         let bytes = body.into_bytes().await?;
         let entry = if self.blob_dir.is_some() {
             let file_name = Self::file_name_for(storage_key);
@@ -367,7 +445,7 @@ impl StorageProvider for IntegrationDriveProvider {
         Ok(StorageQuota { used_bytes: Some(used), total_bytes: None })
     }
 
-    fn resumable(&self) -> Option<&dyn ResumableUploadCapable> {
+    fn resumable(&self, _binding: &StorageBinding) -> Option<&dyn ResumableUploadCapable> {
         Some(self)
     }
 }
@@ -381,6 +459,9 @@ impl ResumableUploadCapable for IntegrationDriveProvider {
         _content_type: &str,
         expected_size: i64,
     ) -> HttpResult<String> {
+        if let Some(kind) = self.take_failure() {
+            return Err(Self::failure_error(kind));
+        }
         let n = self.session_counter.fetch_add(1, Ordering::SeqCst) + 1;
         let session_id = format!("s{n}-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
         let temp_file = self.blob_dir.as_ref().map(|_| self.blob_path(&format!("session-{session_id}.part")));
@@ -427,6 +508,9 @@ impl ResumableUploadCapable for IntegrationDriveProvider {
         size: i64,
         content_type: &str,
     ) -> HttpResult<()> {
+        if let Some(kind) = self.take_failure() {
+            return Err(Self::failure_error(kind));
+        }
         let entry = {
             let sessions = self.sessions.lock();
             let Some(session) = sessions.values().find(|s| s.file_id == file_id && s.completed) else {

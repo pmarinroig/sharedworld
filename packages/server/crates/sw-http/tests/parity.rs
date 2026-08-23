@@ -255,7 +255,7 @@ fn contract_ms_constants() -> BTreeMap<String, i64> {
 fn timing_constants_agree_with_the_mod() {
     let mapped = [
         ("HOST_HEARTBEAT_INTERVAL_MS", "host/SharedWorldHostingManager.java", "HEARTBEAT_INTERVAL_MS"),
-        ("AUTOSAVE_INTERVAL_MS", "host/SharedWorldHostingManager.java", "AUTOSAVE_INTERVAL_MS"),
+        ("AUTOSAVE_INTERVAL_MS", "host/SharedWorldHostingManager.java", "DEFAULT_AUTOSAVE_INTERVAL_MS"),
         ("HOST_LEASE_TIMEOUT_MS", "host/SharedWorldHostingManager.java", "HOST_CONFIRM_TIMEOUT_MS"),
         ("PLAYER_PRESENCE_HEARTBEAT_INTERVAL_MS", "SharedWorldPresenceManager.java", "HEARTBEAT_INTERVAL_MS"),
     ];
@@ -264,6 +264,7 @@ fn timing_constants_agree_with_the_mod() {
         "host/SharedWorldHostingManager.java#JOIN_TARGET_TIMEOUT_MS",
         "host/SharedWorldHostingManager.java#MAX_SUGGESTED_HEARTBEAT_INTERVAL_MS",
         "host/SharedWorldHostingManager.java#MAX_SUGGESTED_AUTOSAVE_INTERVAL_MS",
+        "host/SharedWorldHostingManager.java#AUTOSAVE_REANNOUNCE_INTERVAL_MS",
         "SharedWorldPresenceManager.java#MAX_SUGGESTED_HEARTBEAT_INTERVAL_MS",
         "host/SharedWorldHostingManager.java#PUSH_CONNECTED_HEARTBEAT_INTERVAL_MS",
         "host/SharedWorldHostingManager.java#GAMERULES_LOCAL_POLL_INTERVAL_MS",

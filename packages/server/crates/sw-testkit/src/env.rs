@@ -107,6 +107,10 @@ impl TestEnv {
                 access_token: Some("access-token".into()),
                 refresh_token: Some("refresh-token".into()),
                 token_expires_at: Some(time::plus_ms_iso(time::now(), 3_600_000)),
+                s3_endpoint: None,
+                s3_region: None,
+                s3_bucket: None,
+                s3_key_prefix: None,
                 created_at: now.clone(),
                 updated_at: now,
             })

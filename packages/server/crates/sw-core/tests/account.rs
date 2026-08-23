@@ -100,7 +100,8 @@ async fn unlink_blocks_on_bound_worlds_then_cleans_every_account_row() {
     let wid = created.world.summary.id.clone();
 
     // Blocked while a world is bound to one of the owner's accounts.
-    let err = sw_core::service::account::unlink_storage_account(&env.svc, &owner(), now).await.unwrap_err();
+    let err =
+        sw_core::service::account::unlink_storage_account(&env.svc, &owner(), None, now).await.unwrap_err();
     assert_eq!(err.code, "storage_unlink_blocked");
 
     // A guest membership in that world does NOT block the guest's own unlink.
@@ -114,7 +115,7 @@ async fn unlink_blocks_on_bound_worlds_then_cleans_every_account_row() {
     .await
     .unwrap();
     link_google_account(&env, &guest(), "guest@example.com").await.unwrap();
-    sw_core::service::account::unlink_storage_account(&env.svc, &guest(), now).await.unwrap();
+    sw_core::service::account::unlink_storage_account(&env.svc, &guest(), None, now).await.unwrap();
     assert!(env
         .repo
         .find_storage_accounts_by_owner(StorageProviderType::GoogleDrive, GUEST_UUID)
@@ -125,7 +126,7 @@ async fn unlink_blocks_on_bound_worlds_then_cleans_every_account_row() {
     // After the world is gone, the owner's unlink succeeds and removes both
     // rows, revokes both grants, and wipes the link-session history.
     sw_core::service::worlds::delete_world(&env.svc, &owner(), &wid, now).await.unwrap();
-    sw_core::service::account::unlink_storage_account(&env.svc, &owner(), now).await.unwrap();
+    sw_core::service::account::unlink_storage_account(&env.svc, &owner(), None, now).await.unwrap();
     assert!(env
         .repo
         .find_storage_accounts_by_owner(StorageProviderType::GoogleDrive, OWNER_UUID)
@@ -139,7 +140,7 @@ async fn unlink_blocks_on_bound_worlds_then_cleans_every_account_row() {
     assert!(env.repo.get_storage_link_session(&first.id).await.unwrap().is_none());
 
     // Unlinked owner shows as not linked.
-    let summary = env.svc.storage_links.get_storage_account_summary(&owner()).await.unwrap();
+    let summary = env.svc.storage_links.get_storage_account_summary(&owner(), None).await.unwrap();
     assert!(!summary.linked);
 }
 

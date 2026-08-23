@@ -92,9 +92,27 @@ pub async fn create_world(
     let binding: StorageBinding =
         if let Some(link_id) = request.storage_link_session_id.as_deref().filter(|s| !s.is_empty()) {
             let link = svc.storage_links.require_completed_link_session(ctx, link_id).await?;
+            // Defensive: only the 0.5.0+ UI can create s3 worlds; an older
+            // client presenting an s3 link session is confused state.
+            if link.provider == sw_contracts::StorageProviderType::S3 && !ctx.client_at_least(0, 5, 0) {
+                return Err(HttpError::new(
+                    409,
+                    "client_update_required",
+                    "Update the SharedWorld mod to create worlds on an S3 bucket.",
+                ));
+            }
             WorldStorageBinding { provider: link.provider, storage_account_id: link.storage_account_id }
         } else if request.use_linked_storage_account == Some(true) {
-            resolve_linked_storage_binding(svc, ctx).await?
+            let provider =
+                request.linked_storage_provider.as_deref().and_then(sw_contracts::StorageProviderType::parse);
+            if provider == Some(sw_contracts::StorageProviderType::S3) && !ctx.client_at_least(0, 5, 0) {
+                return Err(HttpError::new(
+                    409,
+                    "client_update_required",
+                    "Update the SharedWorld mod to create worlds on an S3 bucket.",
+                ));
+            }
+            resolve_linked_storage_binding(svc, ctx, provider).await?
         } else {
             WorldStorageBinding { provider: svc.storage_provider.provider(), storage_account_id: None }
         };
@@ -476,18 +494,24 @@ async fn store_custom_icon(
 async fn resolve_linked_storage_binding(
     svc: &ServiceContext,
     ctx: &RequestContext,
+    provider: Option<sw_contracts::StorageProviderType>,
 ) -> HttpResult<StorageBinding> {
-    let accounts = svc
-        .repository
-        .find_storage_accounts_by_owner(svc.storage_provider.provider(), &ctx.player_uuid)
-        .await?;
-    let account = accounts.into_iter().find(|a| a.refresh_token.is_some()).ok_or_else(|| {
-        HttpError::new(
-            409,
-            "storage_not_linked",
-            "Google Drive isn't connected yet. Connect it and try again.",
-        )
-    })?;
+    let provider = provider.unwrap_or_else(|| svc.storage_provider.provider());
+    let accounts = svc.repository.find_storage_accounts_by_owner(provider, &ctx.player_uuid).await?;
+    // Healthy is provider-shaped: Drive needs a refresh token, S3 its key pair.
+    let account = accounts
+        .into_iter()
+        .find(|a| match provider {
+            sw_contracts::StorageProviderType::S3 => a.access_token.is_some(),
+            _ => a.refresh_token.is_some(),
+        })
+        .ok_or_else(|| {
+            HttpError::new(
+                409,
+                "storage_not_linked",
+                "This storage isn't connected yet. Connect it and try again.",
+            )
+        })?;
     Ok(WorldStorageBinding { provider: account.provider, storage_account_id: Some(account.id) })
 }
 

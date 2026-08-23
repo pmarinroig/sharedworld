@@ -824,6 +824,31 @@ pub async fn storage_keys_exist(
             return Ok(unique.into_iter().collect());
         }
     }
+    if binding.provider == sw_contracts::StorageProviderType::S3 {
+        // S3 worlds index objects in the repository too, but presigned
+        // uploads bypass the box, so a missing row is not proof of absence:
+        // batch the DB lookup, then HEAD only the misses with bounded
+        // concurrency (provider.exists() heals the row on a hit). Hundreds
+        // of candidate keys must never become hundreds of serial round trips.
+        if let Some(account) = &binding.storage_account_id {
+            let mut out =
+                svc.repository.list_existing_storage_keys(binding.provider, account, &unique).await?;
+            let misses: Vec<String> = unique.into_iter().filter(|k| !out.contains(k)).collect();
+            use futures::StreamExt as _;
+            let mut checks = futures::stream::iter(misses.into_iter().map(|key| async move {
+                let found = svc.storage_provider.exists(binding, &key).await?;
+                Ok::<_, crate::http_error::HttpError>((key, found))
+            }))
+            .buffer_unordered(8);
+            while let Some(result) = checks.next().await {
+                let (key, found) = result?;
+                if found {
+                    out.insert(key);
+                }
+            }
+            return Ok(out);
+        }
+    }
     let mut out = HashSet::new();
     for key in unique {
         if svc.storage_provider.exists(binding, &key).await? {

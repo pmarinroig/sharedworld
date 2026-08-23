@@ -5,9 +5,11 @@
 
 pub mod env;
 pub mod fake_drive;
+pub mod fake_s3;
 pub mod fixtures;
 pub mod integration;
 pub mod integration_drive;
+pub mod integration_router;
 
 pub use env::TestEnv;
 pub use fake_drive::FakeDriveProvider;

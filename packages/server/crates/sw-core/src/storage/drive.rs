@@ -256,6 +256,10 @@ impl GoogleDriveStorageProvider {
             .create_or_update_storage_account(StorageAccountRecord {
                 access_token: Some(payload.access_token.clone()),
                 token_expires_at: Some(time::plus_ms_iso(time::now(), (payload.expires_in * 1000.0) as i64)),
+                s3_endpoint: None,
+                s3_region: None,
+                s3_bucket: None,
+                s3_key_prefix: None,
                 updated_at: time::now_iso(),
                 ..account.clone()
             })
@@ -735,15 +739,15 @@ impl StorageProvider for GoogleDriveStorageProvider {
         })
     }
 
-    fn resumable(&self) -> Option<&dyn ResumableUploadCapable> {
+    fn resumable(&self, _binding: &StorageBinding) -> Option<&dyn ResumableUploadCapable> {
         Some(self)
     }
 
-    fn relay(&self) -> Option<&dyn crate::relay::RelayCapable> {
+    fn relay(&self, _binding: &StorageBinding) -> Option<&dyn crate::relay::RelayCapable> {
         Some(self)
     }
 
-    fn account_cleanup(&self) -> Option<&dyn AccountCleanupCapable> {
+    fn account_cleanup(&self, _binding: &StorageBinding) -> Option<&dyn AccountCleanupCapable> {
         Some(self)
     }
 }

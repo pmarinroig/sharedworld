@@ -135,6 +135,12 @@ fn apply_env_overrides(config: &mut Config) {
     if let Some(v) = s("SW_FS_BLOB_ROOT") {
         config.fs_blob_root = Some(PathBuf::from(v));
     }
+    if let Some(v) = b("SW_S3_LINK_ENABLED") {
+        config.s3_link_enabled = v;
+    }
+    if let Some(v) = b("SW_ALLOW_INSECURE_S3_ENDPOINT") {
+        config.allow_insecure_s3_endpoint = v;
+    }
     if let Some(v) = b("SW_TEST_ROUTES") {
         config.test_routes = v;
     }

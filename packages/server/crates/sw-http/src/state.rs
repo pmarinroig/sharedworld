@@ -41,6 +41,10 @@ pub struct AppStateInner {
     /// services-key private half the Java integration test forges certs with.
     pub test_storage: Option<Arc<dyn crate::routes::testkit::TestStorageInspector>>,
     pub fake_drive: Option<Arc<dyn crate::routes::testkit::FakeDriveUploads>>,
+    /// Testkit: Drive failure injection (`POST /__test/drive-mode`).
+    pub drive_fail: Option<Arc<dyn crate::routes::testkit::DriveFailureControl>>,
+    /// Testkit: the in-process fake S3 service (`GET /__test/s3`).
+    pub test_s3: Option<Arc<dyn crate::routes::testkit::S3TestInfo>>,
     pub test_cert_private_key_pkcs8_b64: Option<String>,
 }
 

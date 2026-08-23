@@ -34,6 +34,10 @@ fn map_storage_account_with(
         access_token: decrypt_opt(cipher, r.get("access_token")?),
         refresh_token: decrypt_opt(cipher, r.get("refresh_token")?),
         token_expires_at: r.get("token_expires_at")?,
+        s3_endpoint: r.get("s3_endpoint")?,
+        s3_region: r.get("s3_region")?,
+        s3_bucket: r.get("s3_bucket")?,
+        s3_key_prefix: r.get("s3_key_prefix")?,
         created_at: r.get("created_at")?,
         updated_at: r.get("updated_at")?,
     })
@@ -86,7 +90,7 @@ fn map_storage_object(r: &Row<'_>) -> rusqlite::Result<StorageObjectRecord> {
 }
 
 const ACCOUNT_COLUMNS: &str = "id, provider, owner_player_uuid, external_account_id, email, display_name,
-              access_token, refresh_token, token_expires_at, created_at, updated_at";
+              access_token, refresh_token, token_expires_at, s3_endpoint, s3_region, s3_bucket, s3_key_prefix, created_at, updated_at";
 const LINK_COLUMNS: &str = "id, player_uuid, provider, status, auth_url, state, linked_account_email,
               account_display_name, storage_account_id, error_message, created_at, expires_at, completed_at";
 const UPLOAD_COLUMNS: &str = "upload_id, provider, storage_account_id, world_id, storage_key, session_url, content_type, expected_size, created_at, confirmed_at";
@@ -215,7 +219,7 @@ impl Repository {
                 c.execute(
                     "storage_accounts.upsert",
                     &format!(
-                        "INSERT INTO storage_accounts ({ACCOUNT_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        "INSERT INTO storage_accounts ({ACCOUNT_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                          ON CONFLICT(id) DO UPDATE SET
                            provider = excluded.provider,
                            owner_player_uuid = excluded.owner_player_uuid,
@@ -225,6 +229,10 @@ impl Repository {
                            access_token = excluded.access_token,
                            refresh_token = excluded.refresh_token,
                            token_expires_at = excluded.token_expires_at,
+                           s3_endpoint = excluded.s3_endpoint,
+                           s3_region = excluded.s3_region,
+                           s3_bucket = excluded.s3_bucket,
+                           s3_key_prefix = excluded.s3_key_prefix,
                            updated_at = excluded.updated_at"
                     ),
                     params![
@@ -237,6 +245,10 @@ impl Repository {
                         a.access_token,
                         a.refresh_token,
                         a.token_expires_at,
+                        a.s3_endpoint,
+                        a.s3_region,
+                        a.s3_bucket,
+                        a.s3_key_prefix,
                         a.created_at,
                         a.updated_at
                     ],

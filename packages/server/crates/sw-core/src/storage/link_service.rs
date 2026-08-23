@@ -82,6 +82,83 @@ fn require_drive_appdata_scope(granted: Option<&str>) -> HttpResult<()> {
     }
 }
 
+/// The S3 bring-your-own-bucket link form, as posted from the browser page.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+pub struct S3LinkForm {
+    #[serde(default)]
+    pub endpoint: String,
+    #[serde(default)]
+    pub region: String,
+    #[serde(default)]
+    pub bucket: String,
+    #[serde(default)]
+    pub access_key_id: String,
+    #[serde(default)]
+    pub secret_access_key: String,
+    #[serde(default)]
+    pub key_prefix: String,
+}
+
+/// SSRF guard for the user-supplied endpoint: https only, origin only (no
+/// path/query/credentials), and no obviously-internal hosts — unless the dev
+/// flag allows local MinIO. Returns the normalized origin.
+pub fn validate_s3_endpoint(raw: &str, allow_insecure: bool) -> Result<String, String> {
+    let trimmed = raw.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return Err(
+            "Enter the S3 endpoint URL (for example https://<accountid>.r2.cloudflarestorage.com).".into()
+        );
+    }
+    let url = url::Url::parse(trimmed).map_err(|_| "The endpoint is not a valid URL.".to_string())?;
+    match url.scheme() {
+        "https" => {}
+        "http" if allow_insecure => {}
+        "http" => return Err("The endpoint must use https.".into()),
+        _ => return Err("The endpoint must be an http(s) URL.".into()),
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("The endpoint must not contain credentials.".into());
+    }
+    if url.path() != "/" && !url.path().is_empty() {
+        return Err("Enter just the endpoint origin, without a path (the bucket has its own field).".into());
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err("Enter just the endpoint origin, without query parameters.".into());
+    }
+    let Some(host) = url.host() else {
+        return Err("The endpoint is missing a host.".into());
+    };
+    if !allow_insecure && is_internal_host(&host) {
+        return Err("The endpoint must be a public address reachable from the internet.".into());
+    }
+    let port = url.port().map(|p| format!(":{p}")).unwrap_or_default();
+    Ok(format!("{}://{}{port}", url.scheme(), url.host_str().unwrap_or_default()))
+}
+
+fn is_internal_host(host: &url::Host<&str>) -> bool {
+    match host {
+        url::Host::Domain(d) => {
+            let d = d.to_ascii_lowercase();
+            d == "localhost" || d.ends_with(".localhost") || d.ends_with(".local") || d.ends_with(".internal")
+        }
+        url::Host::Ipv4(ip) => {
+            ip.is_loopback()
+                || ip.is_private()
+                || ip.is_link_local()
+                || ip.is_unspecified()
+                // CGNAT 100.64/10 (Tailscale addresses land here).
+                || (ip.octets()[0] == 100 && (64..128).contains(&ip.octets()[1]))
+        }
+        url::Host::Ipv6(ip) => {
+            ip.is_loopback()
+                || ip.is_unspecified()
+                // fc00::/7 unique-local + fe80::/10 link-local.
+                || (ip.segments()[0] & 0xfe00) == 0xfc00
+                || (ip.segments()[0] & 0xffc0) == 0xfe80
+        }
+    }
+}
+
 /// `state` round-trips as `<sessionId>:<nonce>` (or the bare nonce).
 fn require_matching_state(session: &StorageLinkSessionRecord, presented: Option<&str>) -> HttpResult<()> {
     let nonce = presented.map(|p| p.strip_prefix(&format!("{}:", session.id)).unwrap_or(p));
@@ -147,18 +224,29 @@ impl StorageLinkService {
             .and_then(|v| v.as_str())
             .and_then(StorageProviderType::parse)
             .unwrap_or(self.provider);
+        if provider == StorageProviderType::S3 && !self.config.s3_link_enabled {
+            return Err(HttpError::new(
+                404,
+                "s3_link_disabled",
+                "Linking S3 buckets is currently disabled on this server.",
+            ));
+        }
         let id = random_id("link");
         let state = random_id("state");
         let now_iso = time::to_iso(now);
         let expires_at = time::plus_ms_iso(now, STORAGE_LINK_TTL_MS);
-        let has_refreshable = self
-            .repo
-            .find_storage_accounts_by_owner(provider, &ctx.player_uuid)
-            .await?
-            .iter()
-            .any(|a| a.refresh_token.is_some());
-        let force_consent = request.force_consent || !has_refreshable;
-        let auth_url = self.build_storage_auth_url(&id, &state, force_consent);
+        let auth_url = if provider == StorageProviderType::S3 {
+            self.build_s3_link_url(&id, &state)
+        } else {
+            let has_refreshable = self
+                .repo
+                .find_storage_accounts_by_owner(provider, &ctx.player_uuid)
+                .await?
+                .iter()
+                .any(|a| a.refresh_token.is_some());
+            let force_consent = request.force_consent || !has_refreshable;
+            self.build_storage_auth_url(&id, &state, force_consent)
+        };
         self.repo
             .create_storage_link_session(StorageLinkSessionRecord {
                 id: id.clone(),
@@ -327,14 +415,24 @@ impl StorageLinkService {
     pub async fn get_storage_account_summary(
         &self,
         ctx: &RequestContext,
+        provider: Option<StorageProviderType>,
     ) -> HttpResult<StorageAccountSummary> {
-        let accounts = self.repo.find_storage_accounts_by_owner(self.provider, &ctx.player_uuid).await?;
-        let best = accounts.iter().find(|a| a.refresh_token.is_some()).or(accounts.first());
+        // No explicit provider = the pre-0.5.0 wire shape (old clients only
+        // know the deployment default).
+        let provider = provider.unwrap_or(self.provider);
+        // "Healthy" is provider-shaped: a Drive account needs a live refresh
+        // token; an S3 account just needs its key pair on record.
+        let healthy = |a: &&StorageAccountRecord| match provider {
+            StorageProviderType::S3 => a.access_token.is_some(),
+            _ => a.refresh_token.is_some(),
+        };
+        let accounts = self.repo.find_storage_accounts_by_owner(provider, &ctx.player_uuid).await?;
+        let best = accounts.iter().find(healthy).or(accounts.first());
         Ok(StorageAccountSummary {
             linked: best.is_some(),
-            provider: self.provider,
+            provider,
             email: best.and_then(|a| a.email.clone()),
-            healthy: best.is_some_and(|a| a.refresh_token.is_some()),
+            healthy: best.is_some_and(|a| healthy(&a)),
         })
     }
 
@@ -374,6 +472,158 @@ impl StorageLinkService {
             ));
         }
         Ok(session)
+    }
+
+    fn build_s3_link_url(&self, session_id: &str, state: &str) -> String {
+        let base = self.config.public_base_url.clone().unwrap_or_else(|| "http://127.0.0.1:8787".into());
+        format!(
+            "{base}/storage/s3/link?session={}&state={}",
+            super::super::service::signer::url_encode(session_id),
+            super::super::service::signer::url_encode(&format!("{session_id}:{state}"))
+        )
+    }
+
+    /// Completes an S3 link session from the browser form: state check,
+    /// endpoint validation, a live bucket probe (write/read/delete), then the
+    /// account upsert. Probe/validation failures return
+    /// `s3_link_form_invalid` WITHOUT failing the session, so the form can
+    /// re-render and the user can fix a typo; terminal session states map to
+    /// the same errors the Google callback produces.
+    pub async fn complete_s3_link(
+        &self,
+        session_id: &str,
+        presented_state: Option<&str>,
+        form: &S3LinkForm,
+        now: Instant,
+    ) -> HttpResult<StorageLinkSession> {
+        let session = self.repo.get_storage_link_session(session_id).await?.ok_or_else(|| {
+            HttpError::new(
+                404,
+                "storage_link_not_found",
+                "This bucket link is no longer active. Start it again from Minecraft.",
+            )
+        })?;
+        if session.provider != StorageProviderType::S3 {
+            return Err(HttpError::new(404, "storage_link_not_found", "This link is not an S3 link."));
+        }
+        if session.status == StorageLinkStatus::Cancelled {
+            return Err(HttpError::new(
+                409,
+                "storage_link_cancelled",
+                "This bucket link is no longer active. Return to Minecraft and start again.",
+            ));
+        }
+        if expired(&session, now) {
+            return Err(HttpError::new(
+                410,
+                "storage_link_expired",
+                "This bucket link took too long. Start it again from Minecraft.",
+            ));
+        }
+        require_matching_state(&session, presented_state)?;
+
+        let form_error = |message: String| HttpError::new(400, "s3_link_form_invalid", message);
+        let endpoint = validate_s3_endpoint(&form.endpoint, self.config.allow_insecure_s3_endpoint)
+            .map_err(form_error)?;
+        let bucket = form.bucket.trim().to_string();
+        if bucket.is_empty()
+            || bucket.len() > 255
+            || !bucket.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_')
+        {
+            return Err(form_error("Enter the bucket name (letters, digits, dots and dashes).".into()));
+        }
+        let access_key_id = form.access_key_id.trim().to_string();
+        let secret_access_key = form.secret_access_key.trim().to_string();
+        if access_key_id.is_empty() || secret_access_key.is_empty() {
+            return Err(form_error("Enter both the access key id and the secret access key.".into()));
+        }
+        let region = {
+            let r = form.region.trim();
+            if r.is_empty() {
+                "auto".to_string()
+            } else {
+                r.to_string()
+            }
+        };
+        // Empty form field = the default prefix; an explicit "/" = bucket root.
+        let key_prefix = {
+            let raw = form.key_prefix.trim();
+            if raw.is_empty() {
+                super::s3::DEFAULT_KEY_PREFIX.to_string()
+            } else {
+                super::s3::normalize_key_prefix(Some(raw))
+            }
+        };
+
+        let existing =
+            self.repo.find_storage_account_by_external_id(StorageProviderType::S3, &access_key_id).await?;
+        if existing.as_ref().is_some_and(|e| e.owner_player_uuid != session.player_uuid) {
+            return Err(HttpError::new(
+                409,
+                "storage_account_already_linked",
+                "This access key is already linked to another Minecraft player. Use a different key.",
+            ));
+        }
+
+        super::s3::probe_bucket(
+            &super::s3::S3ConnectionParams {
+                endpoint: endpoint.clone(),
+                region: region.clone(),
+                bucket: bucket.clone(),
+                key_prefix: key_prefix.clone(),
+                access_key_id: access_key_id.clone(),
+                secret_access_key: secret_access_key.clone(),
+            },
+            &random_id("probe"),
+        )
+        .await
+        .map_err(form_error)?;
+
+        let label = format!("{bucket} @ {}", endpoint.split("://").nth(1).unwrap_or(&endpoint));
+        let now_iso = time::to_iso(now);
+        let account = self
+            .repo
+            .create_or_update_storage_account(StorageAccountRecord {
+                id: existing.as_ref().map(|e| e.id.clone()).unwrap_or_else(|| random_id("storage")),
+                provider: StorageProviderType::S3,
+                owner_player_uuid: session.player_uuid.clone(),
+                external_account_id: access_key_id,
+                email: Some(label.clone()),
+                display_name: None,
+                access_token: Some(secret_access_key),
+                refresh_token: None,
+                token_expires_at: None,
+                s3_endpoint: Some(endpoint),
+                s3_region: Some(region),
+                s3_bucket: Some(bucket),
+                s3_key_prefix: Some(key_prefix),
+                created_at: existing
+                    .as_ref()
+                    .map(|e| e.created_at.clone())
+                    .unwrap_or_else(|| now_iso.clone()),
+                updated_at: now_iso,
+            })
+            .await?;
+        self.repo
+            .update_storage_link_session(
+                session_id,
+                StorageLinkSessionUpdate {
+                    status: Some(StorageLinkStatus::Linked),
+                    linked_account_email: Some(Some(label)),
+                    storage_account_id: Some(Some(account.id.clone())),
+                    completed_at: Some(Some(time::to_iso(now))),
+                    error_message: Some(None),
+                },
+            )
+            .await?;
+        let refreshed = self.repo.get_storage_link_session(session_id).await?.ok_or_else(|| {
+            HttpError::new(
+                500,
+                "storage_link_missing",
+                "Linking the bucket didn't finish. Try again from Minecraft.",
+            )
+        })?;
+        Ok(summarize(&refreshed))
     }
 
     fn build_storage_auth_url(&self, session_id: &str, state: &str, force_consent: bool) -> String {
@@ -517,6 +767,10 @@ impl StorageLinkService {
                     .refresh_token
                     .or_else(|| existing.as_ref().and_then(|e| e.refresh_token.clone())),
                 token_expires_at: Some(payload.expires_at),
+                s3_endpoint: None,
+                s3_region: None,
+                s3_bucket: None,
+                s3_key_prefix: None,
                 created_at: existing
                     .as_ref()
                     .map(|e| e.created_at.clone())
@@ -530,6 +784,33 @@ impl StorageLinkService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn s3_endpoint_validation() {
+        assert_eq!(
+            validate_s3_endpoint("https://abc.r2.cloudflarestorage.com/", false).unwrap(),
+            "https://abc.r2.cloudflarestorage.com"
+        );
+        assert_eq!(
+            validate_s3_endpoint(" https://s3.us-west-004.backblazeb2.com ", false).unwrap(),
+            "https://s3.us-west-004.backblazeb2.com"
+        );
+        assert_eq!(validate_s3_endpoint("http://127.0.0.1:9000", true).unwrap(), "http://127.0.0.1:9000");
+        assert!(validate_s3_endpoint("", false).is_err());
+        assert!(validate_s3_endpoint("not a url", false).is_err());
+        assert!(validate_s3_endpoint("http://minio.example.com", false).is_err());
+        assert!(validate_s3_endpoint("https://user:pw@host.example.com", false).is_err());
+        assert!(validate_s3_endpoint("https://host.example.com/bucket", false).is_err());
+        assert!(validate_s3_endpoint("https://host.example.com?x=1", false).is_err());
+        assert!(validate_s3_endpoint("https://localhost", false).is_err());
+        assert!(validate_s3_endpoint("https://127.0.0.1:9000", false).is_err());
+        assert!(validate_s3_endpoint("https://10.0.0.5", false).is_err());
+        assert!(validate_s3_endpoint("https://192.168.1.10", false).is_err());
+        assert!(validate_s3_endpoint("https://100.90.1.2", false).is_err());
+        assert!(validate_s3_endpoint("https://[::1]", false).is_err());
+        assert!(validate_s3_endpoint("https://minio.tail1234.ts.net.internal", false).is_err());
+        assert!(validate_s3_endpoint("ftp://host.example.com", false).is_err());
+    }
 
     #[test]
     fn scope_and_state_checks() {

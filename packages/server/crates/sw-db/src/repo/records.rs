@@ -29,12 +29,20 @@ pub struct StorageAccountRecord {
     pub id: String,
     pub provider: StorageProviderType,
     pub owner_player_uuid: String,
+    /// Google: the OIDC sub. S3: the access key id.
     pub external_account_id: String,
+    /// Google: the account email. S3: the human-readable bucket label.
     pub email: Option<String>,
     pub display_name: Option<String>,
+    /// Google: the OAuth access token. S3: the secret access key.
     pub access_token: Option<String>,
     pub refresh_token: Option<String>,
     pub token_expires_at: Option<String>,
+    /// S3-only connection details (0034); None for Google Drive rows.
+    pub s3_endpoint: Option<String>,
+    pub s3_region: Option<String>,
+    pub s3_bucket: Option<String>,
+    pub s3_key_prefix: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }

@@ -175,7 +175,7 @@ pub async fn attach_relay_tokens(
         tracing::info!(world_id = %plan.world_id, "relay tokens skipped: no relay keys");
         return Ok(());
     };
-    let Some(relay) = svc.storage_provider.relay() else {
+    let Some(relay) = svc.storage_provider.relay(binding) else {
         tracing::info!(world_id = %plan.world_id, "relay tokens skipped: provider has no relay");
         return Ok(());
     };
@@ -258,14 +258,14 @@ pub async fn authorize_relay_token(svc: &ServiceContext, token: &str) -> HttpRes
         svc.relay_keys.as_ref().ok_or_else(|| HttpError::new(404, "not_found", "Relay not configured."))?;
     let claims = RelayKeys::verify(&keys.verifying_key_b64(), token, time::now())
         .ok_or_else(|| HttpError::new(403, "relay_token_invalid", "Relay token is invalid or expired."))?;
-    let relay = svc
-        .storage_provider
-        .relay()
-        .ok_or_else(|| HttpError::new(404, "not_found", "Relay not configured."))?;
     let binding = StorageBinding {
         provider: svc.storage_provider.provider(),
         storage_account_id: Some(claims.a.clone()),
     };
+    let relay = svc
+        .storage_provider
+        .relay(&binding)
+        .ok_or_else(|| HttpError::new(404, "not_found", "Relay not configured."))?;
     let grant = relay.relay_grant(&binding, std::slice::from_ref(&claims.k)).await?;
     Ok(serde_json::json!({
         "accessToken": grant.access_token,

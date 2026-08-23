@@ -55,6 +55,18 @@ pub trait TestStorageInspector: Send + Sync {
     fn snapshot(&self) -> serde_json::Value;
 }
 
+/// Drive failure injection (`POST /__test/drive-mode`).
+pub trait DriveFailureControl: Send + Sync {
+    /// mode: "normal" | "storage-full" | "reauth-required"; fail_count None = sticky.
+    fn set_drive_fail_mode(&self, mode: &str, fail_count: Option<u32>) -> Result<(), String>;
+}
+
+/// The in-process fake S3 service (`GET /__test/s3`): endpoint + creds +
+/// object listing for the e2e orchestrator.
+pub trait S3TestInfo: Send + Sync {
+    fn s3_info(&self) -> serde_json::Value;
+}
+
 /// Fake Drive resumable-upload endpoint (`/__fake-drive/upload/:id`).
 #[async_trait::async_trait]
 pub trait FakeDriveUploads: Send + Sync {
@@ -106,9 +118,39 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/__test/storage", get(storage))
         .route("/__test/cert-signing-key", get(cert_signing_key))
         .route("/__test/ws-mode", post(ws_mode))
+        .route("/__test/drive-mode", post(drive_mode))
+        .route("/__test/s3", get(s3_info))
         .route("/__test/request-log", get(request_log))
         .route("/__test/request-log/reset", post(request_log_reset))
         .route("/__fake-drive/upload/{uploadId}", any(fake_drive_upload))
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DriveModeRequest {
+    mode: String,
+    #[serde(default)]
+    fail_count: Option<u32>,
+}
+
+async fn drive_mode(
+    State(state): State<Arc<AppState>>,
+    axum::Json(req): axum::Json<DriveModeRequest>,
+) -> Response {
+    match &state.inner().drive_fail {
+        Some(control) => match control.set_drive_fail_mode(&req.mode, req.fail_count) {
+            Ok(()) => ok_json(&serde_json::json!({"status": "ok", "mode": req.mode})),
+            Err(message) => (StatusCode::BAD_REQUEST, message).into_response(),
+        },
+        None => (StatusCode::NOT_FOUND, "no drive failure control installed").into_response(),
+    }
+}
+
+async fn s3_info(State(state): State<Arc<AppState>>) -> Response {
+    match &state.inner().test_s3 {
+        Some(s3) => ok_json(&s3.s3_info()),
+        None => (StatusCode::NOT_FOUND, "no fake s3 installed").into_response(),
+    }
 }
 
 async fn reset(State(state): State<Arc<AppState>>) -> Response {

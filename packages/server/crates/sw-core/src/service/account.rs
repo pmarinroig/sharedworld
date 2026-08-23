@@ -2,7 +2,7 @@
 //! Nothing here existed in the TS worker — the lane-D forwarder passes these
 //! routes through to the box untouched.
 
-use sw_contracts::AccountDeleteStepResponse;
+use sw_contracts::{AccountDeleteStepResponse, StorageProviderType};
 use sw_db::repo::UserRecord;
 
 use crate::http_error::{HttpError, HttpResult};
@@ -32,33 +32,64 @@ const DRIVE_SWEEP_BUDGET_MS: u64 = 8_000;
 pub async fn unlink_storage_account(
     svc: &ServiceContext,
     ctx: &RequestContext,
+    provider: Option<StorageProviderType>,
     now: Instant,
 ) -> HttpResult<()> {
-    let provider = svc.storage_provider.provider();
-    let bound =
-        svc.repository.count_active_worlds_bound_to_player_accounts(provider, &ctx.player_uuid).await?;
-    if bound > 0 {
-        return Err(HttpError::new(
-            409,
-            "storage_unlink_blocked",
-            "Delete the shared worlds stored on this Google Drive before unlinking it.",
-        ));
+    // No explicit provider = the pre-0.5.0 wire shape: old clients only know
+    // the deployment's default provider, so that is all they unlink.
+    let providers = match provider {
+        Some(p) => vec![p],
+        None => vec![svc.storage_provider.provider()],
+    };
+    unlink_storage_accounts_for_providers(svc, ctx, &providers, now).await
+}
+
+/// Every provider a player could hold account rows under: the linkable ones
+/// plus the deployment default (fs/R2 dev mode mints rows under "r2").
+fn all_account_providers(svc: &ServiceContext) -> Vec<StorageProviderType> {
+    let mut providers = vec![StorageProviderType::GoogleDrive, StorageProviderType::S3];
+    let active = svc.storage_provider.provider();
+    if !providers.contains(&active) {
+        providers.push(active);
     }
-    let accounts = svc.repository.find_storage_accounts_by_owner(provider, &ctx.player_uuid).await?;
-    for account in &accounts {
-        let binding = StorageBinding { provider, storage_account_id: Some(account.id.clone()) };
-        // Bounded, best-effort drain of queued blob deletes: once the account
-        // row is gone, GC can never reach these Drive files again.
-        snapshots::sweep_pending_blob_deletes(svc, &binding, now).await?;
-        if let Some(cleanup) = svc.storage_provider.account_cleanup() {
-            if let Err(error) = cleanup.revoke_account_access(&binding).await {
-                tracing::warn!(account = %account.id, cause = %error, "storage token revoke failed");
-            }
+    providers
+}
+
+async fn unlink_storage_accounts_for_providers(
+    svc: &ServiceContext,
+    ctx: &RequestContext,
+    providers: &[StorageProviderType],
+    now: Instant,
+) -> HttpResult<()> {
+    for provider in providers {
+        let bound =
+            svc.repository.count_active_worlds_bound_to_player_accounts(*provider, &ctx.player_uuid).await?;
+        if bound > 0 {
+            return Err(HttpError::new(
+                409,
+                "storage_unlink_blocked",
+                "Delete the shared worlds stored on this storage before unlinking it.",
+            ));
         }
-        svc.repository.delete_storage_objects_for_account(provider, &account.id).await?;
-        svc.repository.delete_pending_blob_deletes_for_account(provider, &account.id).await?;
     }
-    svc.repository.delete_storage_accounts_for_owner(provider, &ctx.player_uuid).await?;
+    for provider in providers {
+        let accounts = svc.repository.find_storage_accounts_by_owner(*provider, &ctx.player_uuid).await?;
+        for account in &accounts {
+            let binding =
+                StorageBinding { provider: account.provider, storage_account_id: Some(account.id.clone()) };
+            // Bounded, best-effort drain of queued blob deletes: once the account
+            // row is gone, GC can never reach these provider files again.
+            snapshots::sweep_pending_blob_deletes(svc, &binding, now).await?;
+            if let Some(cleanup) = svc.storage_provider.account_cleanup(&binding) {
+                if let Err(error) = cleanup.revoke_account_access(&binding).await {
+                    tracing::warn!(account = %account.id, cause = %error, "storage token revoke failed");
+                }
+            }
+            svc.repository.delete_storage_objects_for_account(account.provider, &account.id).await?;
+            svc.repository.delete_pending_blob_deletes_for_account(account.provider, &account.id).await?;
+        }
+        svc.repository.delete_storage_accounts_for_owner(*provider, &ctx.player_uuid).await?;
+    }
     svc.repository.delete_storage_link_sessions_for_player(&ctx.player_uuid).await?;
     Ok(())
 }
@@ -82,11 +113,19 @@ pub async fn delete_account_step(
     ctx: &RequestContext,
     now: Instant,
 ) -> HttpResult<AccountDeleteOutcome> {
-    let provider = svc.storage_provider.provider();
-    let accounts = svc.repository.find_storage_accounts_by_owner(provider, &ctx.player_uuid).await?;
+    let providers = all_account_providers(svc);
+    let mut accounts = Vec::new();
+    for provider in &providers {
+        accounts.extend(svc.repository.find_storage_accounts_by_owner(*provider, &ctx.player_uuid).await?);
+    }
     if !accounts.is_empty() {
-        let bound =
-            svc.repository.count_active_worlds_bound_to_player_accounts(provider, &ctx.player_uuid).await?;
+        let mut bound = 0;
+        for provider in &providers {
+            bound += svc
+                .repository
+                .count_active_worlds_bound_to_player_accounts(*provider, &ctx.player_uuid)
+                .await?;
+        }
         if bound > 0 {
             return Err(HttpError::new(
                 409,
@@ -98,7 +137,7 @@ pub async fn delete_account_step(
         // including files whose index rows were lost — budgeted per call by
         // count AND wall clock: real Drive deletes run sequentially and a
         // step must answer well inside the client's request timeout.
-        if let Some(cleanup) = svc.storage_provider.account_cleanup() {
+        {
             let started = std::time::Instant::now();
             let out_of_budget = |deleted: usize| {
                 deleted >= DRIVE_SWEEP_DELETE_BUDGET
@@ -106,7 +145,13 @@ pub async fn delete_account_step(
             };
             let mut deleted = 0usize;
             'accounts: for account in &accounts {
-                let binding = StorageBinding { provider, storage_account_id: Some(account.id.clone()) };
+                let binding = StorageBinding {
+                    provider: account.provider,
+                    storage_account_id: Some(account.id.clone()),
+                };
+                let Some(cleanup) = svc.storage_provider.account_cleanup(&binding) else {
+                    continue 'accounts;
+                };
                 loop {
                     // A dead grant (revoked at Google, refresh token gone)
                     // must not trap the user in an undeletable account: skip
@@ -114,8 +159,8 @@ pub async fn delete_account_step(
                     // from Drive's own Manage Apps settings.
                     let (ids, next_page) = match cleanup.list_account_object_ids(&binding, None).await {
                         Ok(page) => page,
-                        Err(e) if e.code == "drive_reauth_required" => {
-                            tracing::warn!(account = %account.id, "account deletion skips the Drive sweep: authorization is dead");
+                        Err(e) if e.code == "drive_reauth_required" || e.code == "s3_unauthorized" => {
+                            tracing::warn!(account = %account.id, "account deletion skips the storage sweep: authorization is dead");
                             continue 'accounts;
                         }
                         Err(e) => return Err(e),
@@ -147,9 +192,9 @@ pub async fn delete_account_step(
                 }
             }
         }
-        // Drive is empty: revoke and drop the storage rows (shares the unlink
-        // path, guard included — it re-checks against racing world creation).
-        unlink_storage_account(svc, ctx, now).await?;
+        // Storage is empty: revoke and drop the storage rows (shares the
+        // unlink path, guard included — re-checks against racing world creation).
+        unlink_storage_accounts_for_providers(svc, ctx, &providers, now).await?;
     }
 
     // Finalize. Leave (or tear down) any world the player is still a member

@@ -272,6 +272,10 @@ async fn tokens_are_encrypted_at_rest_when_a_cipher_is_configured() {
         access_token: Some("ya29.secret".into()),
         refresh_token: Some("1//refresh".into()),
         token_expires_at: None,
+        s3_endpoint: None,
+        s3_region: None,
+        s3_bucket: None,
+        s3_key_prefix: None,
         created_at: now.clone(),
         updated_at: now,
     })
@@ -326,6 +330,10 @@ async fn storage_account_email_and_tokens_are_encrypted_at_rest() {
             access_token: Some("at-secret".into()),
             refresh_token: Some("rt-secret".into()),
             token_expires_at: None,
+            s3_endpoint: None,
+            s3_region: None,
+            s3_bucket: None,
+            s3_key_prefix: None,
             created_at: now.clone(),
             updated_at: now,
         })

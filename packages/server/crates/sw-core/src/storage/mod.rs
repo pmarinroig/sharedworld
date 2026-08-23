@@ -1,11 +1,15 @@
 //! Storage providers (`storage.ts`): the blob store behind content-addressed
-//! keys. Google Drive in production, a local filesystem provider for tests
-//! and the R2-parity mode.
+//! keys. Google Drive and user-supplied S3 buckets in production, a local
+//! filesystem provider for tests and the R2-parity mode. Since 0.5.0 the
+//! `RoutingStorageProvider` dispatches every call on the world's binding, so
+//! worlds on different providers coexist in one process.
 
 pub mod drive;
 pub mod fs;
 pub mod link_service;
 pub mod manifest_doc;
+pub mod s3;
+pub mod sigv4;
 
 use std::pin::Pin;
 use std::sync::Arc;
@@ -13,7 +17,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
-use sw_contracts::StorageProviderType;
+use sw_contracts::{SignedBlobUrl, StorageProviderType};
 use sw_db::Repository;
 
 use crate::config::Config;
@@ -21,19 +25,102 @@ use crate::http_error::{HttpError, HttpResult};
 
 pub use sw_db::repo::WorldStorageBinding as StorageBinding;
 
-/// The provider `ACTIVE_STORAGE_PROVIDER` selects (`createStorageProvider`).
+/// The per-binding router; `ACTIVE_STORAGE_PROVIDER` only picks the default
+/// for new unlinked worlds (`createStorageProvider`).
 pub fn create_storage_provider(
     config: &Arc<Config>,
     repo: &Repository,
     http: reqwest::Client,
-) -> Arc<dyn StorageProvider> {
-    match config.active_storage_provider {
-        StorageProviderType::GoogleDrive => {
-            Arc::new(drive::GoogleDriveStorageProvider::new(repo.clone(), config.clone(), http))
-        }
-        StorageProviderType::R2 => Arc::new(fs::FsStorageProvider::new(
+) -> Arc<RoutingStorageProvider> {
+    Arc::new(RoutingStorageProvider {
+        default_provider: config.active_storage_provider,
+        drive: drive::GoogleDriveStorageProvider::new(repo.clone(), config.clone(), http.clone()),
+        s3: s3::S3StorageProvider::new(repo.clone(), http, config.signed_url_ttl_seconds),
+        fs: Arc::new(fs::FsStorageProvider::new(
             config.fs_blob_root.clone().unwrap_or_else(|| std::path::PathBuf::from("./blobs")),
         )),
+    })
+}
+
+/// Dispatches every storage call on the binding's provider, so one process
+/// serves Drive worlds, S3 worlds, and fs/R2 worlds at once.
+pub struct RoutingStorageProvider {
+    default_provider: StorageProviderType,
+    drive: drive::GoogleDriveStorageProvider,
+    s3: s3::S3StorageProvider,
+    fs: Arc<fs::FsStorageProvider>,
+}
+
+impl RoutingStorageProvider {
+    fn route(&self, binding: &StorageBinding) -> &dyn StorageProvider {
+        match binding.provider {
+            StorageProviderType::GoogleDrive => &self.drive,
+            StorageProviderType::S3 => &self.s3,
+            StorageProviderType::R2 => self.fs.as_ref(),
+        }
+    }
+
+    /// The fs provider handle (tests and the R2 dev mode read blobs directly).
+    pub fn fs_provider(&self) -> Arc<fs::FsStorageProvider> {
+        self.fs.clone()
+    }
+}
+
+#[async_trait]
+impl StorageProvider for RoutingStorageProvider {
+    fn provider(&self) -> StorageProviderType {
+        self.default_provider
+    }
+
+    async fn exists(&self, binding: &StorageBinding, storage_key: &str) -> HttpResult<bool> {
+        self.route(binding).exists(binding, storage_key).await
+    }
+
+    async fn put(
+        &self,
+        binding: &StorageBinding,
+        storage_key: &str,
+        body: PutBody,
+        content_type: &str,
+    ) -> HttpResult<()> {
+        self.route(binding).put(binding, storage_key, body, content_type).await
+    }
+
+    async fn get(
+        &self,
+        binding: &StorageBinding,
+        storage_key: &str,
+        range: Option<&BlobRange>,
+    ) -> HttpResult<Option<StoredBlob>> {
+        self.route(binding).get(binding, storage_key, range).await
+    }
+
+    async fn delete(&self, binding: &StorageBinding, storage_key: &str) -> HttpResult<()> {
+        self.route(binding).delete(binding, storage_key).await
+    }
+
+    async fn quota(&self, binding: &StorageBinding) -> HttpResult<StorageQuota> {
+        self.route(binding).quota(binding).await
+    }
+
+    fn resumable(&self, binding: &StorageBinding) -> Option<&dyn ResumableUploadCapable> {
+        self.route(binding).resumable(binding)
+    }
+
+    fn relay(&self, binding: &StorageBinding) -> Option<&dyn crate::relay::RelayCapable> {
+        self.route(binding).relay(binding)
+    }
+
+    fn account_cleanup(&self, binding: &StorageBinding) -> Option<&dyn AccountCleanupCapable> {
+        self.route(binding).account_cleanup(binding)
+    }
+
+    fn presign(&self, binding: &StorageBinding) -> Option<&dyn PresignCapable> {
+        self.route(binding).presign(binding)
+    }
+
+    fn manifest_doc_capable(&self, binding: &StorageBinding) -> bool {
+        self.route(binding).manifest_doc_capable(binding)
     }
 }
 
@@ -195,8 +282,26 @@ pub trait AccountCleanupCapable: Send + Sync {
     async fn revoke_account_access(&self, binding: &StorageBinding) -> HttpResult<()>;
 }
 
+/// Optional provider capability: presigned URLs for direct client PUT/GET
+/// against the store (S3). Authority is enforced by the authenticated plan
+/// endpoints at presign time; the URL itself carries the store's query auth.
+/// Resolving the context is one async account lookup; signing each key is
+/// then pure computation, so plans with hundreds of steps stay cheap.
+#[async_trait]
+pub trait PresignCapable: Send + Sync {
+    async fn presign_context(&self, binding: &StorageBinding) -> HttpResult<Box<dyn TransferPresigner>>;
+}
+
+/// Per-key presigner resolved once per plan.
+pub trait TransferPresigner: Send + Sync {
+    fn presign_put(&self, storage_key: &str) -> SignedBlobUrl;
+    fn presign_get(&self, storage_key: &str) -> SignedBlobUrl;
+}
+
 #[async_trait]
 pub trait StorageProvider: Send + Sync {
+    /// The default provider for new unlinked worlds — NOT necessarily the
+    /// provider a given binding routes to.
     fn provider(&self) -> StorageProviderType;
     async fn exists(&self, binding: &StorageBinding, storage_key: &str) -> HttpResult<bool>;
     async fn put(
@@ -215,23 +320,31 @@ pub trait StorageProvider: Send + Sync {
     ) -> HttpResult<Option<StoredBlob>>;
     async fn delete(&self, binding: &StorageBinding, storage_key: &str) -> HttpResult<()>;
     async fn quota(&self, binding: &StorageBinding) -> HttpResult<StorageQuota>;
-    fn resumable(&self) -> Option<&dyn ResumableUploadCapable> {
+    fn resumable(&self, binding: &StorageBinding) -> Option<&dyn ResumableUploadCapable> {
+        let _ = binding;
         None
     }
     /// Lane-D relay grants (direct reads by the CF relay); Drive only.
-    fn relay(&self) -> Option<&dyn crate::relay::RelayCapable> {
+    fn relay(&self, binding: &StorageBinding) -> Option<&dyn crate::relay::RelayCapable> {
+        let _ = binding;
         None
     }
-    /// Account unlink / delete-account cleanup; Drive only.
-    fn account_cleanup(&self) -> Option<&dyn AccountCleanupCapable> {
+    /// Account unlink / delete-account cleanup; Drive and S3.
+    fn account_cleanup(&self, binding: &StorageBinding) -> Option<&dyn AccountCleanupCapable> {
+        let _ = binding;
+        None
+    }
+    /// Direct client transfers via presigned URLs; S3 only.
+    fn presign(&self, binding: &StorageBinding) -> Option<&dyn PresignCapable> {
+        let _ = binding;
         None
     }
     /// True when 0027 manifest documents can be written/read for this binding
-    /// (`manifestDocCapable`): Drive needs a linked account; fs/R2 always can.
+    /// (`manifestDocCapable`): Drive/S3 need a linked account; fs/R2 always can.
     fn manifest_doc_capable(&self, binding: &StorageBinding) -> bool {
-        match self.provider() {
-            StorageProviderType::GoogleDrive => {
-                binding.storage_account_id.is_some() && binding.provider == StorageProviderType::GoogleDrive
+        match binding.provider {
+            StorageProviderType::GoogleDrive | StorageProviderType::S3 => {
+                binding.storage_account_id.is_some()
             }
             StorageProviderType::R2 => true,
         }
