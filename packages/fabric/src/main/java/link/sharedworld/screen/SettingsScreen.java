@@ -192,8 +192,22 @@ public final class SettingsScreen extends link.sharedworld.versioned.VersionedSc
     private void renderStorageDecorations(GuiGraphics guiGraphics) {
         int centerX = this.width / 2;
         int top = this.contentArea.top();
-        guiGraphics.drawCenteredString(this.font, this.driveStatusLine(), centerX, top + 12, 0xFFB0B0B0);
-        guiGraphics.drawCenteredString(this.font, this.s3StatusLine(), centerX, top + 62, 0xFFB0B0B0);
+        int maxWidth = Math.min(320, this.width - 24);
+        guiGraphics.drawCenteredString(this.font, this.clampToWidth(this.driveStatusLine(), maxWidth), centerX, top + 12, 0xFFB0B0B0);
+        guiGraphics.drawCenteredString(this.font, this.clampToWidth(this.s3StatusLine(), maxWidth), centerX, top + 62, 0xFFB0B0B0);
+    }
+
+    /**
+     * Status lines can carry very long account labels (an R2 endpoint host
+     * embeds a 32-char account id); clip with an ellipsis instead of letting
+     * the line run past the screen.
+     */
+    private Component clampToWidth(Component text, int maxWidth) {
+        if (this.font.width(text) <= maxWidth) {
+            return text;
+        }
+        String plain = text.getString();
+        return Component.literal(this.font.plainSubstrByWidth(plain, maxWidth - this.font.width("...")) + "...");
     }
 
     private void renderAdvancedDecorations(GuiGraphics guiGraphics) {

@@ -62,6 +62,16 @@ final class CreateWizardModel {
         return false;
     }
 
+    /**
+     * Both storage providers are usable: storage is satisfied, but the connect
+     * step holds until the player picks where the new world will live.
+     */
+    void onStorageProviderChoiceRequired() {
+        if (this.storageState != StorageState.LINKED_THIS_RUN) {
+            this.storageState = StorageState.LINKED_ACCOUNT;
+        }
+    }
+
     /** The account check itself failed; treat as not linked so the player can still connect. */
     void onStorageAccountCheckFailed() {
         if (this.storageState == StorageState.CHECKING) {
