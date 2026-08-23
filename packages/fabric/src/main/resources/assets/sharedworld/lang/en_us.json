@@ -69,7 +69,6 @@
   "screen.sharedworld.lifecycle_unexpected_local_invariant": "Something unexpected went wrong on this computer. Try again. If it keeps happening, restart Minecraft.",
   "screen.sharedworld.no_worlds": "No Shared Worlds yet. Create one or add one with a share code.",
   "screen.sharedworld.no_local_worlds": "No worlds found. Create one in Singleplayer first, or use Select Folder below.",
-  "screen.sharedworld.missing_e4mc": "The e4mc mod isn't installed. You can join worlds normally; hosting needs e4mc or a custom join address (Settings → Advanced).",
   "screen.sharedworld.world_name": "World Name",
   "screen.sharedworld.name_hint": "World name",
   "screen.sharedworld.motd": "World Message",

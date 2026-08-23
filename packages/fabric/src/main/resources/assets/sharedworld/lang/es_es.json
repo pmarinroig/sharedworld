@@ -69,7 +69,6 @@
   "screen.sharedworld.lifecycle_unexpected_local_invariant": "Algo inesperado ha fallado en este ordenador. Inténtalo de nuevo. Si sigue pasando, reinicia Minecraft.",
   "screen.sharedworld.no_worlds": "Aún no hay Shared Worlds. Crea uno o añade uno con un código para compartir.",
   "screen.sharedworld.no_local_worlds": "No se han encontrado mundos. Crea uno en Un jugador primero, o usa Seleccionar carpeta abajo.",
-  "screen.sharedworld.missing_e4mc": "El mod e4mc no está instalado. Puedes unirte a mundos con normalidad; para hospedar hace falta e4mc o una dirección de conexión personalizada (Ajustes → Avanzado).",
   "screen.sharedworld.world_name": "Nombre del mundo",
   "screen.sharedworld.name_hint": "Nombre del mundo",
   "screen.sharedworld.motd": "Mensaje del mundo",

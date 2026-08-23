@@ -69,7 +69,6 @@
   "screen.sharedworld.lifecycle_unexpected_local_invariant": "Alguna cosa inesperada ha fallat en aquest ordinador. Torna-ho a provar. Si continua passant, reinicia Minecraft.",
   "screen.sharedworld.no_worlds": "Encara no hi ha Shared Worlds. Crea'n un o afegeix-ne un amb un codi per compartir.",
   "screen.sharedworld.no_local_worlds": "No s'ha trobat cap món. Primer crea'n un a Un jugador, o fes servir Seleccionar carpeta a sota.",
-  "screen.sharedworld.missing_e4mc": "El mod e4mc no està instal·lat. Pots unir-te a mons amb normalitat; per allotjar cal e4mc o una adreça de connexió personalitzada (Configuració → Avançat).",
   "screen.sharedworld.world_name": "Nom del món",
   "screen.sharedworld.name_hint": "Nom del món",
   "screen.sharedworld.motd": "Missatge del món",

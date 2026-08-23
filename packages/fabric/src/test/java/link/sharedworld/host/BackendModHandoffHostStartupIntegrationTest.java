@@ -89,6 +89,10 @@ final class BackendModHandoffHostStartupIntegrationTest {
                     BACKGROUND_EXECUTOR,
                     Runnable::run
             );
+            // The default resolvers read the live client config store and mod
+            // list, neither of which exists in this JVM.
+            hostingManager.setCustomJoinAddressResolver(() -> null);
+            hostingManager.setE4mcAvailableSupplier(() -> true);
             SharedWorldSessionCoordinator coordinator = new SharedWorldSessionCoordinator(
                     new RealSessionBackend(guestClient),
                     new SharedWorldCoordinatorHarness.InMemoryRecoveryStore(),

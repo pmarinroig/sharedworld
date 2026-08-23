@@ -340,6 +340,23 @@ public final class SharedWorldHostingManager {
         E4mcDomainTracker.clear();
         setPhase(Phase.PREPARING, SharedWorldText.string("screen.sharedworld.hosting_syncing_snapshot"));
 
+        // Without e4mc or a valid custom join address this attempt can never
+        // publish; fail while the launching screen is still up rather than
+        // after the snapshot has been downloaded and the world has loaded.
+        // publishIfNeeded re-checks at publish time as the safety net.
+        switch (CustomJoinAddressPolicy.publishMode(this.customJoinAddressResolver.get(), this.e4mcAvailable.getAsBoolean())) {
+            case FAIL_INVALID_ADDRESS -> {
+                fail(SharedWorldText.string("screen.sharedworld.hosting_invalid_custom_address"), null);
+                return;
+            }
+            case FAIL_NEEDS_E4MC_OR_ADDRESS -> {
+                fail(SharedWorldText.string("screen.sharedworld.hosting_needs_e4mc_or_custom_address"), null);
+                return;
+            }
+            default -> {
+            }
+        }
+
         launchPrepareAndOpen(startupAttemptId, null);
     }
 

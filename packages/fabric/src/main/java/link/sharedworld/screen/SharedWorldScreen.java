@@ -4,7 +4,6 @@ import link.sharedworld.SharedWorldClient;
 import link.sharedworld.SharedWorldText;
 import link.sharedworld.api.SharedWorldApiClient;
 import link.sharedworld.api.SharedWorldModels.WorldSummaryDto;
-import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
@@ -283,17 +282,7 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
             );
         }
 
-        if (!SharedWorldClient.isE4mcInstalled()) {
-            guiGraphics.drawCenteredString(
-                    this.font,
-                    Component.translatable("screen.sharedworld.missing_e4mc").withStyle(ChatFormatting.YELLOW),
-                    this.width / 2,
-                    this.height - 74,
-                    0xFFFFD37A
-            );
-        }
-        int bannerBottom = SharedWorldClient.isE4mcInstalled() ? this.height - 64 : this.height - 78;
-        this.statusBanner.renderBottomCentered(guiGraphics, this.font, this.width / 2, bannerBottom, Math.min(this.width - 40, 420));
+        this.statusBanner.renderBottomCentered(guiGraphics, this.font, this.width / 2, this.height - 64, Math.min(this.width - 40, 420));
     }
 
     public void onEntrySelected(WorldSummaryDto world) {
