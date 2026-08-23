@@ -23,6 +23,9 @@ if (mcBucket == null) {
 }
 def bucketJavaRelease = (mcBucket.javaRelease ?: 21) as int
 def bucketMixinCompatibilityLevel = bucketJavaRelease >= 21 ? "JAVA_21" : "JAVA_17"
+// The e2e driver compiles against default-bucket-only Minecraft APIs, so it
+// rides along (and gets compiled) only there — mirroring the classic project.
+def isDefaultMcBucket = mcBucketName == bucketConfig.defaults.classic
 
 // Fabric's semver range ("[>=]a[ <b]") to a maven range ("[a,b)"); the
 // buckets only ever use the >=lo <hi shape.
@@ -198,8 +201,10 @@ neoForge {
         sharedworld_dev_helper {
             sourceSet sourceSets.devHelper
         }
-        sharedworld_dev_e2e {
-            sourceSet sourceSets.devHelperE2e
+        if (isDefaultMcBucket) {
+            create("sharedworld_dev_e2e") {
+                sourceSet sourceSets.devHelperE2e
+            }
         }
     }
 
