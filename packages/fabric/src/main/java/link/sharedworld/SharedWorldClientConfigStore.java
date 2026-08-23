@@ -5,7 +5,6 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import net.fabricmc.loader.api.FabricLoader;
 
 import java.io.IOException;
 import java.io.Reader;
@@ -60,6 +59,21 @@ public final class SharedWorldClientConfigStore {
         return configuredBackendBaseUrl();
     }
 
+    /**
+     * Custom join address for whenever this computer hosts (VPN/Tailscale
+     * setups that skip e4mc), or null to use the e4mc tunnel. Per-computer,
+     * not per-world: it describes what *this* machine is reachable as, and any
+     * member may end up hosting. Never synced to the backend.
+     */
+    public synchronized String customJoinAddress() {
+        return this.state.hosting.customJoinAddress;
+    }
+
+    public synchronized void setCustomJoinAddress(String address) {
+        this.state.hosting.customJoinAddress = normalizeCustomJoinAddress(address);
+        save();
+    }
+
     /** Account deletion: revert to defaults in memory only (the file is deleted separately). */
     public synchronized void resetForAccountDeletion() {
         this.state = new ClientConfig();
@@ -97,7 +111,7 @@ public final class SharedWorldClientConfigStore {
             return new ClientConfig();
         }
         JsonObject object = parsed.getAsJsonObject();
-        if (object.has("backend") || object.has("ui") || object.has("advanced")) {
+        if (object.has("backend") || object.has("ui") || object.has("advanced") || object.has("hosting")) {
             ClientConfig loaded = GSON.fromJson(object, ClientConfig.class);
             return loaded == null ? new ClientConfig() : loaded;
         }
@@ -119,7 +133,19 @@ public final class SharedWorldClientConfigStore {
         if (sanitized.ui.lastMultiplayerView == null) {
             sanitized.ui.lastMultiplayerView = MultiplayerView.VANILLA;
         }
+        if (sanitized.hosting == null) {
+            sanitized.hosting = new HostingConfig();
+        }
+        sanitized.hosting.customJoinAddress = normalizeCustomJoinAddress(sanitized.hosting.customJoinAddress);
         return sanitized;
+    }
+
+    private static String normalizeCustomJoinAddress(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     private static MultiplayerView parseMultiplayerView(JsonElement element) {
@@ -154,13 +180,18 @@ public final class SharedWorldClientConfigStore {
 
     private static final class Holder {
         private static final SharedWorldClientConfigStore INSTANCE = new SharedWorldClientConfigStore(
-                FabricLoader.getInstance().getConfigDir().resolve("sharedworld-client.json")
+                link.sharedworld.platform.SharedWorldPlatform.get().configDir().resolve("sharedworld-client.json")
         );
     }
 
     private static final class ClientConfig {
         private BackendConfig backend = new BackendConfig();
         private UiConfig ui = new UiConfig();
+        private HostingConfig hosting = new HostingConfig();
+    }
+
+    private static final class HostingConfig {
+        private String customJoinAddress;
     }
 
     private static final class BackendConfig {

@@ -14,7 +14,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 final class SharedWorldConnectorTest {
     @BeforeAll
     static void initializeMinecraftVersion() {
-        SharedConstants.tryDetectVersion();
+        try {
+            SharedConstants.tryDetectVersion();
+        } catch (RuntimeException | LinkageError ignored) {
+            // NeoForge 21.9+ patches SharedConstants to demand a live FML
+            // loader; the connector under test never reads the version.
+        }
     }
 
     @Test

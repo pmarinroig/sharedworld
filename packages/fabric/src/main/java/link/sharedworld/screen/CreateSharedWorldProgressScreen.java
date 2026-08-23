@@ -25,8 +25,8 @@ public final class CreateSharedWorldProgressScreen extends link.sharedworld.vers
     private final SharedWorldCreateFlow createFlow = new SharedWorldCreateFlow(
             new SharedWorldCreateFlow.CreateBackend() {
                 @Override
-                public link.sharedworld.api.SharedWorldModels.CreateWorldResultDto createWorld(String name, String motdLine1, String customIconPngBase64, link.sharedworld.api.SharedWorldModels.ImportedWorldSourceDto importSource, String storageLinkSessionId, boolean useLinkedStorageAccount) throws java.io.IOException, InterruptedException {
-                    return SharedWorldClient.apiClient().createWorld(name, motdLine1, null, customIconPngBase64, importSource, storageLinkSessionId, useLinkedStorageAccount);
+                public link.sharedworld.api.SharedWorldModels.CreateWorldResultDto createWorld(String name, String motdLine1, String customIconPngBase64, link.sharedworld.api.SharedWorldModels.ImportedWorldSourceDto importSource, String storageLinkSessionId, boolean useLinkedStorageAccount, String linkedStorageProvider) throws java.io.IOException, InterruptedException {
+                    return SharedWorldClient.apiClient().createWorld(name, motdLine1, null, customIconPngBase64, importSource, storageLinkSessionId, useLinkedStorageAccount, linkedStorageProvider);
                 }
 
                 @Override

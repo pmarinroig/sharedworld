@@ -46,8 +46,8 @@ final class BackendModCreateFlowIntegrationTest {
             SharedWorldCreateFlow flow = new SharedWorldCreateFlow(
                     new SharedWorldCreateFlow.CreateBackend() {
                         @Override
-                        public SharedWorldModels.CreateWorldResultDto createWorld(String name, String motdLine1, String customIconPngBase64, SharedWorldModels.ImportedWorldSourceDto importSource, String storageLinkSessionId, boolean useLinkedStorageAccount) throws java.io.IOException, InterruptedException {
-                            return hostClient.createWorld(name, motdLine1, null, customIconPngBase64, importSource, storageLinkSessionId, useLinkedStorageAccount);
+                        public SharedWorldModels.CreateWorldResultDto createWorld(String name, String motdLine1, String customIconPngBase64, SharedWorldModels.ImportedWorldSourceDto importSource, String storageLinkSessionId, boolean useLinkedStorageAccount, String linkedStorageProvider) throws java.io.IOException, InterruptedException {
+                            return hostClient.createWorld(name, motdLine1, null, customIconPngBase64, importSource, storageLinkSessionId, useLinkedStorageAccount, linkedStorageProvider);
                         }
 
                         @Override
@@ -99,7 +99,8 @@ final class BackendModCreateFlowIntegrationTest {
                             worldName,
                             "MOTD",
                             null,
-                            false
+                            false,
+                            null
                     ),
                     new InitialSnapshotUploadPipeline.ProgressSink() {
                         @Override

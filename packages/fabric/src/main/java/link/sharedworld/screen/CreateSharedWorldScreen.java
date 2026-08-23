@@ -75,6 +75,11 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
     private EditBox nameBox;
     private EditBox motdBox;
     private Button linkDriveButton;
+    private Button linkS3Button;
+    /** Provider of the already-linked account the create will reuse (null = server default / Drive). */
+    private String linkedStorageProvider;
+    /** Provider of the link attempt currently running (null = Drive). */
+    private String linkAttemptProvider;
     private Button backButton;
     private Button primaryButton;
 
@@ -157,6 +162,11 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
                 .build();
         this.addRenderableWidget(this.linkDriveButton);
 
+        this.linkS3Button = Button.builder(Component.translatable("screen.sharedworld.storage_link_s3"), ignored -> this.onConnectS3Pressed())
+                .width(190)
+                .build();
+        this.addRenderableWidget(this.linkS3Button);
+
         if (this.restoredDraft != null) {
             this.selectedIcon = this.restoredDraft.selectedIcon();
             this.clearCustomIcon = this.restoredDraft.clearCustomIcon();
@@ -183,23 +193,34 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
             return;
         }
         this.accountCheckStarted = true;
+        record AccountCheck(StorageAccountSummaryDto drive, boolean s3Healthy) {
+        }
         CompletableFuture
                 .supplyAsync(() -> {
                     try {
-                        return SharedWorldClient.apiClient().getStorageAccount();
+                        StorageAccountSummaryDto drive = SharedWorldClient.apiClient().getStorageAccount();
+                        if (drive.linked() && drive.healthy()) {
+                            return new AccountCheck(drive, false);
+                        }
+                        // No usable Drive account: an already-linked healthy
+                        // S3 bucket also satisfies the connect step.
+                        StorageAccountSummaryDto s3 = SharedWorldClient.apiClient().getStorageAccount("s3");
+                        return new AccountCheck(drive, s3.linked() && s3.healthy());
                     } catch (Exception exception) {
                         throw new RuntimeException(exception);
                     }
                 }, SharedWorldClient.ioExecutor())
-                .whenComplete((account, error) -> Minecraft.getInstance().execute(() -> {
+                .whenComplete((check, error) -> Minecraft.getInstance().execute(() -> {
                     if (error != null) {
                         this.wizard.onStorageAccountCheckFailed();
                         this.updateStorageBanner();
                         this.updateButtons();
                         return;
                     }
-                    this.storageAccount = account;
-                    boolean advanced = this.wizard.onStorageAccountChecked(account.linked() && account.healthy());
+                    this.storageAccount = check.drive();
+                    boolean driveHealthy = check.drive().linked() && check.drive().healthy();
+                    this.linkedStorageProvider = !driveHealthy && check.s3Healthy() ? "s3" : null;
+                    boolean advanced = this.wizard.onStorageAccountChecked(driveHealthy || check.s3Healthy());
                     if (advanced) {
                         this.onStepChanged();
                     } else {
@@ -250,10 +271,14 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         this.motdBox.setPosition(left, area.top() + 82);
         this.motdBox.setWidth(Math.min(190, area.width() - 140));
 
-        // Connect step widget.
+        // Connect step widgets.
         this.linkDriveButton.setPosition(
                 area.left() + (area.width() - this.linkDriveButton.getWidth()) / 2,
                 area.top() + STORAGE_BUTTON_TOP
+        );
+        this.linkS3Button.setPosition(
+                area.left() + (area.width() - this.linkS3Button.getWidth()) / 2,
+                area.top() + STORAGE_BUTTON_TOP + 24
         );
     }
 
@@ -274,6 +299,9 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         }
         if (this.linkDriveButton != null) {
             this.linkDriveButton.visible = step == CreateWizardModel.Step.CONNECT_DRIVE;
+        }
+        if (this.linkS3Button != null) {
+            this.linkS3Button.visible = step == CreateWizardModel.Step.CONNECT_DRIVE;
         }
     }
 
@@ -522,6 +550,9 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         this.linkDriveButton.active = !this.submitting
                 && !this.driveLinkOpeningBrowser()
                 && this.wizard.storageState() != CreateWizardModel.StorageState.CHECKING;
+        if (this.linkS3Button != null) {
+            this.linkS3Button.active = this.linkDriveButton.active;
+        }
     }
 
     private void onBack() {
@@ -577,7 +608,11 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
     }
 
     private void onConnectDrivePressed() {
-        this.beginDriveLink(this.shouldRetryWithConsent());
+        this.beginStorageLink(this.shouldRetryWithConsent(), null);
+    }
+
+    private void onConnectS3Pressed() {
+        this.beginStorageLink(false, "s3");
     }
 
     /** A failed or expired link attempt retries through the full consent screen. */
@@ -586,17 +621,19 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
                 && ("failed".equalsIgnoreCase(this.storageLink.status()) || "expired".equalsIgnoreCase(this.storageLink.status()));
     }
 
-    private void beginDriveLink(boolean forceConsent) {
+    /** provider null = Google Drive OAuth; "s3" = the bring-your-own-bucket form. */
+    private void beginStorageLink(boolean forceConsent, String provider) {
         this.cancelDriveLinkAttempt(false);
         this.storageLink = null;
+        this.linkAttemptProvider = provider;
         DriveLinkAttempt attempt = this.driveLinkController.beginAttempt();
         this.updateStorageBanner();
-        CompletableFuture.runAsync(() -> this.runDriveLinkAttempt(attempt, forceConsent), SharedWorldClient.ioExecutor());
+        CompletableFuture.runAsync(() -> this.runDriveLinkAttempt(attempt, forceConsent, provider), SharedWorldClient.ioExecutor());
     }
 
-    private void runDriveLinkAttempt(DriveLinkAttempt attempt, boolean forceConsent) {
+    private void runDriveLinkAttempt(DriveLinkAttempt attempt, boolean forceConsent, String provider) {
         try {
-            StorageLinkSessionDto session = SharedWorldClient.apiClient().createStorageLink(forceConsent);
+            StorageLinkSessionDto session = SharedWorldClient.apiClient().createStorageLink(forceConsent, provider);
             attempt.setSession(session);
             this.scheduleCurrentAttemptUiUpdate(attempt, () -> {
                 this.storageLink = session;
@@ -807,7 +844,8 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
                 this.worldName(),
                 SharedWorldMetadataFormat.effectiveMotd(this.motdBox.getValue()),
                 this.selectedIcon,
-                this.clearCustomIcon
+                this.clearCustomIcon,
+                this.linkedStorageProvider
         );
     }
 
@@ -912,7 +950,9 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
             String name,
             String motd,
             SelectedIcon selectedIcon,
-            boolean clearCustomIcon
+            boolean clearCustomIcon,
+            /* Which already-linked account to reuse when storageLink is null (null = server default). */
+            String linkedStorageProvider
     ) {
         ImportedWorldSourceDto importSource() {
             return new ImportedWorldSourceDto("local-save", this.save.id(), this.save.displayName());

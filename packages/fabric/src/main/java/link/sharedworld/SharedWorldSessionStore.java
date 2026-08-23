@@ -4,7 +4,6 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import link.sharedworld.api.SharedWorldApiClient;
 import link.sharedworld.api.SharedWorldModels.SessionTokenDto;
-import net.fabricmc.loader.api.FabricLoader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -144,7 +143,7 @@ public final class SharedWorldSessionStore implements SharedWorldApiClient.Sessi
 
     private static final class Holder {
         private static final SharedWorldSessionStore INSTANCE = new SharedWorldSessionStore(
-                FabricLoader.getInstance().getConfigDir().resolve("sharedworld-sessions.json")
+                link.sharedworld.platform.SharedWorldPlatform.get().configDir().resolve("sharedworld-sessions.json")
         );
     }
 

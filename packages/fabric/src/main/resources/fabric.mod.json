@@ -11,7 +11,7 @@
   "environment": "client",
   "entrypoints": {
     "client": [
-      "link.sharedworld.SharedWorldClient"
+      "link.sharedworld.fabric.SharedWorldFabricClient"
     ]
   },
   "mixins": [
@@ -22,7 +22,9 @@
     "fabricloader": ">=0.18.2",
     "minecraft": "${minecraftRange}",
     "java": ">=${javaVersion}",
-    "fabric-api": "*",
+    "fabric-api": "*"
+  },
+  "recommends": {
     "e4mc": ">=6.0.6 <7.0.0"
   }
 }

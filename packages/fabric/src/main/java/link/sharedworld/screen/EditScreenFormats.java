@@ -76,9 +76,13 @@ final class EditScreenFormats {
         if (details == null || details.storageProvider() == null || details.storageProvider().isBlank()) {
             return SharedWorldText.string("screen.sharedworld.unknown");
         }
-        return "google-drive".equalsIgnoreCase(details.storageProvider())
-                ? SharedWorldText.string("screen.sharedworld.storage_provider_google_drive")
-                : details.storageProvider();
+        if ("google-drive".equalsIgnoreCase(details.storageProvider())) {
+            return SharedWorldText.string("screen.sharedworld.storage_provider_google_drive");
+        }
+        if ("s3".equalsIgnoreCase(details.storageProvider())) {
+            return SharedWorldText.string("screen.sharedworld.storage_provider_s3");
+        }
+        return details.storageProvider();
     }
 
     static String formatStorageAccount(WorldDetailsDto details, StorageUsageSummaryDto usage) {

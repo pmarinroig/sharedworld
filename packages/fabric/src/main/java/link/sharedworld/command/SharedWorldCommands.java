@@ -17,7 +17,7 @@ import link.sharedworld.api.SharedWorldApiClient;
 import link.sharedworld.host.MemberCommandGrant;
 import link.sharedworld.host.SharedWorldHostingManager;
 import link.sharedworld.versioned.CommandPermissionCompat;
-import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
+import com.mojang.brigadier.CommandDispatcher;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.EntityArgument;
@@ -50,13 +50,31 @@ public final class SharedWorldCommands {
 
     private static volatile BanCommandWiring banWiring;
 
-    public static void register(
+    /**
+     * Stores the dependencies the command executors and the vanilla /ban
+     * interception need. Called once from client init; the per-loader
+     * entrypoint hooks its command-registration event to
+     * {@link #registerCommands(CommandDispatcher)}.
+     */
+    public static void wire(
             SharedWorldApiClient apiClient,
             Supplier<SharedWorldHostingManager> hostingManager,
             Executor ioExecutor,
             Executor clientMainThreadExecutor
     ) {
         banWiring = new BanCommandWiring(apiClient, hostingManager, ioExecutor, clientMainThreadExecutor);
+    }
+
+    /** Registers the SharedWorld commands; the caller gates on the integrated server. */
+    public static void registerCommands(CommandDispatcher<CommandSourceStack> dispatcher) {
+        BanCommandWiring wiring = banWiring;
+        if (wiring == null) {
+            return;
+        }
+        SharedWorldApiClient apiClient = wiring.apiClient();
+        Supplier<SharedWorldHostingManager> hostingManager = wiring.hostingManager();
+        Executor ioExecutor = wiring.ioExecutor();
+        Executor clientMainThreadExecutor = wiring.clientMainThreadExecutor();
         SuggestionProvider<CommandSourceStack> memberNames = (context, builder) -> {
             for (MemberCommandGrant grant : SharedWorldDevSessionBridge.hostedMemberGrants().values()) {
                 if (grant.playerName() != null && !grant.playerName().isBlank()) {
@@ -65,38 +83,32 @@ public final class SharedWorldCommands {
             }
             return builder.buildFuture();
         };
-
-        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
-            if (!environment.includeIntegrated) {
-                return;
-            }
-            dispatcher.register(Commands.literal("op")
-                    .requires(SharedWorldCommands::sourceIsHostingOwner)
-                    .then(Commands.argument("player", StringArgumentType.word())
-                            .suggests(memberNames)
-                            .executes(context -> togglePermission(context, true, apiClient, hostingManager, ioExecutor, clientMainThreadExecutor))));
-            dispatcher.register(Commands.literal("deop")
-                    .requires(SharedWorldCommands::sourceIsHostingOwner)
-                    .then(Commands.argument("player", StringArgumentType.word())
-                            .suggests(memberNames)
-                            .executes(context -> togglePermission(context, false, apiClient, hostingManager, ioExecutor, clientMainThreadExecutor))));
-            dispatcher.register(Commands.literal("ban")
-                    .requires(SharedWorldCommands::sourceIsHostingOwner)
-                    .then(Commands.argument("player", StringArgumentType.word())
-                            .suggests(memberNames)
-                            .executes(context -> banMember(context, apiClient, hostingManager, ioExecutor, clientMainThreadExecutor))));
-            // Vanilla added integrated-server /kick in 1.20.2; register a session-only
-            // fallback where it is absent (in practice: the 1.20.1 bucket).
-            if (dispatcher.getRoot().getChild("kick") == null) {
-                dispatcher.register(Commands.literal("kick")
-                        .requires(source -> SharedWorldDevSessionBridge.isHostingSharedWorld()
-                                && CommandPermissionCompat.hasAdminCommandPermission(source))
-                        .then(Commands.argument("targets", EntityArgument.players())
-                                .executes(context -> kickPlayers(context, null, hostingManager))
-                                .then(Commands.argument("reason", StringArgumentType.greedyString())
-                                        .executes(context -> kickPlayers(context, StringArgumentType.getString(context, "reason"), hostingManager)))));
-            }
-        });
+        dispatcher.register(Commands.literal("op")
+                .requires(SharedWorldCommands::sourceIsHostingOwner)
+                .then(Commands.argument("player", StringArgumentType.word())
+                        .suggests(memberNames)
+                        .executes(context -> togglePermission(context, true, apiClient, hostingManager, ioExecutor, clientMainThreadExecutor))));
+        dispatcher.register(Commands.literal("deop")
+                .requires(SharedWorldCommands::sourceIsHostingOwner)
+                .then(Commands.argument("player", StringArgumentType.word())
+                        .suggests(memberNames)
+                        .executes(context -> togglePermission(context, false, apiClient, hostingManager, ioExecutor, clientMainThreadExecutor))));
+        dispatcher.register(Commands.literal("ban")
+                .requires(SharedWorldCommands::sourceIsHostingOwner)
+                .then(Commands.argument("player", StringArgumentType.word())
+                        .suggests(memberNames)
+                        .executes(context -> banMember(context, apiClient, hostingManager, ioExecutor, clientMainThreadExecutor))));
+        // Vanilla added integrated-server /kick in 1.20.2; register a session-only
+        // fallback where it is absent (in practice: the 1.20.1 bucket).
+        if (dispatcher.getRoot().getChild("kick") == null) {
+            dispatcher.register(Commands.literal("kick")
+                    .requires(source -> SharedWorldDevSessionBridge.isHostingSharedWorld()
+                            && CommandPermissionCompat.hasAdminCommandPermission(source))
+                    .then(Commands.argument("targets", EntityArgument.players())
+                            .executes(context -> kickPlayers(context, null, hostingManager))
+                            .then(Commands.argument("reason", StringArgumentType.greedyString())
+                                    .executes(context -> kickPlayers(context, StringArgumentType.getString(context, "reason"), hostingManager)))));
+        }
     }
 
     private static boolean sourceIsHostingOwner(CommandSourceStack source) {

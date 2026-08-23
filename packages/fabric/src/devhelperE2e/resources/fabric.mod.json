@@ -10,7 +10,7 @@
   "environment": "client",
   "entrypoints": {
     "client": [
-      "link.sharedworld.devhelper.e2e.SharedWorldE2eDriver"
+      "link.sharedworld.devhelper.e2e.SharedWorldE2eDriverFabric"
     ]
   },
   "depends": {

@@ -7,6 +7,7 @@ import net.minecraft.network.chat.Style;
 public final class E4mcDomainTracker {
     private static volatile String currentJoinTarget;
     private static volatile String pendingSuppressedMessageTarget;
+    private static volatile boolean pinned;
 
     private E4mcDomainTracker() {
     }
@@ -14,14 +15,29 @@ public final class E4mcDomainTracker {
     public static void clear() {
         currentJoinTarget = null;
         pendingSuppressedMessageTarget = null;
+        pinned = false;
     }
 
     public static String currentJoinTarget() {
         return currentJoinTarget;
     }
 
-    public static void captureAssignedDomain(String joinTarget) {
+    /**
+     * Custom-join-address hosting: fix the join target so a concurrently
+     * running e4mc tunnel (its mixin capture or chat message) can never
+     * overwrite it. Cleared with {@link #clear()}.
+     */
+    public static void pinJoinTarget(String joinTarget) {
         if (joinTarget == null || joinTarget.isBlank()) {
+            return;
+        }
+        currentJoinTarget = joinTarget.trim();
+        pendingSuppressedMessageTarget = null;
+        pinned = true;
+    }
+
+    public static void captureAssignedDomain(String joinTarget) {
+        if (pinned || joinTarget == null || joinTarget.isBlank()) {
             return;
         }
         currentJoinTarget = joinTarget.trim();
@@ -29,6 +45,9 @@ public final class E4mcDomainTracker {
     }
 
     public static void observeMessage(Component message) {
+        if (pinned) {
+            return;
+        }
         String discovered = findCopyToClipboardValue(message);
         if (discovered != null && !discovered.isBlank()) {
             currentJoinTarget = discovered.trim();

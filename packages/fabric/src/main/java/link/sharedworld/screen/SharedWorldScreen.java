@@ -40,7 +40,7 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
     private Button deleteButton;
     private Button refreshButton;
     private Button vanillaButton;
-    private Button accountButton;
+    private Button settingsButton;
     private boolean loading;
     private boolean backendReachable = true;
     private boolean refreshInFlight;
@@ -126,9 +126,9 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
         this.vanillaButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sharedworld.vanilla"), button -> this.openVanillaServers())
                 .bounds(this.width - 118, 8, 110, 20)
                 .build());
-        this.accountButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sharedworld.account"), button -> {
+        this.settingsButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sharedworld.settings"), button -> {
                     this.releaseWidgetFocus();
-                    link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, new AccountScreen(this));
+                    link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, new SettingsScreen(this));
                 })
                 .bounds(8, 8, 80, 20)
                 .build());
@@ -147,8 +147,8 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
         if (this.vanillaButton != null) {
             link.sharedworld.versioned.WidgetCompat.setPosition(this.vanillaButton, this.width - 118, 8);
         }
-        if (this.accountButton != null) {
-            link.sharedworld.versioned.WidgetCompat.setPosition(this.accountButton, 8, 8);
+        if (this.settingsButton != null) {
+            link.sharedworld.versioned.WidgetCompat.setPosition(this.settingsButton, 8, 8);
         }
     }
 
@@ -286,10 +286,10 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
         if (!SharedWorldClient.isE4mcInstalled()) {
             guiGraphics.drawCenteredString(
                     this.font,
-                    Component.translatable("screen.sharedworld.missing_e4mc").withStyle(ChatFormatting.RED),
+                    Component.translatable("screen.sharedworld.missing_e4mc").withStyle(ChatFormatting.YELLOW),
                     this.width / 2,
                     this.height - 74,
-                    0xFFFF5555
+                    0xFFFFD37A
             );
         }
         int bannerBottom = SharedWorldClient.isE4mcInstalled() ? this.height - 64 : this.height - 78;
@@ -328,15 +328,9 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
         if (selected == null) {
             return;
         }
-        if (!SharedWorldClient.isE4mcInstalled()) {
-            link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, new SharedWorldErrorScreen(
-                    this,
-                    Component.translatable("screen.sharedworld.error_title"),
-                    Component.translatable("screen.sharedworld.missing_e4mc")
-            ));
-            return;
-        }
-
+        // 0.5.0: e4mc is no longer a hard requirement here. Joining never
+        // needs it, and hosting without it is caught by the hosting manager
+        // with a clear error unless a custom join address is configured.
         this.loading = true;
         this.updateButtons();
         SharedWorldClient.sessionCoordinator().beginJoin(this, selected);
@@ -405,8 +399,8 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
         if (this.vanillaButton != null) {
             this.vanillaButton.setFocused(false);
         }
-        if (this.accountButton != null) {
-            this.accountButton.setFocused(false);
+        if (this.settingsButton != null) {
+            this.settingsButton.setFocused(false);
         }
     }
 

@@ -75,6 +75,8 @@ def e2eWorldName = providers.gradleProperty("sharedworldE2eWorldName").orNull
 // for the multi-GB upload/delta choreography; bigFile is the giant file's
 // world-relative path.
 def e2eScenario = providers.gradleProperty("sharedworldE2eScenario").orNull
+def e2eCustomJoinPort = providers.gradleProperty("sharedworldE2eCustomJoinPort").orNull
+def e2eAutosaveIntervalMs = providers.gradleProperty("sharedworldE2eAutosaveIntervalMs").orNull
 def e2eBigFile = providers.gradleProperty("sharedworldE2eBigFile").orNull
 def skipDevHelperRuntime = providers.gradleProperty("sharedworldSkipDevHelperRuntime")
         .map { it.toBoolean() }
@@ -300,6 +302,9 @@ loom {
             if (e2eSuperpackShardMaxBytes != null) {
                 vmArgs "-Dsharedworld.dev.superpackShardMaxBytes=${e2eSuperpackShardMaxBytes}"
             }
+            if (e2eAutosaveIntervalMs != null) {
+                vmArgs "-Dsharedworld.dev.autosaveIntervalMs=${e2eAutosaveIntervalMs}"
+            }
             if (e2eMarkerFile != null) {
                 vmArgs "-Dsharedworld.e2e.markerFile=${e2eMarkerFile}"
             }
@@ -311,6 +316,9 @@ loom {
             }
             if (e2eScenario != null) {
                 vmArgs "-Dsharedworld.e2e.scenario=${e2eScenario}"
+            }
+            if (e2eCustomJoinPort != null) {
+                vmArgs "-Dsharedworld.e2e.customJoinPort=${e2eCustomJoinPort}"
             }
             if (e2eBigFile != null) {
                 vmArgs "-Dsharedworld.e2e.bigFile=${e2eBigFile}"
@@ -367,6 +375,9 @@ loom {
             }
             if (e2eScenario != null) {
                 vmArgs "-Dsharedworld.e2e.scenario=${e2eScenario}"
+            }
+            if (e2eCustomJoinPort != null) {
+                vmArgs "-Dsharedworld.e2e.customJoinPort=${e2eCustomJoinPort}"
             }
             if (e2eBigFile != null) {
                 vmArgs "-Dsharedworld.e2e.bigFile=${e2eBigFile}"

@@ -37,6 +37,46 @@ final class SharedWorldClientConfigStoreTest {
     }
 
     @Test
+    void customJoinAddressRoundTrips() {
+        Path configFile = this.tempDir.resolve("sharedworld-client.json");
+        SharedWorldClientConfigStore store = new SharedWorldClientConfigStore(configFile);
+
+        assertEquals(null, store.customJoinAddress());
+        store.setCustomJoinAddress("  100.64.0.12:25565 ");
+
+        SharedWorldClientConfigStore reloaded = new SharedWorldClientConfigStore(configFile);
+        assertEquals("100.64.0.12:25565", reloaded.customJoinAddress());
+
+        reloaded.setCustomJoinAddress("   ");
+        SharedWorldClientConfigStore cleared = new SharedWorldClientConfigStore(configFile);
+        assertEquals(null, cleared.customJoinAddress());
+    }
+
+    @Test
+    void sanitizeDropsBlankCustomJoinAddress() throws Exception {
+        Path configFile = this.tempDir.resolve("sharedworld-client.json");
+        Files.writeString(configFile, """
+                {
+                  "backend": {},
+                  "ui": {},
+                  "hosting": { "customJoinAddress": "  " }
+                }
+                """);
+
+        SharedWorldClientConfigStore store = new SharedWorldClientConfigStore(configFile);
+        assertEquals(null, store.customJoinAddress());
+
+        Files.writeString(configFile, """
+                {
+                  "backend": {},
+                  "ui": {},
+                  "hosting": { "customJoinAddress": " vpn.example:2000 " }
+                }
+                """);
+        assertEquals("vpn.example:2000", new SharedWorldClientConfigStore(configFile).customJoinAddress());
+    }
+
+    @Test
     void resolvesBackendBaseUrlFromOverrideThenConfigThenDefault() {
         Path configFile = this.tempDir.resolve("sharedworld-client.json");
         SharedWorldClientConfigStore store = new SharedWorldClientConfigStore(configFile);

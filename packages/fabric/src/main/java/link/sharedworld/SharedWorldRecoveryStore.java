@@ -2,7 +2,6 @@ package link.sharedworld;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import net.fabricmc.loader.api.FabricLoader;
 
 import java.io.IOException;
 import java.io.Reader;
@@ -17,7 +16,7 @@ public final class SharedWorldRecoveryStore implements SharedWorldSessionCoordin
     private final Path file;
 
     public SharedWorldRecoveryStore() {
-        this(FabricLoader.getInstance().getConfigDir().resolve("sharedworld-recovery.json"));
+        this(link.sharedworld.platform.SharedWorldPlatform.get().configDir().resolve("sharedworld-recovery.json"));
     }
 
     SharedWorldRecoveryStore(Path file) {

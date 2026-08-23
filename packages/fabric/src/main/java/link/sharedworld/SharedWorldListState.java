@@ -3,7 +3,6 @@ package link.sharedworld;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import link.sharedworld.api.SharedWorldModels.WorldSummaryDto;
-import net.fabricmc.loader.api.FabricLoader;
 
 import java.io.IOException;
 import java.io.Reader;
@@ -17,7 +16,7 @@ import java.util.Map;
 
 public final class SharedWorldListState {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-    private static final Path FILE = FabricLoader.getInstance().getConfigDir().resolve("sharedworld-worlds.json");
+    private static final Path FILE = link.sharedworld.platform.SharedWorldPlatform.get().configDir().resolve("sharedworld-worlds.json");
 
     private State state = load();
 

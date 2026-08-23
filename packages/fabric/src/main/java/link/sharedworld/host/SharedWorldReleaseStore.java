@@ -2,7 +2,6 @@ package link.sharedworld.host;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import net.fabricmc.loader.api.FabricLoader;
 
 import java.io.IOException;
 import java.io.Reader;
@@ -17,7 +16,7 @@ public final class SharedWorldReleaseStore implements SharedWorldReleaseCoordina
     private final Path file;
 
     public SharedWorldReleaseStore() {
-        this(FabricLoader.getInstance().getConfigDir().resolve("sharedworld-release.json"));
+        this(link.sharedworld.platform.SharedWorldPlatform.get().configDir().resolve("sharedworld-release.json"));
     }
 
     SharedWorldReleaseStore(Path file) {

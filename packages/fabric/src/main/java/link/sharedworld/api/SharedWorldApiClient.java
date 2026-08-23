@@ -153,6 +153,19 @@ public final class SharedWorldApiClient {
             String storageLinkSessionId,
             boolean useLinkedStorageAccount
     ) throws IOException, InterruptedException {
+        return createWorld(name, motdLine1, motdLine2, customIconPngBase64, importSource, storageLinkSessionId, useLinkedStorageAccount, null);
+    }
+
+    public CreateWorldResultDto createWorld(
+            String name,
+            String motdLine1,
+            String motdLine2,
+            String customIconPngBase64,
+            ImportedWorldSourceDto importSource,
+            String storageLinkSessionId,
+            boolean useLinkedStorageAccount,
+            String linkedStorageProvider
+    ) throws IOException, InterruptedException {
         ensureSession();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("name", name);
@@ -163,6 +176,9 @@ public final class SharedWorldApiClient {
         body.put("storageLinkSessionId", storageLinkSessionId);
         if (useLinkedStorageAccount) {
             body.put("useLinkedStorageAccount", true);
+            if (linkedStorageProvider != null && !linkedStorageProvider.isBlank()) {
+                body.put("linkedStorageProvider", linkedStorageProvider);
+            }
         }
         return request("POST", "/worlds", body, CreateWorldResultDto.class, true);
     }
@@ -197,25 +213,48 @@ public final class SharedWorldApiClient {
     }
 
     public StorageLinkSessionDto createStorageLink(boolean forceConsent) throws IOException, InterruptedException {
+        return createStorageLink(forceConsent, null);
+    }
+
+    /** 0.5.0: provider "s3" starts a bring-your-own-bucket link (null = Google Drive). */
+    public StorageLinkSessionDto createStorageLink(boolean forceConsent, String provider) throws IOException, InterruptedException {
         ensureSession();
-        return request(
-                "POST",
-                "/storage/link-sessions",
-                forceConsent ? Map.of("forceConsent", true) : Map.of(),
-                StorageLinkSessionDto.class,
-                true
-        );
+        Map<String, Object> body = new LinkedHashMap<>();
+        if (forceConsent) {
+            body.put("forceConsent", true);
+        }
+        if (provider != null && !provider.isBlank()) {
+            body.put("provider", provider);
+        }
+        return request("POST", "/storage/link-sessions", body, StorageLinkSessionDto.class, true);
     }
 
     public SharedWorldModels.StorageAccountSummaryDto getStorageAccount() throws IOException, InterruptedException {
+        return getStorageAccount(null);
+    }
+
+    /** 0.5.0: provider "s3" reads the S3 account summary (null = the server default, Google Drive). */
+    public SharedWorldModels.StorageAccountSummaryDto getStorageAccount(String provider) throws IOException, InterruptedException {
         ensureSession();
-        return request("GET", "/storage/account", null, SharedWorldModels.StorageAccountSummaryDto.class, true);
+        if (provider == null || provider.isBlank()) {
+            return request("GET", "/storage/account", null, SharedWorldModels.StorageAccountSummaryDto.class, true);
+        }
+        return request("GET", "/storage/account?provider=" + provider, null, SharedWorldModels.StorageAccountSummaryDto.class, true);
     }
 
     /** Unlink every Google Drive account (409 storage_unlink_blocked while worlds still use it). */
     public void unlinkStorageAccount() throws IOException, InterruptedException {
+        unlinkStorageAccount(null);
+    }
+
+    /** 0.5.0: provider "s3" unlinks the S3 account instead. */
+    public void unlinkStorageAccount(String provider) throws IOException, InterruptedException {
         ensureSession();
-        request("DELETE", "/storage/account", null, null, true);
+        if (provider == null || provider.isBlank()) {
+            request("DELETE", "/storage/account", null, null, true);
+            return;
+        }
+        request("DELETE", "/storage/account?provider=" + provider, null, null, true);
     }
 
     /**
@@ -983,16 +1022,15 @@ public final class SharedWorldApiClient {
     /**
      * Mod version for the x-sharedworld-version header, so backend logs can
      * attribute failures to a release. Resolved lazily and defensively:
-     * headless unit tests construct this client without a running Fabric
+     * headless unit tests construct this client without a running mod
      * loader, and a header value must never be the reason a request fails.
      */
     private static String modVersion() {
         String version = cachedModVersion;
         if (version == null) {
             try {
-                version = net.fabricmc.loader.api.FabricLoader.getInstance()
-                        .getModContainer(link.sharedworld.SharedWorldClient.MOD_ID)
-                        .map(container -> container.getMetadata().getVersion().getFriendlyString())
+                version = link.sharedworld.platform.SharedWorldPlatform.get()
+                        .modVersion(link.sharedworld.SharedWorldClient.MOD_ID)
                         .orElse("unknown");
             } catch (Throwable ignored) {
                 version = "unknown";
@@ -1177,6 +1215,30 @@ public final class SharedWorldApiClient {
         return apiError != null
                 && apiError.status() == 403
                 && "membership_revoked".equals(apiError.error());
+    }
+
+    /**
+     * The host's Google Drive is out of space. Covers both the backend's
+     * rejection and the direct-to-Drive uploader's own failure, so callers see
+     * one answer regardless of which leg of an upload hit the quota.
+     */
+    public static boolean isDriveStorageFullError(Throwable error) {
+        SharedWorldApiException apiError = findApiError(error);
+        if (apiError != null && "drive_storage_full".equals(apiError.error())) {
+            return true;
+        }
+        for (Throwable cause = error; cause != null; cause = cause.getCause() == cause ? null : cause.getCause()) {
+            if (cause instanceof ResumableBlobUploader.DriveStorageFullException) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** The host's Google Drive authorization is dead; only re-linking Drive fixes it. */
+    public static boolean isDriveReauthRequiredError(Throwable error) {
+        SharedWorldApiException apiError = findApiError(error);
+        return apiError != null && "drive_reauth_required".equals(apiError.error());
     }
 
     public static boolean isHostNotActiveError(Throwable error) {

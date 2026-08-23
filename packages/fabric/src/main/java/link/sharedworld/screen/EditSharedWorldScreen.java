@@ -475,6 +475,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
             link.sharedworld.versioned.TabBarCompat.setTabActive(this.tabNavigationBar, 2, tabsUnlocked);
             link.sharedworld.versioned.TabBarCompat.setTabActive(this.tabNavigationBar, 3, tabsUnlocked);
             link.sharedworld.versioned.TabBarCompat.setTabActive(this.tabNavigationBar, 4, tabsUnlocked);
+            link.sharedworld.versioned.TabBarCompat.setTabActive(this.tabNavigationBar, 5, tabsUnlocked);
         }
 
         this.backButton.setMessage(Component.translatable("gui.back"));
@@ -1205,10 +1206,16 @@ public final class EditSharedWorldScreen extends VersionedScreen {
     }
 
     private void drawWrappedText(GuiGraphics guiGraphics, Component text, int x, int y, int width, int color) {
+        this.drawWrappedTextMeasured(guiGraphics, text, x, y, width, color);
+    }
+
+    /** Same, returning the Y just below the last drawn line. */
+    private int drawWrappedTextMeasured(GuiGraphics guiGraphics, Component text, int x, int y, int width, int color) {
         List<FormattedCharSequence> lines = this.font.split(text, width);
         for (int index = 0; index < lines.size(); index++) {
             guiGraphics.drawString(this.font, lines.get(index), x, y + index * 9, color);
         }
+        return y + lines.size() * 9;
     }
 
     private boolean shouldShowDetailsValidation() {

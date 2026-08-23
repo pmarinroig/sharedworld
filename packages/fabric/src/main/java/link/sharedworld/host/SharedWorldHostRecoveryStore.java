@@ -2,7 +2,6 @@ package link.sharedworld.host;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import net.fabricmc.loader.api.FabricLoader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -20,7 +19,7 @@ public final class SharedWorldHostRecoveryStore implements SharedWorldHostingMan
     private final Path file;
 
     public SharedWorldHostRecoveryStore() {
-        this(FabricLoader.getInstance().getConfigDir().resolve("sharedworld-host-recovery.json"));
+        this(link.sharedworld.platform.SharedWorldPlatform.get().configDir().resolve("sharedworld-host-recovery.json"));
     }
 
     SharedWorldHostRecoveryStore(Path file) {

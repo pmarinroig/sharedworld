@@ -60,7 +60,8 @@ final class SharedWorldCreateFlow {
                 customIconBase64,
                 request.importSource(),
                 request.storageLink() == null ? null : request.storageLink().id(),
-                request.storageLink() == null
+                request.storageLink() == null,
+                request.linkedStorageProvider()
         );
         WorldDetailsDto createdWorld = result.world();
         InitialSnapshotUploadPipeline.UploadLease uploadLease =
@@ -100,7 +101,8 @@ final class SharedWorldCreateFlow {
                 String customIconPngBase64,
                 link.sharedworld.api.SharedWorldModels.ImportedWorldSourceDto importSource,
                 String storageLinkSessionId,
-                boolean useLinkedStorageAccount
+                boolean useLinkedStorageAccount,
+                String linkedStorageProvider
         ) throws IOException, InterruptedException;
 
         void deleteWorld(String worldId) throws IOException, InterruptedException;

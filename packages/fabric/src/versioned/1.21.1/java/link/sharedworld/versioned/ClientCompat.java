@@ -47,7 +47,7 @@ public final class ClientCompat {
         try {
             net.minecraft.WorldVersion version = net.minecraft.SharedConstants.getCurrentVersion();
             return version == null ? Integer.MAX_VALUE : version.getDataVersion().getVersion();
-        } catch (RuntimeException exception) {
+        } catch (RuntimeException | LinkageError exception) {
             // Headless/undetected version: never block on an unknowable comparison.
             return Integer.MAX_VALUE;
         }
@@ -58,7 +58,7 @@ public final class ClientCompat {
         try {
             net.minecraft.WorldVersion version = net.minecraft.SharedConstants.getCurrentVersion();
             return version == null ? null : version.getName();
-        } catch (RuntimeException exception) {
+        } catch (RuntimeException | LinkageError exception) {
             return null;
         }
     }

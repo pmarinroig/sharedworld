@@ -1,7 +1,7 @@
 package link.sharedworld;
 
 import link.sharedworld.host.SharedWorldHostPermissionPolicy;
-import net.fabricmc.loader.api.FabricLoader;
+import link.sharedworld.platform.SharedWorldPlatform;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.MethodVisitor;
@@ -23,11 +23,21 @@ public final class SharedWorldE4mcCompatibility {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("sharedworld/e4mc-compat");
     private static final Pattern VERSION_TRIPLET_PATTERN = Pattern.compile("(\\d+)\\.(\\d+)\\.(\\d+)");
-    private static final String E4MC_MOD_ID = "e4mc";
+    /** Fabric ships e4mc under "e4mc"; the NeoForge artifact may use "e4mc_minecraft". */
+    private static final String[] E4MC_MOD_IDS = {"e4mc", "e4mc_minecraft"};
     private static final String E4MC_MIRROR_TARGET = "link.e4mc.Mirror";
     private static final String E4MC_SINGLEPLAYER_OWNER_METHOD_NAME = "isSingleplayerOwner";
 
     private SharedWorldE4mcCompatibility() {
+    }
+
+    public static boolean isE4mcPresent() {
+        for (String modId : E4MC_MOD_IDS) {
+            if (SharedWorldPlatform.get().isModLoaded(modId)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public enum SingleplayerOwnerCompatTarget {
@@ -37,10 +47,13 @@ public final class SharedWorldE4mcCompatibility {
     }
 
     public static String detectedE4mcVersionOrMissing() {
-        return FabricLoader.getInstance()
-                .getModContainer(E4MC_MOD_ID)
-                .map(container -> container.getMetadata().getVersion().getFriendlyString())
-                .orElse("missing");
+        for (String modId : E4MC_MOD_IDS) {
+            java.util.Optional<String> version = SharedWorldPlatform.get().modVersion(modId);
+            if (version.isPresent()) {
+                return version.get();
+            }
+        }
+        return "missing";
     }
 
     public static boolean shouldApplyServerboundKeyPacketCompatMixinForDetectedVersion() {
@@ -111,7 +124,7 @@ public final class SharedWorldE4mcCompatibility {
     }
 
     public static boolean isQuiclimeSessionHookTargetPresent() {
-        if (!FabricLoader.getInstance().isModLoaded(E4MC_MOD_ID)) {
+        if (!isE4mcPresent()) {
             return false;
         }
 

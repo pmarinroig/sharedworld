@@ -9,11 +9,6 @@ import link.sharedworld.screen.HandoffWaitingScreen;
 import link.sharedworld.screen.SharedWorldErrorScreen;
 import link.sharedworld.screen.SharedWorldSavingScreen;
 import link.sharedworld.screen.SharedWorldScreen;
-import net.fabricmc.api.ClientModInitializer;
-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
-import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.TitleScreen;
@@ -28,7 +23,13 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 
-public final class SharedWorldClient implements ClientModInitializer {
+/**
+ * The loader-neutral client core: owns every singleton and the lifecycle
+ * callbacks. The per-loader entrypoint (link.sharedworld.fabric on Fabric,
+ * the NeoForge @Mod class on NeoForge) calls {@link #init()} once and wires
+ * its loader's events to the on* callbacks here.
+ */
+public final class SharedWorldClient {
     public static final String MOD_ID = "sharedworld";
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
     private static final ExecutorService IO_EXECUTOR = Executors.newFixedThreadPool(4, new SharedWorldThreadFactory());
@@ -47,8 +48,10 @@ public final class SharedWorldClient implements ClientModInitializer {
     private static link.sharedworld.realtime.HostRosterReporter hostRosterReporter;
     private static volatile boolean pushChannelStarted;
 
-    @Override
-    public void onInitializeClient() {
+    private SharedWorldClient() {
+    }
+
+    public static void init() {
         SharedWorldE4mcCompatibility.logClientInitStarted();
         link.sharedworld.versioned.ScreenBackdropCompat.install();
         RuntimePlayerIdentity.resolveBackendPlayerUuidWithHyphens(Minecraft.getInstance().getUser());
@@ -157,7 +160,7 @@ public final class SharedWorldClient implements ClientModInitializer {
                 REALTIME_EVENTS::isConnected,
                 (worldId, epoch, players) -> pushChannel.sendHostPlayers(worldId, epoch, players)
         );
-        link.sharedworld.command.SharedWorldCommands.register(
+        link.sharedworld.command.SharedWorldCommands.wire(
                 apiClient,
                 SharedWorldClient::hostingManager,
                 IO_EXECUTOR,
@@ -166,47 +169,55 @@ public final class SharedWorldClient implements ClientModInitializer {
         // Reclaim staging copies and partial download temps a crashed or killed
         // client left behind; off the render thread since it walks world dirs.
         IO_EXECUTOR.execute(() -> new link.sharedworld.sync.ManagedWorldStore().pruneTransientArtifacts());
-        ClientTickEvents.END_CLIENT_TICK.register(client -> {
-            reconcileTrackedGuestSession(client);
-            hostingManager.tick(client);
-            releaseCoordinator.tick(client);
-            presenceManager.tick(client);
-            guestRuntimeWatcher.tick(client);
-            guestCacheWarmer.tick(client);
-            sessionCoordinator.tick(client);
-            hostRosterReporter.tick(client);
-            if (SharedWorldClientLifecycleRouter.routeTick(client, releaseCoordinator)) {
-                return;
-            }
-        });
-        ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
-            PLAY_SESSION_TRACKER.onPlayJoin(handler, client.isLocalServer());
-            sessionCoordinator.onGuestSessionJoined(PLAY_SESSION_TRACKER.currentSession(handler));
-            // Sessions that begin without passing through the SharedWorld
-            // screen (auto-rejoin, direct connect) still get the channel.
-            if (PLAY_SESSION_TRACKER.currentSession(handler) != null) {
-                ensureRealtimeStarted();
-            }
-        });
-        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
-            SharedWorldPlaySessionTracker.ActiveWorldSession activeSession = PLAY_SESSION_TRACKER.currentSession(handler);
-            if (client.isSameThread()) {
-                onPlayDisconnect(client, handler, activeSession);
-                return;
-            }
-            client.execute(() -> onPlayDisconnect(client, handler, activeSession));
-        });
-        ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
-            releaseCoordinator.onClientStopping(client);
-            PLAY_SESSION_TRACKER.clear();
-            SharedWorldDevSessionBridge.clear();
-            // Clean socket close: the gateway pokes absence/grace immediately
-            // instead of waiting for TCP death to be noticed.
-            if (pushChannel != null) {
-                pushChannel.stop();
-            }
-        });
         SharedWorldE4mcCompatibility.logClientInitFinished();
+    }
+
+    /** Loader event: end of every client tick. */
+    public static void onEndClientTick(Minecraft client) {
+        reconcileTrackedGuestSession(client);
+        hostingManager.tick(client);
+        releaseCoordinator.tick(client);
+        presenceManager.tick(client);
+        guestRuntimeWatcher.tick(client);
+        guestCacheWarmer.tick(client);
+        sessionCoordinator.tick(client);
+        hostRosterReporter.tick(client);
+        if (SharedWorldClientLifecycleRouter.routeTick(client, releaseCoordinator)) {
+            return;
+        }
+    }
+
+    /** Loader event: the PLAY connection came up. */
+    public static void onPlayJoin(ClientPacketListener handler, Minecraft client) {
+        PLAY_SESSION_TRACKER.onPlayJoin(handler, client.isLocalServer());
+        sessionCoordinator.onGuestSessionJoined(PLAY_SESSION_TRACKER.currentSession(handler));
+        // Sessions that begin without passing through the SharedWorld
+        // screen (auto-rejoin, direct connect) still get the channel.
+        if (PLAY_SESSION_TRACKER.currentSession(handler) != null) {
+            ensureRealtimeStarted();
+        }
+    }
+
+    /** Loader event: the PLAY connection went down (any thread). */
+    public static void onPlayDisconnectEvent(ClientPacketListener handler, Minecraft client) {
+        SharedWorldPlaySessionTracker.ActiveWorldSession activeSession = PLAY_SESSION_TRACKER.currentSession(handler);
+        if (client.isSameThread()) {
+            onPlayDisconnect(client, handler, activeSession);
+            return;
+        }
+        client.execute(() -> onPlayDisconnect(client, handler, activeSession));
+    }
+
+    /** Loader event: the client process is shutting down. */
+    public static void onClientStopping(Minecraft client) {
+        releaseCoordinator.onClientStopping(client);
+        PLAY_SESSION_TRACKER.clear();
+        SharedWorldDevSessionBridge.clear();
+        // Clean socket close: the gateway pokes absence/grace immediately
+        // instead of waiting for TCP death to be noticed.
+        if (pushChannel != null) {
+            pushChannel.stop();
+        }
     }
 
     private static void onPlayDisconnect(
@@ -390,7 +401,7 @@ public final class SharedWorldClient implements ClientModInitializer {
         SharedWorldSessionStore.shared().resetForAccountDeletion();
         LIST_STATE.resetForAccountDeletion();
         SharedWorldClientConfigStore.shared().resetForAccountDeletion();
-        java.nio.file.Path configDir = FabricLoader.getInstance().getConfigDir();
+        java.nio.file.Path configDir = link.sharedworld.platform.SharedWorldPlatform.get().configDir();
         String[] configFiles = {
                 "sharedworld-sessions.json",
                 "sharedworld-client.json",
@@ -431,7 +442,7 @@ public final class SharedWorldClient implements ClientModInitializer {
     }
 
     public static boolean isE4mcInstalled() {
-        return FabricLoader.getInstance().isModLoaded("e4mc");
+        return SharedWorldE4mcCompatibility.isE4mcPresent();
     }
 
     public static void openMainScreen(Screen parent) {

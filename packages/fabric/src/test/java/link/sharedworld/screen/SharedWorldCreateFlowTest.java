@@ -47,7 +47,8 @@ final class SharedWorldCreateFlowTest {
                             "World",
                             "MOTD",
                             null,
-                            false
+                            false,
+                            null
                     ),
                     new InitialSnapshotUploadPipeline.ProgressSink() {
                         @Override
@@ -116,7 +117,8 @@ final class SharedWorldCreateFlowTest {
                             "World",
                             "MOTD",
                             null,
-                            false
+                            false,
+                            null
                     ),
                     new InitialSnapshotUploadPipeline.ProgressSink() {
                         @Override
@@ -255,7 +257,8 @@ final class SharedWorldCreateFlowTest {
                 "World",
                 "MOTD",
                 null,
-                false
+                false,
+                null
         );
     }
 
@@ -295,7 +298,7 @@ final class SharedWorldCreateFlowTest {
         private boolean releaseThrows;
 
         @Override
-        public CreateWorldResultDto createWorld(String name, String motdLine1, String customIconPngBase64, SharedWorldModels.ImportedWorldSourceDto importSource, String storageLinkSessionId, boolean useLinkedStorageAccount) {
+        public CreateWorldResultDto createWorld(String name, String motdLine1, String customIconPngBase64, SharedWorldModels.ImportedWorldSourceDto importSource, String storageLinkSessionId, boolean useLinkedStorageAccount, String linkedStorageProvider) {
             return new CreateWorldResultDto(
                     new WorldDetailsDto(
                             "world-1",

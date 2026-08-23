@@ -23,13 +23,13 @@ public final class DeleteAccountProgressScreen extends link.sharedworld.versione
     /** Far above any plausible step count; guards against a server that never reports done. */
     private static final int MAX_ACCOUNT_STEPS = 10_000;
 
-    private final AccountScreen parent;
+    private final SettingsScreen parent;
     private final DeleteAccountFlowModel model = new DeleteAccountFlowModel();
     private boolean started;
     private volatile float progress;
     private volatile Component progressDetail;
 
-    public DeleteAccountProgressScreen(AccountScreen parent) {
+    public DeleteAccountProgressScreen(SettingsScreen parent) {
         super(Component.translatable("screen.sharedworld.account_delete_progress_title"));
         this.parent = parent;
         this.progressDetail = this.title;

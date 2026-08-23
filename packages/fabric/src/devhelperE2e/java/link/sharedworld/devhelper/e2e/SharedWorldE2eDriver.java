@@ -9,8 +9,6 @@ import link.sharedworld.host.SharedWorldHostingManager;
 import link.sharedworld.integration.E4mcDomainTracker;
 import link.sharedworld.screen.SharedWorldErrorScreen;
 import link.sharedworld.screen.SharedWorldScreen;
-import net.fabricmc.api.ClientModInitializer;
-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.PauseScreen;
 import net.minecraft.client.gui.screens.Screen;
@@ -38,7 +36,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * buttons on the same production screens and observes the same coordinators,
  * emitting a marker per phase for the orchestrator to assert on.
  */
-public final class SharedWorldE2eDriver implements ClientModInitializer {
+public final class SharedWorldE2eDriver {
     private static final Logger LOGGER = LoggerFactory.getLogger("sharedworld-e2e");
 
     private enum HostStep {
@@ -63,7 +61,11 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
         WHITELIST_DRILL_AWAIT_COMMAND,
         WHITELIST_DRILL_AWAIT_BLOCKED,
         AWAIT_SHUTDOWN_COMMAND,
+        EXTENDED_SESSION,
         BIGWORLD_SESSION,
+        DRIVE_FAILURE_SESSION,
+        DRIVE_FAILURE_AWAIT_RECONNECT_SCREEN,
+        DRIVE_FAILURE_RECONNECT_INTERACT,
         AWAIT_RELEASE_COMPLETE,
         AWAIT_EXIT
     }
@@ -84,6 +86,8 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
         BIGWORLD_REHOST_AWAIT_LIVE,
         BIGWORLD_SESSION,
         BIGWORLD_AWAIT_RELEASE_COMPLETE,
+        EXTENDED_INGAME,
+        EXTENDED_VERIFY_BLOCK,
         AWAIT_EXIT
     }
 
@@ -112,12 +116,18 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
         SHOT_EDIT_TAB,
         OPEN_REPLACE,
         SHOT_REPLACE,
+        BACK_TO_HUB_FOR_SETTINGS,
+        OPEN_SETTINGS,
+        SHOT_SETTINGS_STORAGE,
+        SHOT_SETTINGS_ADVANCED,
+        SHOT_RECONNECT,
         HUB_WATCH,
         COMPLETE
     }
 
     private static final String[] TOUR_EDIT_TAB_SHOTS = {
-            "08-edit-details", "09-edit-settings", "10-edit-backups", "11-edit-members", "12-edit-storage"
+            "08-edit-details", "09-edit-settings", "10-edit-backups", "11-edit-members",
+            "12-edit-storage"
     };
 
     private final HttpClient httpClient = HttpClient.newBuilder()
@@ -135,6 +145,25 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
      * server's world, and a guest that re-hosts after the host departs.
      */
     private boolean bigWorld;
+    /** Single-client Drive failure-UX scenario (drive-failure-e2e.ts). */
+    private boolean driveFailure;
+    /** Two-client S3 + custom-address + handoff + block-persistence scenario (extended-e2e.ts). */
+    private boolean extended;
+    private boolean s3LinkPressed;
+    private boolean s3LinkUrlEmitted;
+    /** Async block-drill result slot: null = pending, TRUE/FALSE = read outcome. */
+    private final AtomicReference<Boolean> blockCheckResult = new AtomicReference<>();
+    private String blockCheckLabel;
+    /** Host place-block drill: retried until the async /setblock lands. */
+    private net.minecraft.core.BlockPos pendingPlacePos;
+    private long placeDeadlineMs;
+    /**
+     * When set, hosting goes through the SHIPPED custom-join-address path
+     * (config store + publishMode + tracker pin) instead of the driver's
+     * captureAssignedDomain injection — real 0.5.0 coverage.
+     */
+    private String customJoinPort;
+    private boolean customJoinConfigured;
     private String bigFileRelative;
     private final AtomicBoolean bigWorldOpInFlight = new AtomicBoolean(false);
 
@@ -153,13 +182,27 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
     private boolean opDrillRequested;
     private boolean opDrillAwaitingGrants;
     private boolean sawErrorScreen;
+    private boolean sawReconnectScreen;
+    private int chatLinesSeen;
+    private boolean chatProbeBroken;
+    private boolean reconnectUrlFetched;
+    private boolean reconnectClipboardArmed;
+    private String clipboardAtReconnectPress;
+    private boolean escBouncePending;
+    private long escBounceAt;
     private int ticksInStep;
 
-    @Override
-    public void onInitializeClient() {
+    /**
+     * Loader-neutral arming: reads the -Dsharedworld.e2e.* contract and wires
+     * the marker/command files. Returns false (inert) without a role. The
+     * per-loader shim (Fabric: SharedWorldE2eDriverFabric; NeoForge: the
+     * neoforge project's entrypoint) registers {@link #tick} on its own
+     * end-of-client-tick event only when armed.
+     */
+    public boolean init() {
         this.role = System.getProperty("sharedworld.e2e.role");
         if (this.role == null || this.role.isBlank()) {
-            return;
+            return false;
         }
         String markerFile = System.getProperty("sharedworld.e2e.markerFile");
         if (markerFile == null || markerFile.isBlank()) {
@@ -169,11 +212,19 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
         String commandFile = System.getProperty("sharedworld.e2e.commandFile");
         this.commands = new E2eCommands(commandFile == null || commandFile.isBlank() ? null : Path.of(commandFile));
         this.worldName = System.getProperty("sharedworld.e2e.worldName", "E2E Fixture");
-        this.bigWorld = "bigworld".equals(System.getProperty("sharedworld.e2e.scenario"));
+        String scenario = System.getProperty("sharedworld.e2e.scenario", "");
+        this.bigWorld = "bigworld".equals(scenario);
+        this.driveFailure = "drive-failure".equals(scenario);
+        this.extended = "extended".equals(scenario);
+        this.customJoinPort = System.getProperty("sharedworld.e2e.customJoinPort");
+        if (this.customJoinPort != null && this.customJoinPort.isBlank()) {
+            this.customJoinPort = null;
+        }
         this.bigFileRelative = System.getProperty("sharedworld.e2e.bigFile", "");
-        if (this.bigWorld) {
-            // No cancel drill in the bigworld scenario: the interesting startup
-            // is the multi-GB initial upload, which must run uninterrupted.
+        if (this.bigWorld || this.driveFailure || this.extended) {
+            // No cancel drill in these scenarios: bigworld's interesting
+            // startup is the multi-GB upload, and the custom-join port must
+            // not be re-bound straight out of TIME_WAIT after a cancel.
             this.cancelDrillDone = true;
         }
         this.markers.emit("driver-armed", this.role);
@@ -192,12 +243,15 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
                         SharedWorldE2eDriver.this.markers.emit("realtime-event", event.kind() + " " + event.worldId());
                     }
                 });
-        ClientTickEvents.END_CLIENT_TICK.register(this::tick);
+        return true;
     }
 
-    private void tick(Minecraft minecraft) {
+    public void tick(Minecraft minecraft) {
         try {
             this.reportErrorScreens(minecraft);
+            if (this.driveFailure) {
+                this.probeChat(minecraft);
+            }
             if ("host".equals(this.role)) {
                 this.tickHost(minecraft);
             } else if ("guest".equals(this.role)) {
@@ -234,6 +288,57 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
             this.markers.emit("error-screen", minecraft.screen.getTitle().getString());
         }
         this.sawErrorScreen = isErrorScreen;
+        boolean isReconnectScreen =
+                minecraft.screen instanceof link.sharedworld.screen.ReleaseDriveReconnectScreen;
+        if (isReconnectScreen && !this.sawReconnectScreen) {
+            this.markers.emit("drive-reconnect-screen", minecraft.screen.getTitle().getString());
+        }
+        this.sawReconnectScreen = isReconnectScreen;
+    }
+
+    /**
+     * SharedWorld's own warnings (autosave failures/recovery) are LOCAL chat
+     * lines added straight to the HUD, so no network event fires; the list is
+     * read via reflection (dev-only, default-bucket-pinned like the rest of
+     * the driver). Newest-first; fresh lines are emitted oldest-first.
+     */
+    private void probeChat(Minecraft minecraft) {
+        if (this.chatProbeBroken || minecraft.gui == null) {
+            return;
+        }
+        try {
+            net.minecraft.client.gui.components.ChatComponent chat = minecraft.gui.getChat();
+            java.lang.reflect.Field field = chat.getClass().getDeclaredField("allMessages");
+            field.setAccessible(true);
+            java.util.List<?> all = (java.util.List<?>) field.get(chat);
+            int size = all.size();
+            if (size > this.chatLinesSeen) {
+                for (int index = size - this.chatLinesSeen - 1; index >= 0; index--) {
+                    Object message = all.get(index);
+                    Object content = message.getClass().getMethod("content").invoke(message);
+                    this.markers.emit("chat-line", ((net.minecraft.network.chat.Component) content).getString());
+                }
+                this.chatLinesSeen = size;
+            }
+        } catch (ReflectiveOperationException | RuntimeException exception) {
+            this.chatProbeBroken = true;
+            this.markers.emit("chat-probe-failed", exception.toString());
+        }
+    }
+
+    /**
+     * 0.5.0 custom join address: route hosting through the shipped config
+     * path. The hosting manager pins the target itself, so the driver's
+     * legacy injection becomes a no-op safety net.
+     */
+    private void configureCustomJoinAddress() {
+        if (this.customJoinPort == null || this.customJoinConfigured) {
+            return;
+        }
+        link.sharedworld.SharedWorldClientConfigStore.shared()
+                .setCustomJoinAddress("127.0.0.1:" + this.customJoinPort);
+        this.customJoinConfigured = true;
+        this.markers.emit("custom-join-configured", "127.0.0.1:" + this.customJoinPort);
     }
 
     // ---------------------------------------------------------------- host
@@ -289,6 +394,18 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
                     this.hostStep = HostStep.CREATE_NAVIGATE;
                     return;
                 }
+                if (this.extended) {
+                    // Extended scenario: the world lives on the S3 bucket. The
+                    // orchestrator completes the browser form; the driver only
+                    // surfaces the link URL (session + state ride in it).
+                    if (!this.s3LinkPressed && WidgetAutomation.pressButton(screen, "screen.sharedworld.storage_link_s3")) {
+                        this.s3LinkPressed = true;
+                        this.markers.emit("s3-link-started", null);
+                        return;
+                    }
+                    this.emitS3LinkUrlOnce(screen);
+                    return;
+                }
                 if (!this.driveLinkPressed && WidgetAutomation.pressButton(screen, "screen.sharedworld.storage_link_google_drive")) {
                     this.driveLinkPressed = true;
                     this.markers.emit("drive-link-started", null);
@@ -313,7 +430,9 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
                 }
                 if (minecraft.screen instanceof SharedWorldScreen) {
                     this.lookUpWorldByName(world -> this.markers.emit("world-created", world.id()));
-                    if (this.targetWorld.get() != null) {
+                    WorldSummaryDto created = this.targetWorld.get();
+                    if (created != null) {
+                        this.configureCustomJoinAddress();
                         this.hostStep = HostStep.BEGIN_HOSTING;
                     }
                 }
@@ -354,12 +473,20 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
             case AWAIT_PUBLISH -> {
                 IntegratedServer server = minecraft.getSingleplayerServer();
                 if (!this.joinTargetInjected && server != null && server.isPublished()) {
-                    // The hermetic transport: stand in for e4mc's relay by
-                    // injecting the LAN port as the join target. Everything
-                    // downstream (confirm-host heartbeat, backend runtime,
-                    // guest connect) runs the production path unchanged.
-                    String joinTarget = "127.0.0.1:" + server.getPort();
-                    E4mcDomainTracker.captureAssignedDomain(joinTarget);
+                    String joinTarget;
+                    if (this.customJoinConfigured) {
+                        // The shipped 0.5.0 path: publishIfNeeded already
+                        // published on the configured port and pinned the
+                        // target; nothing to inject.
+                        joinTarget = "127.0.0.1:" + this.customJoinPort;
+                    } else {
+                        // The hermetic transport: stand in for e4mc's relay by
+                        // injecting the LAN port as the join target. Everything
+                        // downstream (confirm-host heartbeat, backend runtime,
+                        // guest connect) runs the production path unchanged.
+                        joinTarget = "127.0.0.1:" + server.getPort();
+                        E4mcDomainTracker.captureAssignedDomain(joinTarget);
+                    }
                     this.joinTargetInjected = true;
                     this.markers.emit("published", joinTarget);
                     this.hostStep = HostStep.AWAIT_HOST_LIVE;
@@ -368,7 +495,10 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
             case AWAIT_HOST_LIVE -> {
                 if (SharedWorldClient.hostingManager().phase() == SharedWorldHostingManager.Phase.RUNNING) {
                     this.markers.emit("host-live", this.targetWorld.get().id());
-                    this.hostStep = this.bigWorld ? HostStep.BIGWORLD_SESSION : HostStep.OP_DRILL_AWAIT_COMMAND;
+                    this.hostStep = this.bigWorld ? HostStep.BIGWORLD_SESSION
+                            : this.driveFailure ? HostStep.DRIVE_FAILURE_SESSION
+                            : this.extended ? HostStep.EXTENDED_SESSION
+                            : HostStep.OP_DRILL_AWAIT_COMMAND;
                 }
             }
             case BIGWORLD_SESSION -> {
@@ -515,6 +645,132 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
                     this.hostStep = HostStep.AWAIT_RELEASE_COMPLETE;
                 }
             }
+            case EXTENDED_SESSION -> {
+                if (this.pendingPlacePos != null) {
+                    // /setblock executes asynchronously on the server thread;
+                    // poll until the diamond shows up (or the deadline passes).
+                    Boolean result = this.blockCheckResult.get();
+                    if (this.blockCheckLabel == null) {
+                        this.beginServerBlockCheck(minecraft, this.pendingPlacePos);
+                    } else if (result != null) {
+                        if (result) {
+                            this.markers.emit("block-placed", this.blockCheckLabel);
+                            this.pendingPlacePos = null;
+                        } else if (System.currentTimeMillis() > this.placeDeadlineMs) {
+                            this.markers.emit("block-place-failed", this.blockCheckLabel);
+                            this.pendingPlacePos = null;
+                        } else {
+                            this.beginServerBlockCheck(minecraft, this.pendingPlacePos);
+                        }
+                    }
+                    if (this.pendingPlacePos == null) {
+                        this.blockCheckLabel = null;
+                        this.blockCheckResult.set(null);
+                    }
+                    return;
+                }
+                String command = this.commands.poll();
+                if (command == null) {
+                    return;
+                }
+                if ("place-block".equals(command)) {
+                    if (minecraft.player == null || minecraft.getSingleplayerServer() == null) {
+                        this.markers.emit("driver-exception", "place-block with no player/server");
+                        return;
+                    }
+                    net.minecraft.core.BlockPos pos = minecraft.player.blockPosition().above(20);
+                    minecraft.player.connection.sendCommand(
+                            "setblock " + pos.getX() + " " + pos.getY() + " " + pos.getZ() + " minecraft:diamond_block");
+                    this.pendingPlacePos = pos;
+                    this.placeDeadlineMs = System.currentTimeMillis() + 10_000L;
+                    this.beginServerBlockCheck(minecraft, pos);
+                } else if ("shutdown".equals(command)) {
+                    this.markers.emit("shutdown-received", null);
+                    if (minecraft.screen == null) {
+                        minecraft.setScreen(new PauseScreen(true));
+                    }
+                    this.hostStep = HostStep.AWAIT_RELEASE_COMPLETE;
+                } else {
+                    this.markers.emit("driver-exception", "unknown extended command " + command);
+                }
+            }
+            case DRIVE_FAILURE_SESSION -> {
+                // Parked in-game while the orchestrator toggles /__test/drive-mode
+                // and watches the chat-line markers; "shutdown" begins the
+                // failing release.
+                if ("shutdown".equals(this.commands.poll())) {
+                    this.markers.emit("shutdown-received", null);
+                    if (minecraft.screen == null) {
+                        minecraft.setScreen(new PauseScreen(true));
+                    }
+                    this.hostStep = HostStep.DRIVE_FAILURE_AWAIT_RECONNECT_SCREEN;
+                }
+            }
+            case DRIVE_FAILURE_AWAIT_RECONNECT_SCREEN -> {
+                if (minecraft.screen instanceof PauseScreen pauseScreen) {
+                    WidgetAutomation.pressButton(pauseScreen, "menu.returnToMenu");
+                    return;
+                }
+                if (minecraft.screen instanceof link.sharedworld.screen.ReleaseDriveReconnectScreen) {
+                    // reportErrorScreens already emitted drive-reconnect-screen.
+                    this.screenshot(minecraft, "drive-reconnect-screen");
+                    this.hostStep = HostStep.DRIVE_FAILURE_RECONNECT_INTERACT;
+                }
+            }
+            case DRIVE_FAILURE_RECONNECT_INTERACT -> {
+                if (this.escBouncePending) {
+                    if (System.currentTimeMillis() - this.escBounceAt < 500L) {
+                        return;
+                    }
+                    this.escBouncePending = false;
+                    boolean bounced = minecraft.screen instanceof link.sharedworld.screen.ReleaseDriveReconnectScreen
+                            || minecraft.screen instanceof link.sharedworld.screen.SharedWorldSavingScreen
+                            || minecraft.screen instanceof SharedWorldErrorScreen;
+                    this.markers.emit(bounced ? "esc-bounced" : "esc-escaped",
+                            minecraft.screen == null ? "none" : minecraft.screen.getClass().getSimpleName());
+                    return;
+                }
+                if (SharedWorldClient.hostingManager().isReleaseComplete()) {
+                    this.markers.emit("release-complete", null);
+                    this.hostStep = HostStep.AWAIT_EXIT;
+                    return;
+                }
+                this.fetchReconnectUrlFromClipboard(minecraft);
+                String command = this.commands.poll();
+                if (command == null) {
+                    return;
+                }
+                switch (command) {
+                    case "press-esc" -> {
+                        if (minecraft.screen != null) {
+                            minecraft.screen.onClose();
+                        }
+                        this.escBouncePending = true;
+                        this.escBounceAt = System.currentTimeMillis();
+                    }
+                    case "drive-reconnect" -> {
+                        Screen screen = minecraft.screen;
+                        // The create flow already left ITS auth URL on the
+                        // clipboard; only a URL appearing after this press is
+                        // the reconnect session's.
+                        try {
+                            this.clipboardAtReconnectPress = minecraft.keyboardHandler.getClipboard();
+                        } catch (RuntimeException ignored) {
+                            this.clipboardAtReconnectPress = "";
+                        }
+                        if (screen != null
+                                && WidgetAutomation.pressButton(screen, "screen.sharedworld.account_reconnect")) {
+                            this.reconnectClipboardArmed = true;
+                            this.markers.emit("drive-reconnect-pressed", null);
+                        } else {
+                            this.markers.emit("driver-exception",
+                                    "drive-reconnect: reconnect button not found on "
+                                            + (screen == null ? "none" : screen.getClass().getSimpleName()));
+                        }
+                    }
+                    default -> this.markers.emit("driver-exception", "unknown drive-failure command " + command);
+                }
+            }
             case AWAIT_RELEASE_COMPLETE -> {
                 if (minecraft.screen instanceof PauseScreen pauseScreen) {
                     WidgetAutomation.pressButton(pauseScreen, "menu.returnToMenu");
@@ -577,6 +833,114 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
         }, SharedWorldClient.ioExecutor());
     }
 
+    /**
+     * Extended scenario: surface the S3 link form URL (the orchestrator
+     * completes the form; a bare GET renders it without linking anything).
+     */
+    private void emitS3LinkUrlOnce(Screen screen) {
+        if (this.s3LinkUrlEmitted || !(screen instanceof link.sharedworld.screen.CreateSharedWorldScreen)) {
+            return;
+        }
+        try {
+            java.lang.reflect.Field field = screen.getClass().getDeclaredField("storageLink");
+            field.setAccessible(true);
+            Object storageLink = field.get(screen);
+            if (storageLink == null) {
+                return;
+            }
+            String authUrl = (String) storageLink.getClass().getMethod("authUrl").invoke(storageLink);
+            if (authUrl == null || !authUrl.contains("/storage/s3/link")) {
+                return;
+            }
+            this.s3LinkUrlEmitted = true;
+            this.markers.emit("s3-link-url", authUrl);
+        } catch (ReflectiveOperationException exception) {
+            this.markers.emit("drive-link-failed", "s3 link reflection failed: " + exception);
+        }
+    }
+
+    private static net.minecraft.core.BlockPos parseBlockPos(String spec) {
+        String[] parts = spec.split(",");
+        if (parts.length != 3) {
+            return null;
+        }
+        try {
+            return new net.minecraft.core.BlockPos(
+                    Integer.parseInt(parts[0].trim()),
+                    Integer.parseInt(parts[1].trim()),
+                    Integer.parseInt(parts[2].trim()));
+        } catch (NumberFormatException exception) {
+            return null;
+        }
+    }
+
+    /**
+     * Block reads belong on the server thread; the result lands in
+     * blockCheckResult and finishPendingBlockCheck() emits it next tick.
+     */
+    private void beginServerBlockCheck(Minecraft minecraft, net.minecraft.core.BlockPos pos) {
+        IntegratedServer server = minecraft.getSingleplayerServer();
+        this.blockCheckResult.set(null);
+        this.blockCheckLabel = pos.getX() + "," + pos.getY() + "," + pos.getZ();
+        server.execute(() -> {
+            boolean present = server.overworld().getBlockState(pos)
+                    .is(net.minecraft.world.level.block.Blocks.DIAMOND_BLOCK);
+            this.blockCheckResult.set(present);
+        });
+    }
+
+    /** True while a block check is pending or just finished (marker emitted). */
+    private boolean finishPendingBlockCheck(String presentMarker, String absentMarker) {
+        if (this.blockCheckLabel == null) {
+            return false;
+        }
+        Boolean result = this.blockCheckResult.get();
+        if (result == null) {
+            return true;
+        }
+        this.markers.emit(result ? presentMarker : absentMarker, this.blockCheckLabel);
+        this.blockCheckLabel = null;
+        this.blockCheckResult.set(null);
+        return true;
+    }
+
+    /**
+     * The reconnect screen copies its auth URL to the clipboard before the
+     * browser attempt; in dev-mock OAuth mode one GET of that URL completes
+     * the link. Clipboard reads happen here on the render thread (off-thread
+     * GLFW clipboard access segfaults under X11).
+     */
+    private void fetchReconnectUrlFromClipboard(Minecraft minecraft) {
+        if (this.reconnectUrlFetched || !this.reconnectClipboardArmed) {
+            return;
+        }
+        String clipboard;
+        try {
+            clipboard = minecraft.keyboardHandler.getClipboard();
+        } catch (RuntimeException exception) {
+            return;
+        }
+        if (clipboard == null
+                || clipboard.equals(this.clipboardAtReconnectPress)
+                || !clipboard.startsWith("http")
+                || !clipboard.contains("/storage/google/callback")) {
+            return;
+        }
+        this.reconnectUrlFetched = true;
+        String authUrl = clipboard;
+        CompletableFuture.runAsync(() -> {
+            try {
+                HttpResponse<String> response = this.httpClient.send(
+                        HttpRequest.newBuilder(URI.create(authUrl)).timeout(Duration.ofSeconds(20)).GET().build(),
+                        HttpResponse.BodyHandlers.ofString()
+                );
+                this.markers.emit("drive-reconnect-callback-fetched", "HTTP " + response.statusCode());
+            } catch (Exception exception) {
+                this.markers.emit("drive-link-failed", exception.toString());
+            }
+        }, SharedWorldClient.ioExecutor());
+    }
+
     // ---------------------------------------------------------------- guest
 
     private void tickGuest(Minecraft minecraft) {
@@ -601,7 +965,9 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
             case AWAIT_WORLD_LISTED -> {
                 if (minecraft.screen instanceof SharedWorldScreen) {
                     this.lookUpWorldByName(world -> this.markers.emit("guest-sees-world", world.id()));
-                    if (this.targetWorld.get() != null) {
+                    WorldSummaryDto seen = this.targetWorld.get();
+                    if (seen != null) {
+                        this.configureCustomJoinAddress();
                         this.guestStep = GuestStep.BEGIN_JOIN;
                     }
                 }
@@ -619,7 +985,9 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
                 if (minecraft.level != null && session != null
                         && session.role() == SharedWorldPlaySessionTracker.SessionRole.GUEST) {
                     this.markers.emit("guest-ingame", session.worldId());
-                    this.guestStep = this.bigWorld ? GuestStep.AWAIT_HOST_DEPARTURE : GuestStep.AWAIT_COMMAND_DRILL;
+                    this.guestStep = this.bigWorld ? GuestStep.AWAIT_HOST_DEPARTURE
+                            : this.extended ? GuestStep.EXTENDED_INGAME
+                            : GuestStep.AWAIT_COMMAND_DRILL;
                 }
             }
             case AWAIT_COMMAND_DRILL -> {
@@ -651,7 +1019,9 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
                 if (minecraft.level == null || SharedWorldClient.playSessionTracker().currentSession() == null) {
                     String screenName = minecraft.screen == null ? "none" : minecraft.screen.getClass().getSimpleName();
                     this.markers.emit("guest-observed-host-departure", screenName);
-                    this.guestStep = this.bigWorld ? GuestStep.BIGWORLD_AWAIT_REHOST_GO : GuestStep.AWAIT_EXIT;
+                    this.guestStep = this.bigWorld || this.extended
+                            ? GuestStep.BIGWORLD_AWAIT_REHOST_GO
+                            : GuestStep.AWAIT_EXIT;
                 }
             }
             case BIGWORLD_AWAIT_REHOST_GO -> {
@@ -682,8 +1052,15 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
             case BIGWORLD_REHOST_AWAIT_PUBLISH -> {
                 IntegratedServer server = minecraft.getSingleplayerServer();
                 if (!this.joinTargetInjected && server != null && server.isPublished()) {
-                    String joinTarget = "127.0.0.1:" + server.getPort();
-                    E4mcDomainTracker.captureAssignedDomain(joinTarget);
+                    String joinTarget;
+                    if (this.customJoinConfigured) {
+                        // Extended: the guest re-hosts through ITS OWN shipped
+                        // custom-join-address config; nothing to inject.
+                        joinTarget = "127.0.0.1:" + this.customJoinPort;
+                    } else {
+                        joinTarget = "127.0.0.1:" + server.getPort();
+                        E4mcDomainTracker.captureAssignedDomain(joinTarget);
+                    }
                     this.joinTargetInjected = true;
                     this.markers.emit("published", joinTarget);
                     this.guestStep = GuestStep.BIGWORLD_REHOST_AWAIT_LIVE;
@@ -692,7 +1069,49 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
             case BIGWORLD_REHOST_AWAIT_LIVE -> {
                 if (SharedWorldClient.hostingManager().phase() == SharedWorldHostingManager.Phase.RUNNING) {
                     this.markers.emit("rehost-live", null);
-                    this.guestStep = GuestStep.BIGWORLD_SESSION;
+                    this.guestStep = this.extended ? GuestStep.EXTENDED_VERIFY_BLOCK : GuestStep.BIGWORLD_SESSION;
+                }
+            }
+            case EXTENDED_INGAME -> {
+                // Pre-handoff: prove the placed block synced to this guest's
+                // CLIENT view of the live world (check-block:x,y,z), then wait
+                // for the host to leave.
+                if (minecraft.level == null || SharedWorldClient.playSessionTracker().currentSession() == null) {
+                    String screenName = minecraft.screen == null ? "none" : minecraft.screen.getClass().getSimpleName();
+                    this.markers.emit("guest-observed-host-departure", screenName);
+                    this.guestStep = GuestStep.BIGWORLD_AWAIT_REHOST_GO;
+                    return;
+                }
+                String command = this.commands.poll();
+                if (command != null && command.startsWith("check-block:")) {
+                    net.minecraft.core.BlockPos pos = parseBlockPos(command.substring("check-block:".length()));
+                    if (pos == null || minecraft.level == null) {
+                        this.markers.emit("driver-exception", "check-block unusable: " + command);
+                        return;
+                    }
+                    boolean present = minecraft.level.getBlockState(pos)
+                            .is(net.minecraft.world.level.block.Blocks.DIAMOND_BLOCK);
+                    this.markers.emit(present ? "block-seen" : "block-not-seen", pos.toShortString());
+                }
+            }
+            case EXTENDED_VERIFY_BLOCK -> {
+                if (this.finishPendingBlockCheck("block-persisted", "block-missing")) {
+                    return;
+                }
+                String command = this.commands.poll();
+                if (command != null && command.startsWith("verify-block:")) {
+                    net.minecraft.core.BlockPos pos = parseBlockPos(command.substring("verify-block:".length()));
+                    if (pos == null || minecraft.getSingleplayerServer() == null) {
+                        this.markers.emit("driver-exception", "verify-block unusable: " + command);
+                        return;
+                    }
+                    this.beginServerBlockCheck(minecraft, pos);
+                } else if ("shutdown".equals(command)) {
+                    this.markers.emit("shutdown-received", null);
+                    if (minecraft.screen == null) {
+                        minecraft.setScreen(new PauseScreen(true));
+                    }
+                    this.guestStep = GuestStep.BIGWORLD_AWAIT_RELEASE_COMPLETE;
                 }
             }
             case BIGWORLD_SESSION -> {
@@ -929,9 +1348,56 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
                     WidgetAutomation.pressButton(screen, "gui.back");
                     // Back lands on the edit screen; leave it for the hub too.
                 }
-                this.settleThen(TourStep.HUB_WATCH, 20);
+                this.settleThen(TourStep.BACK_TO_HUB_FOR_SETTINGS, 20);
+            }
+            case BACK_TO_HUB_FOR_SETTINGS -> {
+                if (screen instanceof link.sharedworld.screen.EditSharedWorldScreen edit) {
+                    WidgetAutomation.pressButton(edit, "gui.back");
+                    return;
+                }
+                if (screen instanceof SharedWorldScreen) {
+                    this.tourStep = TourStep.OPEN_SETTINGS;
+                }
+            }
+            case OPEN_SETTINGS -> {
+                if (screen instanceof SharedWorldScreen hub
+                        && WidgetAutomation.pressButton(hub, "screen.sharedworld.settings")) {
+                    // Settle long enough for both storage summaries to load.
+                    this.settleThen(TourStep.SHOT_SETTINGS_STORAGE, 40);
+                }
+            }
+            case SHOT_SETTINGS_STORAGE -> {
+                this.screenshot(minecraft, "13-settings-storage");
+                if (screen instanceof link.sharedworld.screen.SettingsScreen settings) {
+                    settings.sharedworldSelectTab(1);
+                }
+                this.settleThen(TourStep.SHOT_SETTINGS_ADVANCED, 20);
+            }
+            case SHOT_SETTINGS_ADVANCED -> {
+                this.screenshot(minecraft, "14-settings-advanced");
+                this.tourStep = TourStep.SHOT_RECONNECT;
+            }
+            case SHOT_RECONNECT -> {
+                // The Drive-reconnect screen only exists mid-release-failure;
+                // for the layout shot it is constructed directly with the
+                // production copy.
+                minecraft.setScreen(new link.sharedworld.screen.ReleaseDriveReconnectScreen(
+                        screen,
+                        net.minecraft.network.chat.Component.translatable("screen.sharedworld.release_error_title"),
+                        net.minecraft.network.chat.Component.translatable("screen.sharedworld.release_upload_failed_reauth")));
+                this.settleThen(TourStep.HUB_WATCH, 30);
             }
             case HUB_WATCH -> {
+                if (screen instanceof link.sharedworld.screen.ReleaseDriveReconnectScreen reconnect) {
+                    this.screenshot(minecraft, "15-release-drive-reconnect");
+                    reconnect.onClose();
+                    return;
+                }
+                if (screen instanceof link.sharedworld.screen.SettingsScreen settings) {
+                    // Closing the reconnect shot lands back here; return to the hub.
+                    settings.onClose();
+                    return;
+                }
                 if (screen instanceof link.sharedworld.screen.EditSharedWorldScreen edit) {
                     WidgetAutomation.pressButton(edit, "gui.back");
                     return;
@@ -944,7 +1410,7 @@ public final class SharedWorldE2eDriver implements ClientModInitializer {
                 }
             }
             case COMPLETE -> {
-                this.screenshot(minecraft, "13-hub-watch");
+                this.screenshot(minecraft, "16-hub-watch");
                 this.markers.emit("tour-complete", null);
                 this.tourStep = TourStep.WAIT_TITLE;
                 this.tourSettleTicks = Integer.MAX_VALUE;

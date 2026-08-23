@@ -44,4 +44,27 @@ final class E4mcDomainTrackerTest {
         assertFalse(E4mcDomainTracker.interceptMessage(Component.literal("plain chat line")));
         assertEquals(null, E4mcDomainTracker.currentJoinTarget());
     }
+
+    @Test
+    void pinnedJoinTargetSurvivesE4mcCaptureAndChatObservation() {
+        E4mcDomainTracker.pinJoinTarget(" 100.64.0.12:25565 ");
+        assertEquals("100.64.0.12:25565", E4mcDomainTracker.currentJoinTarget());
+
+        E4mcDomainTracker.captureAssignedDomain("play.example.net");
+        assertEquals("100.64.0.12:25565", E4mcDomainTracker.currentJoinTarget());
+
+        assertFalse(E4mcDomainTracker.interceptMessage(clipboardMessage("play.example.net")),
+                "an e4mc chat line while pinned is an ordinary message");
+        assertEquals("100.64.0.12:25565", E4mcDomainTracker.currentJoinTarget());
+    }
+
+    @Test
+    void clearUnpinsTheJoinTarget() {
+        E4mcDomainTracker.pinJoinTarget("100.64.0.12:25565");
+        E4mcDomainTracker.clear();
+
+        assertEquals(null, E4mcDomainTracker.currentJoinTarget());
+        E4mcDomainTracker.captureAssignedDomain("play.example.net");
+        assertEquals("play.example.net", E4mcDomainTracker.currentJoinTarget());
+    }
 }

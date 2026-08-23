@@ -42,12 +42,22 @@ public final class SharedWorldHostingManager {
     private static final long HEARTBEAT_RETRY_INTERVAL_MS = 1_000L;
     private static final int HEARTBEAT_FAILURES_BEFORE_WARNING = 3;
     private static final long HOST_CONFIRM_TIMEOUT_MS = 90_000L;
-    private static final long AUTOSAVE_INTERVAL_MS = 5 * 60_000L;
+    // The literal default lives in its own constant so the backend parity
+    // test can read it; the dev property (same pattern as
+    // sharedworld.dev.superpackShardMaxBytes) lets failure-UX e2e scenarios
+    // shrink the cadence locally — ServerPacing can never speed a loop up.
+    private static final long DEFAULT_AUTOSAVE_INTERVAL_MS = 5 * 60_000L;
+    private static final long AUTOSAVE_INTERVAL_MS =
+            Long.getLong("sharedworld.dev.autosaveIntervalMs", DEFAULT_AUTOSAVE_INTERVAL_MS);
     private static final long JOIN_TARGET_TIMEOUT_MS = 60_000L;
     // Server-throttle caps: heartbeats must stay well under the backend's 90s
     // lease timeout; autosaves may stretch to an hour at most.
     private static final long MAX_SUGGESTED_HEARTBEAT_INTERVAL_MS = 60_000L;
     private static final long MAX_SUGGESTED_AUTOSAVE_INTERVAL_MS = 60 * 60_000L;
+    /** Transient blips stay quiet; a save loop this many failures deep is announced in chat. */
+    private static final int GENERIC_AUTOSAVE_ANNOUNCE_THRESHOLD = 3;
+    /** While a failure episode lasts, remind the host in chat this often so one scrolled-away line can't cost hours of play. */
+    private static final long AUTOSAVE_REANNOUNCE_INTERVAL_MS = 30 * 60_000L;
     // Socket-native (0.4.1): while the realtime channel is connected the
     // coordinator renews the lease from socket keepalives (one probe per 90s,
     // no HTTP needed) and settings/membership/deletion changes trigger
@@ -97,7 +107,10 @@ public final class SharedWorldHostingManager {
     private volatile long lastAutosaveAt;
     /** C2 sticky autosave error: non-null while saves are failing; cleared by the next SUCCESSFUL save. */
     private volatile String autosaveErrorMessage;
-    private boolean autosaveFailureAnnounced;
+    private int consecutiveAutosaveFailures;
+    /** 0 while nothing has been announced this episode; also gates the recovery announcement. */
+    private long lastAutosaveFailureAnnouncedAt;
+    private AutosaveFailureKind announcedAutosaveFailureKind;
     private volatile long heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS;
     private volatile long autosaveIntervalMs = AUTOSAVE_INTERVAL_MS;
     private volatile long startupAttemptId;
@@ -108,6 +121,11 @@ public final class SharedWorldHostingManager {
     private volatile String hostToken;
     /** 0.3.0 realtime: connection state supplier + push-triggered heartbeats. */
     private volatile java.util.function.BooleanSupplier realtimeConnected = () -> false;
+    /** 0.5.0 custom join address: per-computer override that skips the e4mc tunnel (null = use e4mc). */
+    private volatile java.util.function.Supplier<String> customJoinAddressResolver =
+            () -> link.sharedworld.SharedWorldClientConfigStore.shared().customJoinAddress();
+    private volatile java.util.function.BooleanSupplier e4mcAvailable =
+            () -> link.sharedworld.SharedWorldClient.isE4mcInstalled();
     private volatile boolean immediateHeartbeatRequested;
     private volatile long lastGameRulesLocalPollAt;
     private volatile StartupMode startupMode = StartupMode.NORMAL;
@@ -303,6 +321,9 @@ public final class SharedWorldHostingManager {
         this.lastGameRulesLocalPollAt = 0L;
         this.consecutiveHeartbeatFailures = 0;
         this.lastAutosaveAt = 0L;
+        // Without this, a failure episode announced in a previous session
+        // would fake a "backups are working again" chat line in this one.
+        resetAutosaveFailureTracking();
         this.heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS;
         this.autosaveIntervalMs = AUTOSAVE_INTERVAL_MS;
         this.gameRulesSync.reset();
@@ -520,6 +541,16 @@ public final class SharedWorldHostingManager {
     /** Wired by the client so heartbeat pacing can see the channel state. */
     public void setRealtimeConnectedSupplier(java.util.function.BooleanSupplier supplier) {
         this.realtimeConnected = Objects.requireNonNull(supplier, "supplier");
+    }
+
+    /** Test seam over the client config store's custom join address. */
+    void setCustomJoinAddressResolver(java.util.function.Supplier<String> resolver) {
+        this.customJoinAddressResolver = Objects.requireNonNull(resolver, "resolver");
+    }
+
+    /** Test seam over the e4mc mod-presence probe. */
+    void setE4mcAvailableSupplier(java.util.function.BooleanSupplier supplier) {
+        this.e4mcAvailable = Objects.requireNonNull(supplier, "supplier");
     }
 
     /** A pushed settings/membership change wants its heartbeat fetch now. */
@@ -900,9 +931,28 @@ public final class SharedWorldHostingManager {
         if (server == null) {
             return;
         }
+        String customJoinAddress = CustomJoinAddressPolicy.normalize(this.customJoinAddressResolver.get());
+        switch (CustomJoinAddressPolicy.publishMode(customJoinAddress, this.e4mcAvailable.getAsBoolean())) {
+            case FAIL_INVALID_ADDRESS -> {
+                fail(SharedWorldText.string("screen.sharedworld.hosting_invalid_custom_address"), null);
+                return;
+            }
+            case FAIL_NEEDS_E4MC_OR_ADDRESS -> {
+                fail(SharedWorldText.string("screen.sharedworld.hosting_needs_e4mc_or_custom_address"), null);
+                return;
+            }
+            case E4MC -> customJoinAddress = null;
+            case CUSTOM_ADDRESS -> {
+            }
+        }
         if (!server.isPublished()) {
             setPhase(Phase.PUBLISHING, SharedWorldText.string("screen.sharedworld.hosting_opening_to_friends"));
-            int port = HttpUtil.getAvailablePort();
+            // A custom join address publishes on its port so guests can dial it
+            // directly (VPN-style setups); otherwise any free port works, since
+            // guests will go through the e4mc tunnel.
+            int port = customJoinAddress != null
+                    ? CustomJoinAddressPolicy.port(customJoinAddress)
+                    : HttpUtil.getAvailablePort();
             // Shared World synchronizes playerdata, so late joiners must keep their stored
             // gamemode instead of inheriting a forced LAN publish mode.
             if (!link.sharedworld.versioned.ServerPublishCompat.publish(server, SharedWorldPublishedJoinModePolicy.publishGameMode(), port)) {
@@ -910,7 +960,14 @@ public final class SharedWorldHostingManager {
                 return;
             }
         }
-        setPhase(Phase.WAITING_FOR_E4MC, SharedWorldText.string("screen.sharedworld.hosting_waiting_for_e4mc"));
+        if (customJoinAddress != null) {
+            // Pin before entering the wait phase: driveJoinTargetAcquisition
+            // picks it up on the next tick and e4mc can never overwrite it.
+            E4mcDomainTracker.pinJoinTarget(customJoinAddress);
+            setPhase(Phase.WAITING_FOR_E4MC, SharedWorldText.string("screen.sharedworld.hosting_using_custom_address"));
+        } else {
+            setPhase(Phase.WAITING_FOR_E4MC, SharedWorldText.string("screen.sharedworld.hosting_waiting_for_e4mc"));
+        }
     }
 
     private boolean isClientReadyForPublish(Minecraft minecraft) {
@@ -1210,17 +1267,19 @@ public final class SharedWorldHostingManager {
                 // Sticky error state (C2): pre-0.4.2 a failing autosave loop
                 // was one log line and a phase snap back to RUNNING — players
                 // lost hours before learning nothing was saving. The state
-                // survives until a save SUCCEEDS, and a full Drive gets an
-                // in-game announcement the moment it is first detected.
-                boolean driveFull = isDriveStorageFullFailure(exception);
-                String stickyMessage = driveFull
-                        ? SharedWorldText.string("sharedworld.autosave_failed_storage_full")
-                        : SharedWorldText.string("sharedworld.autosave_failed_generic", SharedWorldApiClient.friendlyErrorMessage(exception));
+                // survives until a save SUCCEEDS; recordAutosaveError decides
+                // which failures reach chat and when.
+                AutosaveFailureKind failureKind = classifyAutosaveFailure(exception);
+                String stickyMessage = switch (failureKind) {
+                    case DRIVE_FULL -> SharedWorldText.string("sharedworld.autosave_failed_storage_full");
+                    case DRIVE_REAUTH -> SharedWorldText.string("sharedworld.autosave_failed_reauth");
+                    case GENERIC -> SharedWorldText.string("sharedworld.autosave_failed_generic", SharedWorldApiClient.friendlyErrorMessage(exception));
+                };
                 dispatchToMainThread(() -> {
                     if (!isCurrentAttempt(context)) {
                         return;
                     }
-                    recordAutosaveError(stickyMessage, driveFull);
+                    recordAutosaveError(stickyMessage, failureKind);
                     if (this.coordinatedRelease == CoordinatedRelease.NONE) {
                         setPhase(Phase.RUNNING, SharedWorldText.string("screen.sharedworld.hosting_autosave_failing"));
                     }
@@ -1238,41 +1297,82 @@ public final class SharedWorldHostingManager {
         }, this.backgroundExecutor);
     }
 
-    /** The sticky autosave failure message, or null while saves are healthy (SharedWorld screen warning line). */
-    public String autosaveErrorMessage() {
-        return this.autosaveErrorMessage;
+    /**
+     * A full Drive and a dead Drive authorization never heal on their own —
+     * both stay broken until the host acts, so both are announced immediately
+     * and with their own instructions. Everything else may be a transient blip.
+     */
+    enum AutosaveFailureKind {
+        GENERIC,
+        DRIVE_FULL,
+        DRIVE_REAUTH
     }
 
-    private static boolean isDriveStorageFullFailure(Throwable exception) {
-        if ("drive_storage_full".equals(SharedWorldApiClient.errorCode(exception))) {
-            return true;
+    static AutosaveFailureKind classifyAutosaveFailure(Throwable exception) {
+        if (SharedWorldApiClient.isDriveStorageFullError(exception)) {
+            return AutosaveFailureKind.DRIVE_FULL;
         }
-        for (Throwable cause = exception; cause != null; cause = cause.getCause()) {
-            if (cause instanceof link.sharedworld.api.ResumableBlobUploader.DriveStorageFullException) {
-                return true;
-            }
+        if (SharedWorldApiClient.isDriveReauthRequiredError(exception)) {
+            return AutosaveFailureKind.DRIVE_REAUTH;
         }
-        return false;
+        return AutosaveFailureKind.GENERIC;
     }
 
-    /** Main thread. Announces in chat once per failure episode; a full Drive is always announced loudly. */
-    private void recordAutosaveError(String message, boolean driveFull) {
+    /**
+     * Main thread. Chat policy for a failing autosave loop: Drive-full and
+     * reauth failures are announced on first detection, generic ones only once
+     * {@link #GENERIC_AUTOSAVE_ANNOUNCE_THRESHOLD} consecutive saves have
+     * failed. While the episode lasts the warning repeats every
+     * {@link #AUTOSAVE_REANNOUNCE_INTERVAL_MS}, and a change of failure kind
+     * re-announces immediately so "backups failing" can escalate to "Drive is
+     * full" without waiting out the reminder interval.
+     */
+    private void recordAutosaveError(String message, AutosaveFailureKind kind) {
         this.autosaveErrorMessage = message;
-        if (driveFull && !this.autosaveFailureAnnounced) {
-            this.autosaveFailureAnnounced = true;
-            announceInChat(message);
+        this.consecutiveAutosaveFailures++;
+        long now = System.currentTimeMillis();
+        if (!shouldAnnounceAutosaveFailure(kind, this.consecutiveAutosaveFailures,
+                this.lastAutosaveFailureAnnouncedAt, this.announcedAutosaveFailureKind, now)) {
+            return;
         }
+        this.lastAutosaveFailureAnnouncedAt = now;
+        this.announcedAutosaveFailureKind = kind;
+        announceInChat(message);
+    }
+
+    /** The pure announcement policy behind {@link #recordAutosaveError}. */
+    static boolean shouldAnnounceAutosaveFailure(
+            AutosaveFailureKind kind,
+            int consecutiveFailures,
+            long lastAnnouncedAt,
+            AutosaveFailureKind announcedKind,
+            long now
+    ) {
+        boolean announceWorthy = kind != AutosaveFailureKind.GENERIC
+                || consecutiveFailures >= GENERIC_AUTOSAVE_ANNOUNCE_THRESHOLD;
+        if (!announceWorthy) {
+            return false;
+        }
+        return lastAnnouncedAt == 0L
+                || kind != announcedKind
+                || now - lastAnnouncedAt >= AUTOSAVE_REANNOUNCE_INTERVAL_MS;
     }
 
     /** Main thread. Clears the sticky state; announces recovery only if the failure had been announced. */
     private void clearAutosaveError() {
-        boolean wasAnnounced = this.autosaveFailureAnnounced;
+        boolean wasAnnounced = this.lastAutosaveFailureAnnouncedAt != 0L;
         boolean hadError = this.autosaveErrorMessage != null;
-        this.autosaveErrorMessage = null;
-        this.autosaveFailureAnnounced = false;
+        resetAutosaveFailureTracking();
         if (hadError && wasAnnounced) {
             announceInChat(SharedWorldText.string("sharedworld.autosave_recovered"));
         }
+    }
+
+    private void resetAutosaveFailureTracking() {
+        this.autosaveErrorMessage = null;
+        this.consecutiveAutosaveFailures = 0;
+        this.lastAutosaveFailureAnnouncedAt = 0L;
+        this.announcedAutosaveFailureKind = null;
     }
 
     private static void announceInChat(String message) {
@@ -1471,6 +1571,7 @@ public final class SharedWorldHostingManager {
         this.lastGameRulesLocalPollAt = 0L;
         this.consecutiveHeartbeatFailures = 0;
         this.lastAutosaveAt = 0L;
+        resetAutosaveFailureTracking();
         this.heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS;
         this.autosaveIntervalMs = AUTOSAVE_INTERVAL_MS;
         this.startupStarted.set(false);

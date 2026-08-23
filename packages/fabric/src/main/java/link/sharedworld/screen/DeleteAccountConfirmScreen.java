@@ -10,11 +10,11 @@ import net.minecraft.network.chat.Component;
  * copies — and the red-flag button needs a second click to fire.
  */
 public final class DeleteAccountConfirmScreen extends link.sharedworld.versioned.VersionedScreen {
-    private final AccountScreen parent;
+    private final SettingsScreen parent;
     private boolean armed;
     private Button confirmButton;
 
-    public DeleteAccountConfirmScreen(AccountScreen parent) {
+    public DeleteAccountConfirmScreen(SettingsScreen parent) {
         super(Component.translatable("screen.sharedworld.account_delete_title"));
         this.parent = parent;
     }
