@@ -23,7 +23,16 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class SharedWorldCustomIconStore {
+    /**
+     * The world list polls {@link #resolveCachedIcon} every frame, so a
+     * download that keeps failing must be remembered: without a cool-down a
+     * broken icon turns into an infinite request-per-frame retry loop
+     * against the backend.
+     */
+    private static final long FAILED_DOWNLOAD_RETRY_MS = 60_000L;
+
     private final Map<String, CompletableFuture<Path>> inFlightDownloads = new ConcurrentHashMap<>();
+    private final Map<String, Long> failedDownloadsAtMs = new ConcurrentHashMap<>();
 
     public Path resolveCachedIcon(WorldSummaryDto world) {
         if (world.customIconStorageKey() == null || world.customIconStorageKey().isBlank()) {
@@ -108,14 +117,20 @@ public final class SharedWorldCustomIconStore {
     }
 
     private void downloadIfNeeded(String storageKey, SignedBlobUrlDto signedUrl, Path cached) {
+        Long failedAt = this.failedDownloadsAtMs.get(storageKey);
+        if (failedAt != null && System.currentTimeMillis() - failedAt < FAILED_DOWNLOAD_RETRY_MS) {
+            return;
+        }
         this.inFlightDownloads.computeIfAbsent(storageKey, ignoredKey -> CompletableFuture.supplyAsync(() -> {
             try {
                 Files.createDirectories(cached.getParent());
                 Path temp = cached.resolveSibling(cached.getFileName() + ".tmp");
                 SharedWorldClient.apiClient().downloadRawBlobToFile(signedUrl, temp);
                 Files.move(temp, cached, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                this.failedDownloadsAtMs.remove(storageKey);
                 return cached;
             } catch (Exception exception) {
+                this.failedDownloadsAtMs.put(storageKey, System.currentTimeMillis());
                 SharedWorldClient.LOGGER.warn("Failed to cache Shared World custom icon {}", storageKey, exception);
                 return null;
             }

@@ -8,7 +8,7 @@ use sw_contracts::*;
 use sw_db::repo::{WorldStorageBinding, WorldUpdateRecord};
 
 use super::runtime_access::*;
-use super::signer::sign_download_for_world;
+use super::signer::sign_download_direct_for_world;
 use super::snapshots::{
     apply_snapshot_retention, maybe_delete_unreferenced_blob, purge_world_snapshots,
     DEFERRED_BLOB_DELETE_BUDGET_MS,
@@ -419,7 +419,9 @@ pub fn hydrate_world_summary(
         world.storage_account_email = None;
     }
     if let Some(key) = world.custom_icon_storage_key.clone() {
-        world.custom_icon_download = Some(sign_download_for_world(
+        // Direct, not relay: no relay token exists outside a sync plan, and
+        // the client only bearer-authenticates against its own origin.
+        world.custom_icon_download = Some(sign_download_direct_for_world(
             svc,
             &world.id,
             &key,

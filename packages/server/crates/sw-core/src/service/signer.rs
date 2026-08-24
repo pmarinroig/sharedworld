@@ -35,6 +35,15 @@ pub trait BlobUrlSigner: Send + Sync {
         storage_key: &str,
         request_origin: Option<&str>,
     ) -> SignedBlobRequest;
+    /// Download served by the box itself, never the relay. For blobs handed
+    /// out outside a sync plan (no relay token gets attached): the URL must
+    /// point at an origin the client authenticates to with its bearer.
+    fn sign_download_direct(
+        &self,
+        world_id: &str,
+        storage_key: &str,
+        request_origin: Option<&str>,
+    ) -> SignedBlobRequest;
 }
 
 pub struct ServerSignedUrlSigner {
@@ -100,6 +109,14 @@ impl BlobUrlSigner for ServerSignedUrlSigner {
         let base = self.relay_base_url.as_deref().unwrap_or_else(|| self.upload_base(request_origin));
         self.sign(SignedBlobMethod::GET, world_id, storage_key, base)
     }
+    fn sign_download_direct(
+        &self,
+        world_id: &str,
+        storage_key: &str,
+        request_origin: Option<&str>,
+    ) -> SignedBlobRequest {
+        self.sign(SignedBlobMethod::GET, world_id, storage_key, self.upload_base(request_origin))
+    }
 }
 
 /// `encodeURIComponent`.
@@ -150,6 +167,26 @@ pub fn sign_download_for_world(
     signed
 }
 
+/// Like [`sign_download_for_world`], but always against the box's own origin.
+/// The relay only serves blob GETs that carry a relay token, and tokens are
+/// minted per sync-plan step; a blob handed out anywhere else (world-list
+/// custom icons) would 401 at the relay because new clients only attach their
+/// bearer to their own backend origin.
+pub fn sign_download_direct_for_world(
+    svc: &ServiceContext,
+    world_id: &str,
+    storage_key: &str,
+    player_uuid: &str,
+    request_origin: Option<&str>,
+) -> SignedBlobRequest {
+    let mut signed = svc.blob_signer.sign_download_direct(world_id, storage_key, request_origin);
+    if let Some(stamp) = mint_download_stamp(&svc.stamp_keys, world_id, storage_key, player_uuid, time::now())
+    {
+        signed.headers.insert(BLOB_STAMP_HEADER.into(), stamp);
+    }
+    signed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -159,5 +196,35 @@ mod tests {
         assert_eq!(url_encode("packs/full/ab/abc.pack"), "packs%2Ffull%2Fab%2Fabc.pack");
         assert_eq!(url_encode("a b+c"), "a%20b%2Bc");
         assert_eq!(url_encode("world_1"), "world_1");
+    }
+
+    fn lane_d_signer() -> ServerSignedUrlSigner {
+        ServerSignedUrlSigner::new(&Config {
+            public_base_url: Some("https://api.example".into()),
+            relay_base_url: Some("https://relay.example".into()),
+            ..Config::default()
+        })
+    }
+
+    #[test]
+    fn sign_download_prefers_the_relay_base() {
+        let signed = lane_d_signer().sign_download("world_1", "packs/full/ab/abc.pack", None);
+        assert!(signed.url.starts_with("https://relay.example/worlds/world_1/"), "{}", signed.url);
+    }
+
+    #[test]
+    fn sign_download_direct_skips_the_relay() {
+        let signed = lane_d_signer().sign_download_direct("world_1", "icons/f8/f8ab.png", None);
+        assert!(signed.url.starts_with("https://api.example/worlds/world_1/"), "{}", signed.url);
+    }
+
+    #[test]
+    fn sign_download_direct_keeps_the_entry_origin_for_forwarded_clients() {
+        let signed = lane_d_signer().sign_download_direct(
+            "world_1",
+            "icons/f8/f8ab.png",
+            Some("https://legacy.workers.dev"),
+        );
+        assert!(signed.url.starts_with("https://legacy.workers.dev/worlds/world_1/"), "{}", signed.url);
     }
 }
