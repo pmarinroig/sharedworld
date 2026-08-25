@@ -63,6 +63,27 @@ fn spawn_core(dir: &std::path::Path, db: &std::path::Path, tcp_port: u16) -> Cor
     Core { child }
 }
 
+/// Reads frames until the keepalive ack arrives. Event frames can
+/// legitimately interleave ahead of the ack (the presence-changed broadcast
+/// triggered by this socket's own world-presence subscription races the
+/// edge's ack), so the drill skips them instead of failing on ordering.
+async fn expect_keepalive_ack(
+    ws: &mut tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+) {
+    for _ in 0..5 {
+        let msg = tokio::time::timeout(Duration::from_secs(3), ws.next()).await.unwrap().unwrap().unwrap();
+        let text = msg.into_text().unwrap();
+        if text.as_str() == "sw-keepalive-ack" {
+            return;
+        }
+        assert!(
+            text.contains(r#""type":"event""#),
+            "unexpected frame while waiting for keepalive ack: {text}"
+        );
+    }
+    panic!("keepalive ack never arrived");
+}
+
 async fn wait_http_ok(url: &str, timeout: Duration) {
     let client = reqwest::Client::new();
     let deadline = Instant::now() + timeout;
@@ -168,15 +189,14 @@ async fn socket_survives_core_restart() {
     .await
     .unwrap();
     ws.send(Message::Text("sw-keepalive".into())).await.unwrap();
-    assert_eq!(ws.next().await.unwrap().unwrap().into_text().unwrap().as_str(), "sw-keepalive-ack");
+    expect_keepalive_ack(&mut ws).await;
 
     // kill the core, keepalive still answered by the edge, socket still open
     core.child.kill().unwrap();
     core.child.wait().unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
     ws.send(Message::Text("sw-keepalive".into())).await.unwrap();
-    let ack = tokio::time::timeout(Duration::from_secs(3), ws.next()).await.unwrap().unwrap().unwrap();
-    assert_eq!(ack.into_text().unwrap().as_str(), "sw-keepalive-ack");
+    expect_keepalive_ack(&mut ws).await;
 
     // HTTP during the outage is queued: fire a request, then restart the core
     let c2 = client.clone();
