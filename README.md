@@ -43,6 +43,12 @@ The terms of service live at
 
 Contributions are welcome.
 
+## Github Issues
+I am doing this for free, so please try to make it a bit easier for me:
+- First try updating the mod to see if the issue is resolved.
+- Include relevant information, like MC version, mod version and logs.
+- If my answer helped you, before leaving please tell me so! That way I can close the issue and you also help the project.
+
 ## License
 
 [MIT](./LICENSE)
