@@ -95,6 +95,13 @@ const STATS_SQL: &[(&str, &str)] = &[
         "SELECT COUNT(*) FROM (SELECT player_uuid FROM user_sessions WHERE created_at >= strftime('%Y-%m-%dT%H:%M:%S','now','-1 day') UNION SELECT created_by_uuid FROM snapshots WHERE created_at >= strftime('%Y-%m-%dT%H:%M:%S','now','-1 day') UNION SELECT player_uuid FROM world_memberships WHERE joined_at >= strftime('%Y-%m-%dT%H:%M:%S','now','-1 day'))",
     ),
     (
+        // Same union as DAU, bucketed per UTC calendar day over the last 7
+        // complete days (today is partial and excluded); days without any
+        // activity count as zero. Smooths the single rolling sample above.
+        "DAU 7-day avg (lower bound)",
+        "SELECT ROUND(COALESCE(SUM(n),0)/7.0, 1) FROM (SELECT d, COUNT(*) AS n FROM (SELECT substr(created_at,1,10) AS d, player_uuid AS u FROM user_sessions WHERE created_at >= date('now','-7 days') UNION SELECT substr(created_at,1,10), created_by_uuid FROM snapshots WHERE created_at >= date('now','-7 days') UNION SELECT substr(joined_at,1,10), player_uuid FROM world_memberships WHERE joined_at >= date('now','-7 days')) WHERE d < date('now') GROUP BY d)",
+    ),
+    (
         "WAU (lower bound)",
         "SELECT COUNT(*) FROM (SELECT player_uuid FROM user_sessions WHERE created_at >= strftime('%Y-%m-%dT%H:%M:%S','now','-7 days') UNION SELECT created_by_uuid FROM snapshots WHERE created_at >= strftime('%Y-%m-%dT%H:%M:%S','now','-7 days') UNION SELECT player_uuid FROM world_memberships WHERE joined_at >= strftime('%Y-%m-%dT%H:%M:%S','now','-7 days'))",
     ),
