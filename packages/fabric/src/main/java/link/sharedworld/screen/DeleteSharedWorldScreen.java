@@ -37,7 +37,7 @@ public final class DeleteSharedWorldScreen extends link.sharedworld.versioned.Ve
                 Component.translatable(isOwner()
                         ? "screen.sharedworld.delete_question_owner"
                         : "screen.sharedworld.delete_question_member",
-                        SharedWorldText.truncate(this.font, displayName(this.world), 140)),
+                        SharedWorldText.truncate(this.font, SharedWorldText.displayWorldName(this.world), 140)),
                 this.width / 2,
                 84,
                 0xFFFFFFFF
@@ -70,7 +70,4 @@ public final class DeleteSharedWorldScreen extends link.sharedworld.versioned.Ve
         return ownerUuid.replace("-", "").equalsIgnoreCase(SharedWorldApiClient.currentPlayerUuid());
     }
 
-    private static String displayName(WorldSummaryDto world) {
-        return SharedWorldText.displayWorldName(world.name());
-    }
 }

@@ -14,13 +14,12 @@ import net.minecraft.client.gui.layouts.HeaderAndFooterLayout;
 import net.minecraft.client.gui.layouts.LinearLayout;
 import net.minecraft.client.gui.navigation.ScreenRectangle;
 import net.minecraft.network.chat.Component;
-import net.minecraft.util.FormattedCharSequence;
 
-import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
 import static link.sharedworld.screen.EditScreenFormats.blankOr;
+import static link.sharedworld.util.Errors.rootCause;
 
 /**
  * Global, per-computer SharedWorld settings. The Storage tab manages the two
@@ -219,18 +218,11 @@ public final class SettingsScreen extends link.sharedworld.versioned.VersionedSc
             guiGraphics.drawString(this.font, Component.translatable("screen.sharedworld.custom_join_address_invalid"), left, textTop, 0xFFFF5555);
             textTop += 14;
         }
-        textTop = this.drawWrappedText(guiGraphics, Component.translatable("screen.sharedworld.custom_join_address_explain_1"), left, textTop, textWidth, 0xFFA0A0A0) + 6;
-        textTop = this.drawWrappedText(guiGraphics, Component.translatable("screen.sharedworld.custom_join_address_explain_2"), left, textTop, textWidth, 0xFFA0A0A0) + 6;
-        this.drawWrappedText(guiGraphics, Component.translatable("screen.sharedworld.custom_join_address_explain_3"), left, textTop, textWidth, 0xFFA0A0A0);
+        textTop = WrappedText.draw(guiGraphics, this.font, Component.translatable("screen.sharedworld.custom_join_address_explain_1"), left, textTop, textWidth, 0xFFA0A0A0) + 6;
+        textTop = WrappedText.draw(guiGraphics, this.font, Component.translatable("screen.sharedworld.custom_join_address_explain_2"), left, textTop, textWidth, 0xFFA0A0A0) + 6;
+        WrappedText.draw(guiGraphics, this.font, Component.translatable("screen.sharedworld.custom_join_address_explain_3"), left, textTop, textWidth, 0xFFA0A0A0);
     }
 
-    private int drawWrappedText(GuiGraphics guiGraphics, Component text, int x, int y, int width, int color) {
-        List<FormattedCharSequence> lines = this.font.split(text, width);
-        for (int index = 0; index < lines.size(); index++) {
-            guiGraphics.drawString(this.font, lines.get(index), x, y + index * 9, color);
-        }
-        return y + lines.size() * 9;
-    }
 
     private Component driveStatusLine() {
         if (!this.accountCheckFinished) {
@@ -515,13 +507,6 @@ public final class SettingsScreen extends link.sharedworld.versioned.VersionedSc
         }
     }
 
-    private static Throwable rootCause(Throwable error) {
-        Throwable current = error;
-        while (current.getCause() != null && current.getCause() != current) {
-            current = current.getCause();
-        }
-        return current;
-    }
 
     private final class StorageTab extends link.sharedworld.versioned.VersionedTab {
         @Override

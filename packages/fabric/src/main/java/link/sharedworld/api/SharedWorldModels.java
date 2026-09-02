@@ -86,16 +86,6 @@ public final class SharedWorldModels {
             String deletedAt,
             boolean canUseCommands
     ) {
-        public WorldMembershipDto(
-                String worldId,
-                String playerUuid,
-                String playerName,
-                String role,
-                String joinedAt,
-                String deletedAt
-        ) {
-            this(worldId, playerUuid, playerName, role, joinedAt, deletedAt, false);
-        }
     }
 
     public record WorldDetailsDto(
@@ -507,13 +497,6 @@ public final class SharedWorldModels {
     public record CommitBlobSessionResponseDto(String storageKey, long size) {
     }
 
-    public record IconUploadPrepareResponseDto(
-            String storageKey,
-            boolean alreadyPresent,
-            SignedBlobUrlDto upload
-    ) {
-    }
-
     public record DownloadPlanStepDto(
             String transferMode,
             String storageKey,
@@ -654,40 +637,6 @@ public final class SharedWorldModels {
                 String startupDeadlineAt,
                 String runtimeTokenIssuedAt,
                 String lastProgressAt,
-                StartupProgressDto startupProgress,
-                UncleanShutdownWarningDto uncleanShutdownWarning
-        ) {
-            this(
-                    worldId,
-                    phase,
-                    runtimeEpoch,
-                    hostUuid,
-                    hostPlayerName,
-                    candidateUuid,
-                    candidatePlayerName,
-                    joinTarget,
-                    startupDeadlineAt,
-                    runtimeTokenIssuedAt,
-                    lastProgressAt,
-                    null,
-                    startupProgress,
-                    uncleanShutdownWarning,
-                    null
-            );
-        }
-
-        public WorldRuntimeStatusDto(
-                String worldId,
-                String phase,
-                long runtimeEpoch,
-                String hostUuid,
-                String hostPlayerName,
-                String candidateUuid,
-                String candidatePlayerName,
-                String joinTarget,
-                String startupDeadlineAt,
-                String runtimeTokenIssuedAt,
-                String lastProgressAt,
                 StartupProgressDto startupProgress
         ) {
             this(
@@ -788,57 +737,6 @@ public final class SharedWorldModels {
             Long suggestedHeartbeatIntervalMs,
             Long suggestedAutosaveIntervalMs
     ) {
-        /** Pre-pacing arity: servers without pacing suggestions leave both fields null. */
-        public HostHeartbeatResponseDto(
-                String worldId,
-                String phase,
-                long runtimeEpoch,
-                String hostUuid,
-                String hostPlayerName,
-                String candidateUuid,
-                String candidatePlayerName,
-                String joinTarget,
-                String startupDeadlineAt,
-                String runtimeTokenIssuedAt,
-                String lastProgressAt,
-                String revokedAt,
-                StartupProgressDto startupProgress,
-                UncleanShutdownWarningDto uncleanShutdownWarning,
-                String hostMinecraftVersion,
-                HostHeartbeatMembershipDto[] memberships,
-                WorldSettingsDto settings,
-                Long settingsRevision
-        ) {
-            this(worldId, phase, runtimeEpoch, hostUuid, hostPlayerName, candidateUuid, candidatePlayerName,
-                    joinTarget, startupDeadlineAt, runtimeTokenIssuedAt, lastProgressAt, revokedAt,
-                    startupProgress, uncleanShutdownWarning, hostMinecraftVersion, memberships,
-                    settings, settingsRevision, null, null);
-        }
-
-        /** Pre-settings arity: callers without settings knowledge leave both fields null. */
-        public HostHeartbeatResponseDto(
-                String worldId,
-                String phase,
-                long runtimeEpoch,
-                String hostUuid,
-                String hostPlayerName,
-                String candidateUuid,
-                String candidatePlayerName,
-                String joinTarget,
-                String startupDeadlineAt,
-                String runtimeTokenIssuedAt,
-                String lastProgressAt,
-                String revokedAt,
-                StartupProgressDto startupProgress,
-                UncleanShutdownWarningDto uncleanShutdownWarning,
-                String hostMinecraftVersion,
-                HostHeartbeatMembershipDto[] memberships
-        ) {
-            this(worldId, phase, runtimeEpoch, hostUuid, hostPlayerName, candidateUuid, candidatePlayerName,
-                    joinTarget, startupDeadlineAt, runtimeTokenIssuedAt, lastProgressAt, revokedAt,
-                    startupProgress, uncleanShutdownWarning, hostMinecraftVersion, memberships, null, null);
-        }
-
         public WorldRuntimeStatusDto toRuntimeStatus() {
             return new WorldRuntimeStatusDto(
                     worldId,
@@ -886,19 +784,6 @@ public final class SharedWorldModels {
         public ErrorDto(String error, String message, int status) {
             this(error, message, status, null);
         }
-    }
-
-    /**
-     * Presence heartbeat response. Only the pacing suggestion is consumed;
-     * older clients never parsed this body at all, so every field is additive.
-     */
-    public record PresenceHeartbeatResponseDto(
-            String worldId,
-            boolean present,
-            String updatedAt,
-            String expiresAt,
-            Long suggestedIntervalMs
-    ) {
     }
 
     /**

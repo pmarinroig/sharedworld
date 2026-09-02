@@ -102,7 +102,7 @@ public final class ManagedWorldStore {
     }
 
     private static void pruneWorldTransientArtifacts(Path worldContainer) {
-        deleteQuietly(worldContainer.resolve("staging"));
+        WorldSyncSupport.deleteRecursivelyQuietly(worldContainer.resolve("staging"));
         try (Stream<Path> entries = Files.list(worldContainer)) {
             for (Path entry : entries.toList()) {
                 String name = entry.getFileName().toString();
@@ -113,7 +113,7 @@ public final class ManagedWorldStore {
                         // Resumable-download partials; the temps they resume
                         // onto are per-attempt, so a crash orphans them.
                         || name.endsWith(".swpart")) {
-                    deleteQuietly(entry);
+                    WorldSyncSupport.deleteRecursivelyQuietly(entry);
                 }
             }
         } catch (IOException exception) {
@@ -125,7 +125,7 @@ public final class ManagedWorldStore {
                 for (Path path : stream.filter(Files::isRegularFile).toList()) {
                     String name = path.getFileName().toString();
                     if ((name.contains(".artifact.") && name.endsWith(".part")) || name.endsWith(".swpart")) {
-                        deleteQuietly(path);
+                        WorldSyncSupport.deleteRecursivelyQuietly(path);
                     }
                 }
             } catch (IOException exception) {
@@ -134,23 +134,13 @@ public final class ManagedWorldStore {
         }
     }
 
-    private static void deleteQuietly(Path root) {
-        try {
-            deleteRecursivelyIfExists(root);
-        } catch (IOException exception) {
-            // Best effort.
-        }
-    }
-
     public void resetWorkingCopy(String worldId) throws IOException {
         Path workingCopy = this.workingCopy(worldId);
-        if (Files.exists(workingCopy)) {
-            deleteRecursively(workingCopy);
-        }
+        WorldSyncSupport.deleteRecursively(workingCopy);
         clearRegionBaseline(worldId);
         clearPackBaseline(worldId);
         Files.deleteIfExists(this.scanCacheFile(worldId));
-        deleteRecursivelyIfExists(this.captureMirrorRoot(worldId));
+        WorldSyncSupport.deleteRecursively(this.captureMirrorRoot(worldId));
         clearLocalChanges(worldId);
         Files.createDirectories(this.worldContainer(worldId));
     }
@@ -307,7 +297,7 @@ public final class ManagedWorldStore {
         if (!Files.exists(stagingDirectory)) {
             return;
         }
-        deleteRecursively(stagingDirectory);
+        WorldSyncSupport.deleteRecursively(stagingDirectory);
     }
 
     public String regionBaselineSnapshotId(String worldId) throws IOException {
@@ -422,7 +412,7 @@ public final class ManagedWorldStore {
     public void clearRegionBaseline(String worldId) throws IOException {
         Path baselineRoot = this.regionBaselineRoot(worldId);
         if (Files.exists(baselineRoot)) {
-            deleteRecursively(baselineRoot);
+            WorldSyncSupport.deleteRecursively(baselineRoot);
         }
         Files.deleteIfExists(this.regionBaselineSnapshotFile(worldId));
         Map<String, String> sidecar = loadBaselineHashes(worldId);
@@ -497,21 +487,6 @@ public final class ManagedWorldStore {
     @FunctionalInterface
     public interface BaselineBodySupplier {
         Path body(String packId) throws IOException;
-    }
-
-    private static void deleteRecursivelyIfExists(Path root) throws IOException {
-        if (!Files.exists(root)) {
-            return;
-        }
-        deleteRecursively(root);
-    }
-
-    private static void deleteRecursively(Path root) throws IOException {
-        try (Stream<Path> stream = Files.walk(root)) {
-            for (Path path : stream.sorted(Comparator.reverseOrder()).toList()) {
-                Files.deleteIfExists(path);
-            }
-        }
     }
 
 }

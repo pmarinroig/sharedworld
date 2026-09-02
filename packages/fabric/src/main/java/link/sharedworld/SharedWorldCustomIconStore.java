@@ -14,8 +14,6 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
 import java.util.Locale;
 import java.util.Map;
@@ -35,15 +33,20 @@ public final class SharedWorldCustomIconStore {
     private final Map<String, Long> failedDownloadsAtMs = new ConcurrentHashMap<>();
 
     public Path resolveCachedIcon(WorldSummaryDto world) {
-        if (world.customIconStorageKey() == null || world.customIconStorageKey().isBlank()) {
+        return resolveCachedIcon(world.customIconStorageKey(), world.customIconDownload());
+    }
+
+    /** The cached icon file for storageKey, or null (kicking off a download when a URL is known). */
+    public Path resolveCachedIcon(String storageKey, SignedBlobUrlDto download) {
+        if (storageKey == null || storageKey.isBlank()) {
             return null;
         }
-        Path cached = this.cachedIconPath(world.customIconStorageKey());
+        Path cached = this.cachedIconPath(storageKey);
         if (Files.isRegularFile(cached)) {
             return cached;
         }
-        if (world.customIconDownload() != null) {
-            this.downloadIfNeeded(world.customIconStorageKey(), world.customIconDownload(), cached);
+        if (download != null) {
+            this.downloadIfNeeded(storageKey, download, cached);
         }
         return null;
     }
@@ -82,7 +85,7 @@ public final class SharedWorldCustomIconStore {
 
         Path path = Path.of(selectedPath);
         validateIcon(path);
-        return new SelectedIcon(path, sha256(path));
+        return new SelectedIcon(path, link.sharedworld.sync.LocalWorldHasher.hashFile(path));
     }
 
     public void validateIcon(Path path) throws IOException {
@@ -135,28 +138,6 @@ public final class SharedWorldCustomIconStore {
                 return null;
             }
         }, SharedWorldClient.ioExecutor()).whenComplete((ignoredResult, error) -> this.inFlightDownloads.remove(storageKey)));
-    }
-
-    private static String sha256(Path path) throws IOException {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            try (InputStream input = Files.newInputStream(path)) {
-                byte[] buffer = new byte[8192];
-                int read;
-                while ((read = input.read(buffer)) >= 0) {
-                    if (read > 0) {
-                        digest.update(buffer, 0, read);
-                    }
-                }
-            }
-            StringBuilder builder = new StringBuilder();
-            for (byte value : digest.digest()) {
-                builder.append(String.format("%02x", value));
-            }
-            return builder.toString();
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IOException("Missing SHA-256 support.", exception);
-        }
     }
 
     public record SelectedIcon(Path path, String hash) {

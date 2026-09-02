@@ -137,17 +137,11 @@ public final class SharedWorldE4mcCompatibility {
         }
     }
 
-    public static void logClientInitStarted() {
+    /** phase is "init-start" or "init-complete"; support greps for both tags. */
+    public static void logClientInitPhase(String phase) {
         LOGGER.info(
-                "SharedWorld e4mc diagnostics [init-start]: detectedVersion={}, quiclimeHookTargetPresent={}",
-                detectedE4mcVersionOrMissing(),
-                isQuiclimeSessionHookTargetPresent()
-        );
-    }
-
-    public static void logClientInitFinished() {
-        LOGGER.info(
-                "SharedWorld e4mc diagnostics [init-complete]: detectedVersion={}, quiclimeHookTargetPresent={}",
+                "SharedWorld e4mc diagnostics [{}]: detectedVersion={}, quiclimeHookTargetPresent={}",
+                phase,
                 detectedE4mcVersionOrMissing(),
                 isQuiclimeSessionHookTargetPresent()
         );

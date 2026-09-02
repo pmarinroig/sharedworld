@@ -52,7 +52,7 @@ public final class SharedWorldClient {
     }
 
     public static void init() {
-        SharedWorldE4mcCompatibility.logClientInitStarted();
+        SharedWorldE4mcCompatibility.logClientInitPhase("init-start");
         link.sharedworld.versioned.ScreenBackdropCompat.install();
         RuntimePlayerIdentity.resolveBackendPlayerUuidWithHyphens(Minecraft.getInstance().getUser());
         apiClient = new SharedWorldApiClient(SharedWorldClientConfigStore.shared().resolvedBackendBaseUrl());
@@ -169,7 +169,7 @@ public final class SharedWorldClient {
         // Reclaim staging copies and partial download temps a crashed or killed
         // client left behind; off the render thread since it walks world dirs.
         IO_EXECUTOR.execute(() -> new link.sharedworld.sync.ManagedWorldStore().pruneTransientArtifacts());
-        SharedWorldE4mcCompatibility.logClientInitFinished();
+        SharedWorldE4mcCompatibility.logClientInitPhase("init-complete");
     }
 
     /** Loader event: end of every client tick. */
@@ -182,9 +182,7 @@ public final class SharedWorldClient {
         guestCacheWarmer.tick(client);
         sessionCoordinator.tick(client);
         hostRosterReporter.tick(client);
-        if (SharedWorldClientLifecycleRouter.routeTick(client, releaseCoordinator)) {
-            return;
-        }
+        SharedWorldClientLifecycleRouter.ensureLifecycleScreenVisible(client, releaseCoordinator);
     }
 
     /** Loader event: the PLAY connection came up. */
@@ -349,10 +347,6 @@ public final class SharedWorldClient {
         return REALTIME_EVENTS;
     }
 
-    public static link.sharedworld.realtime.SharedWorldPushChannel pushChannel() {
-        return pushChannel;
-    }
-
     public static ExecutorService ioExecutor() {
         return IO_EXECUTOR;
     }
@@ -417,20 +411,7 @@ public final class SharedWorldClient {
                 LOGGER.warn("SharedWorld could not delete {}", name, exception);
             }
         }
-        deleteTreeQuietly(Minecraft.getInstance().gameDirectory.toPath().resolve("sharedworld"));
-    }
-
-    private static void deleteTreeQuietly(java.nio.file.Path root) {
-        if (!java.nio.file.Files.exists(root)) {
-            return;
-        }
-        try (java.util.stream.Stream<java.nio.file.Path> stream = java.nio.file.Files.walk(root)) {
-            for (java.nio.file.Path path : stream.sorted(java.util.Comparator.reverseOrder()).toList()) {
-                java.nio.file.Files.deleteIfExists(path);
-            }
-        } catch (java.io.IOException exception) {
-            LOGGER.warn("SharedWorld could not fully delete {}", root, exception);
-        }
+        link.sharedworld.sync.WorldSyncSupport.deleteRecursivelyQuietly(Minecraft.getInstance().gameDirectory.toPath().resolve("sharedworld"));
     }
 
     public static SharedWorldCustomIconStore customIconStore() {
@@ -446,7 +427,7 @@ public final class SharedWorldClient {
     }
 
     public static void openMainScreen(Screen parent) {
-        SharedWorldViewState.rememberSharedWorld();
+        SharedWorldClientConfigStore.shared().rememberSharedWorld();
         link.sharedworld.versioned.GuiCompat.clearFocus(parent);
         link.sharedworld.versioned.ClientCompat.setScreen(Minecraft.getInstance(), new SharedWorldScreen(parent));
     }
@@ -467,44 +448,13 @@ public final class SharedWorldClient {
         return new SharedWorldScreen(new JoinMultiplayerScreen(new TitleScreen()));
     }
 
-    public static List<WorldSummaryDto> cachedWorlds() {
-        return LIST_STATE.cachedWorlds();
-    }
-
-    public static List<WorldSummaryDto> orderFreshWorlds(List<WorldSummaryDto> worlds) {
-        return LIST_STATE.orderFreshWorlds(worlds);
-    }
-
-    public static List<WorldSummaryDto> applyFreshWorlds(List<WorldSummaryDto> worlds) {
-        return LIST_STATE.applyFreshWorlds(worlds);
-    }
-
-    public static boolean orderedWorldListsEqual(List<WorldSummaryDto> left, List<WorldSummaryDto> right) {
-        return SharedWorldListComparison.orderedWorldsEqual(left, right);
-    }
-
-    public static List<WorldSummaryDto> moveCachedWorld(String worldId, int offset) {
-        return LIST_STATE.moveWorld(worldId, offset);
-    }
-
-    public static boolean canMoveCachedWorld(String worldId, int offset) {
-        return LIST_STATE.canMoveWorld(worldId, offset);
-    }
-
-    public static String cachedSelectedWorldId() {
-        return LIST_STATE.selectedWorldId();
-    }
-
-    public static void rememberSelectedWorld(String worldId) {
-        LIST_STATE.rememberSelectedWorld(worldId);
-    }
-
-    public static void rememberVanillaView() {
-        SharedWorldViewState.rememberVanilla();
+    /** Cached world list, ordering, and selection shared by the menu screens. */
+    public static SharedWorldListState listState() {
+        return LIST_STATE;
     }
 
     public static boolean shouldOpenSharedWorldByDefault() {
-        return SharedWorldViewState.shouldOpenSharedWorldByDefault();
+        return SharedWorldClientConfigStore.shared().shouldOpenSharedWorldByDefault();
     }
 
     /**

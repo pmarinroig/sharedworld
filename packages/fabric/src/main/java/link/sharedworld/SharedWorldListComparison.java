@@ -6,11 +6,11 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 
-final class SharedWorldListComparison {
+public final class SharedWorldListComparison {
     private SharedWorldListComparison() {
     }
 
-    static boolean orderedWorldsEqual(List<WorldSummaryDto> left, List<WorldSummaryDto> right) {
+    public static boolean orderedWorldsEqual(List<WorldSummaryDto> left, List<WorldSummaryDto> right) {
         if (left == right) {
             return true;
         }

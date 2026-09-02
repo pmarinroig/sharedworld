@@ -113,7 +113,7 @@ public final class SharedWorldInviteScreen extends link.sharedworld.versioned.Ve
                     } else {
                         this.inviteCode = result.code();
                         this.minecraft.keyboardHandler.setClipboard(result.code());
-                        this.parent.onChildOperationFinished(null, this.world.id());
+                        this.parent.onChildOperationFinished(this.world.id());
                         this.updateButtons();
                     }
                 }));
@@ -143,7 +143,7 @@ public final class SharedWorldInviteScreen extends link.sharedworld.versioned.Ve
                     } else {
                         this.inviteCode = result.invite().code();
                         this.minecraft.keyboardHandler.setClipboard(result.invite().code());
-                        this.parent.onChildOperationFinished(null, this.world.id());
+                        this.parent.onChildOperationFinished(this.world.id());
                         this.updateButtons();
                     }
                 }));
@@ -173,7 +173,4 @@ public final class SharedWorldInviteScreen extends link.sharedworld.versioned.Ve
         }
     }
 
-    private static String displayName(WorldSummaryDto world) {
-        return SharedWorldText.displayWorldName(world.name());
-    }
 }

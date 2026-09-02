@@ -1,10 +1,8 @@
 package link.sharedworld.screen;
 
 import link.sharedworld.SharedWorldClient;
-import link.sharedworld.SharedWorldPlaySessionTracker;
 import link.sharedworld.SharedWorldText;
 import link.sharedworld.api.SharedWorldModels.WorldDetailsDto;
-import link.sharedworld.host.SharedWorldHostingManager;
 import link.sharedworld.progress.SharedWorldProgressRenderer;
 import link.sharedworld.progress.SharedWorldProgressState;
 import link.sharedworld.sync.ManagedWorldStore;
@@ -85,7 +83,7 @@ public final class ExportSharedWorldProgressScreen extends link.sharedworld.vers
     }
 
     private void startExport() {
-        String busyReason = localBusyReason(this.world.id());
+        String busyReason = ScreenGuards.localBusyReason(this.world.id(), "screen.sharedworld.export_blocked_hosting", "screen.sharedworld.export_blocked_playing");
         if (busyReason != null) {
             this.finishWithError(busyReason);
             return;
@@ -140,18 +138,5 @@ public final class ExportSharedWorldProgressScreen extends link.sharedworld.vers
                 Component.translatable("screen.sharedworld.error_title"),
                 Component.literal(message)
         ));
-    }
-
-    private static String localBusyReason(String worldId) {
-        SharedWorldHostingManager hostingManager = SharedWorldClient.hostingManager();
-        SharedWorldHostingManager.ActiveHostSession hostSession = hostingManager == null ? null : hostingManager.activeHostSession();
-        if (hostSession != null && worldId.equals(hostSession.worldId())) {
-            return SharedWorldText.string("screen.sharedworld.export_blocked_hosting");
-        }
-        SharedWorldPlaySessionTracker.ActiveWorldSession playSession = SharedWorldClient.playSessionTracker().currentSession();
-        if (playSession != null && worldId.equals(playSession.worldId())) {
-            return SharedWorldText.string("screen.sharedworld.export_blocked_playing");
-        }
-        return null;
     }
 }

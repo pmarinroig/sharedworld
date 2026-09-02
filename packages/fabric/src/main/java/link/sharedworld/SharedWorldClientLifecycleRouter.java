@@ -19,28 +19,9 @@ public final class SharedWorldClientLifecycleRouter {
     }
 
     /**
-     * Responsibility:
-     * Centralize client-side lifecycle screen routing so event hooks stay wiring-only.
-     *
-     * Preconditions:
-     * Coordinators already own the authoritative join/host/release state.
-     *
-     * Postconditions:
-     * Blocking save/forced-exit screens and non-blocking terminal notices are routed consistently.
-     *
-     * Stale-work rule:
-     * This helper renders coordinator state only; it must not invent or advance lifecycle transitions.
-     *
-     * Authority source:
-     * Coordinator-owned lifecycle state only.
+     * Renders coordinator-owned lifecycle state as screens (blocking save/forced-exit
+     * screens, non-blocking terminal notices). Never invents or advances transitions.
      */
-    static boolean routeTick(
-            Minecraft client,
-            SharedWorldReleaseCoordinator releaseCoordinator
-    ) {
-        return ensureLifecycleScreenVisible(client, releaseCoordinator);
-    }
-
     static boolean ensureLifecycleScreenVisible(Minecraft client, SharedWorldReleaseCoordinator releaseCoordinator) {
         SharedWorldReleaseCoordinator.ReleaseView view = releaseCoordinator.view();
         if (view == null) {

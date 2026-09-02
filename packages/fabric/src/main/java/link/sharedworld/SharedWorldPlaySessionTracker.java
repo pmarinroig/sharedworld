@@ -6,17 +6,13 @@ import org.slf4j.LoggerFactory;
 import java.util.function.LongSupplier;
 
 /**
- * Responsibility:
- * Own the client's notion of "which SharedWorld session am I in right now".
- *
- * Authority rule (the zombie-session invariant):
- * A tracked session must always describe the CURRENT connection. The fabric
- * PLAY DISCONNECT event is a best-effort input, not the authority; on relayed
- * transports (e4mc dialtone, observed on 26.x) the underlying channel can stay
- * open after a manual quit and the event never fires. Every lifecycle boundary
- * therefore re-establishes the invariant itself: a new PLAY join evicts any
- * guest session bound to a different connection, and a hosting startup evicts
- * any guest session outright (hosting and guesting are mutually exclusive).
+ * Own the client's notion of "which SharedWorld session am I in right now". Authority rule (the
+ * zombie-session invariant): A tracked session must always describe the CURRENT connection. The
+ * fabric PLAY DISCONNECT event is a best-effort input, not the authority; on relayed transports
+ * (e4mc dialtone, observed on 26.x) the underlying channel can stay open after a manual quit and
+ * the event never fires. Every lifecycle boundary therefore re-establishes the invariant itself: a
+ * new PLAY join evicts any guest session bound to a different connection, and a hosting startup
+ * evicts any guest session outright (hosting and guesting are mutually exclusive).
  */
 public final class SharedWorldPlaySessionTracker {
     private static final Logger LOGGER = LoggerFactory.getLogger("sharedworld-session");
@@ -54,14 +50,9 @@ public final class SharedWorldPlaySessionTracker {
                 null,
                 0L,
                 false,
-                false,
                 this.currentConnectionKey,
                 this.currentConnectionKeyBound
         );
-    }
-
-    public synchronized void onPlayJoin() {
-        onPlayJoin(null);
     }
 
     public synchronized void onPlayJoin(Object connectionKey) {
@@ -106,7 +97,6 @@ public final class SharedWorldPlaySessionTracker {
                 SessionRole.GUEST,
                 this.pendingGuestSession.joinTarget(),
                 this.pendingGuestSession.runtimeEpoch(),
-                true,
                 false,
                 connectionKey,
                 true
@@ -141,7 +131,7 @@ public final class SharedWorldPlaySessionTracker {
             clearCurrentConnectionKey();
         }
 
-        if (this.activeSession.role() == SessionRole.HOST || this.activeSession.userInitiatedDisconnect() || !this.activeSession.recoveryEnabled()) {
+        if (this.activeSession.role() == SessionRole.HOST || this.activeSession.userInitiatedDisconnect()) {
             this.activeSession = null;
             this.pendingRecoverySession = null;
             return null;
@@ -257,17 +247,16 @@ public final class SharedWorldPlaySessionTracker {
             SessionRole role,
             String joinTarget,
             long runtimeEpoch,
-            boolean recoveryEnabled,
             boolean userInitiatedDisconnect,
             Object connectionKey,
             boolean connectionKeyBound
     ) {
         private ActiveSession withUserInitiatedDisconnect(boolean userInitiatedDisconnect) {
-            return new ActiveSession(this.worldId, this.worldName, this.role, this.joinTarget, this.runtimeEpoch, this.recoveryEnabled, userInitiatedDisconnect, this.connectionKey, this.connectionKeyBound);
+            return new ActiveSession(this.worldId, this.worldName, this.role, this.joinTarget, this.runtimeEpoch, userInitiatedDisconnect, this.connectionKey, this.connectionKeyBound);
         }
 
         private ActiveSession withConnectionKey(Object connectionKey) {
-            return new ActiveSession(this.worldId, this.worldName, this.role, this.joinTarget, this.runtimeEpoch, this.recoveryEnabled, this.userInitiatedDisconnect, connectionKey, true);
+            return new ActiveSession(this.worldId, this.worldName, this.role, this.joinTarget, this.runtimeEpoch, this.userInitiatedDisconnect, connectionKey, true);
         }
 
         private boolean matchesConnectionKey(Object connectionKey) {

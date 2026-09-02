@@ -5,7 +5,6 @@ import link.sharedworld.api.SharedWorldModels.WorldMembershipDto;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import link.sharedworld.versioned.VersionedSelectionEntry;
-import net.minecraft.client.gui.components.ObjectSelectionList;
 import net.minecraft.network.chat.Component;
 
 import java.util.List;
@@ -31,11 +30,6 @@ final class MemberBrowserList extends link.sharedworld.versioned.VersionedSelect
         Entry resolved = selected == null && !this.children().isEmpty() ? this.children().get(0) : selected;
         this.setSelected(resolved);
         this.owner.onMemberSelected(resolved == null ? null : resolved.membership);
-    }
-
-    WorldMembershipDto selectedMember() {
-        Entry entry = this.getSelected();
-        return entry == null ? null : entry.membership;
     }
 
     @Override

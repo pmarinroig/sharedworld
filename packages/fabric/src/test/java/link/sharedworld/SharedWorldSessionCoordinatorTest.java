@@ -334,13 +334,15 @@ final class SharedWorldSessionCoordinatorTest {
                             null,
                             null,
                             null,
+                            null,
                             new link.sharedworld.api.SharedWorldModels.UncleanShutdownWarningDto(
                                     "player-previous",
                                     "Previous",
                                     "host-finalizing",
                                     7L,
                                     java.time.Instant.EPOCH.toString()
-                            )
+                            ),
+                            null
                     ),
                     null,
                     null
@@ -637,13 +639,15 @@ final class SharedWorldSessionCoordinatorTest {
                             null,
                             null,
                             null,
+                            null,
                             new link.sharedworld.api.SharedWorldModels.UncleanShutdownWarningDto(
                                     "player-previous",
                                     "Previous",
                                     "host-finalizing",
                                     7L,
                                     java.time.Instant.ofEpochMilli(harness.clock.nowMillis()).toString()
-                            )
+                            ),
+                            null
                     ),
                     null,
                     null

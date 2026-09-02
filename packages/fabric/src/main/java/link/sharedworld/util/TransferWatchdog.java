@@ -47,18 +47,7 @@ public final class TransferWatchdog implements AutoCloseable {
     }
 
     public static long stallTimeoutMillis() {
-        String override = System.getProperty(STALL_TIMEOUT_PROPERTY, "").trim();
-        if (!override.isEmpty()) {
-            try {
-                long parsed = Long.parseLong(override);
-                if (parsed > 0L) {
-                    return parsed;
-                }
-            } catch (NumberFormatException ignored) {
-                // A broken override must not change production behavior.
-            }
-        }
-        return DEFAULT_STALL_TIMEOUT_MS;
+        return DevProperties.positiveLong(STALL_TIMEOUT_PROPERTY, DEFAULT_STALL_TIMEOUT_MS);
     }
 
     /** Call on every unit of transfer progress. */

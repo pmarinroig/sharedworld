@@ -9,26 +9,18 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Responsibility:
- * Watch the authoritative backend runtime while the player is connected as a guest, so the
- * client exits promptly through the coordinated rejoin flow when the hosting session ends,
- * instead of hanging until the vanilla connection timeout.
- *
- * Preconditions:
- * Watching only applies while an active guest play session is connected and no host/release
- * flow owns the local client.
- *
- * Postconditions:
- * At most one departure fires per guest session, and it always routes through the session
- * coordinator's host-departure rejoin flow.
- *
- * Stale-work rule:
- * Observations are dropped once the watched world changed, the session ended, or a departure
- * already fired. Poll failures (including revoked/deleted, which the presence manager owns)
- * never trigger a departure: only an authoritative runtime observation may.
- *
- * Authority source:
- * The backend runtime status for the connected world, compared against the joined runtime epoch.
+ * Watch the authoritative backend runtime while the player is connected as a guest, so the client
+ * exits promptly through the coordinated rejoin flow when the hosting session ends, instead of
+ * hanging until the vanilla connection timeout.
+ * Preconditions: Watching only applies while an active guest play session is connected and no
+ * host/release flow owns the local client.
+ * Postconditions: At most one departure fires per guest session, and it always routes through the
+ * session coordinator's host-departure rejoin flow.
+ * Stale-work rule: Observations are dropped once the watched world changed, the session ended, or a
+ * departure already fired. Poll failures (including revoked/deleted, which the presence manager
+ * owns) never trigger a departure: only an authoritative runtime observation may.
+ * Authority source: The backend runtime status for the connected world, compared against the joined
+ * runtime epoch.
  */
 public final class SharedWorldGuestRuntimeWatcher implements link.sharedworld.realtime.RealtimeEvents.Subscriber {
     private static final Logger LOGGER = LoggerFactory.getLogger(SharedWorldGuestRuntimeWatcher.class);

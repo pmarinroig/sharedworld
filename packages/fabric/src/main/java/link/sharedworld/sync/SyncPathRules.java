@@ -26,19 +26,7 @@ public final class SyncPathRules {
     }
 
     public static long superpackShardMaxBytes() {
-        String override = System.getProperty(SUPERPACK_SHARD_MAX_BYTES_PROPERTY, "").trim();
-        if (!override.isEmpty()) {
-            try {
-                long parsed = Long.parseLong(override);
-                if (parsed > 0L) {
-                    return parsed;
-                }
-            } catch (NumberFormatException ignored) {
-                // Fall through to the default; a broken dev override must not
-                // change production sharding behavior.
-            }
-        }
-        return SUPERPACK_SHARD_MAX_BYTES;
+        return link.sharedworld.util.DevProperties.positiveLong(SUPERPACK_SHARD_MAX_BYTES_PROPERTY, SUPERPACK_SHARD_MAX_BYTES);
     }
 
     /**

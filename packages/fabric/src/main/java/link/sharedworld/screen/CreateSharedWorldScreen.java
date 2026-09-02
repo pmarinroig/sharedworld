@@ -3,6 +3,7 @@ package link.sharedworld.screen;
 import link.sharedworld.SharedWorldClient;
 import link.sharedworld.SharedWorldCustomIconStore.SelectedIcon;
 import link.sharedworld.SharedWorldText;
+import static link.sharedworld.screen.EditScreenFormats.blankOr;
 import link.sharedworld.api.SharedWorldApiClient;
 import link.sharedworld.api.SharedWorldModels.ImportedWorldSourceDto;
 import link.sharedworld.api.SharedWorldModels.StorageAccountSummaryDto;
@@ -20,16 +21,12 @@ import link.sharedworld.versioned.VersionedScreen;
 import net.minecraft.network.chat.Component;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
-import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
-import java.util.stream.Stream;
 
 /**
  * The create wizard: a linear flow (Connect Google Drive → Choose a world →
@@ -84,8 +81,6 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
     private boolean chooseProviderPending;
     /** Provider of the already-linked account the create will reuse (null = server default / Drive). */
     private String linkedStorageProvider;
-    /** Provider of the link attempt currently running (null = Drive). */
-    private String linkAttemptProvider;
     private Button backButton;
     private Button primaryButton;
 
@@ -405,9 +400,7 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
             return;
         }
         int left = this.contentArea.left() + STORAGE_LEFT_PADDING;
-        this.drawWrappedText(
-                guiGraphics,
-                Component.translatable(this.chooseProviderPending
+        WrappedText.draw(guiGraphics, this.font, Component.translatable(this.chooseProviderPending
                         ? "screen.sharedworld.storage_choose_provider_detail"
                         : "screen.sharedworld.storage_google_drive_detail"),
                 left,
@@ -439,20 +432,8 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
     }
 
     private void selectWorldFolder() {
-        java.nio.file.Path chosen = SharedWorldFolderPicker.chooseFolder(
-                SharedWorldText.string("screen.sharedworld.select_folder_title"));
-        if (chosen == null) {
-            return;
-        }
-        LocalSaveCatalog.LocalSaveOption option;
-        try {
-            option = LocalSaveFolderValidator.validate(
-                    chosen,
-                    this.minecraft.gameDirectory.toPath().resolve("sharedworld").resolve("worlds"),
-                    link.sharedworld.versioned.ClientCompat.currentDataVersion()
-            );
-        } catch (LocalSaveFolderValidator.InvalidSaveFolderException exception) {
-            this.banner.set(SharedWorldStatusBanner.Kind.ERROR, Component.literal(exception.getMessage()));
+        LocalSaveCatalog.LocalSaveOption option = SharedWorldFolderPicker.chooseSaveFolder(this.minecraft, this.banner);
+        if (option == null) {
             return;
         }
         this.banner.clearSticky();
@@ -664,7 +645,6 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
     private void beginStorageLink(boolean forceConsent, String provider) {
         this.cancelDriveLinkAttempt(false);
         this.storageLink = null;
-        this.linkAttemptProvider = provider;
         DriveLinkAttempt attempt = this.driveLinkController.beginAttempt();
         this.updateStorageBanner();
         CompletableFuture.runAsync(() -> this.runDriveLinkAttempt(attempt, forceConsent, provider), SharedWorldClient.ioExecutor());
@@ -852,27 +832,6 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         ));
     }
 
-    static void importSaveIntoManagedWorld(Path source, Path workingCopy) throws IOException {
-        Files.createDirectories(workingCopy);
-        try (Stream<Path> stream = Files.walk(source)) {
-            for (Path path : stream.sorted(Comparator.naturalOrder()).toList()) {
-                Path relative = source.relativize(path);
-                if (relative.toString().isBlank()) {
-                    continue;
-                }
-                Path target = workingCopy.resolve(relative.toString());
-                if (Files.isDirectory(path)) {
-                    Files.createDirectories(target);
-                } else {
-                    if (target.getParent() != null) {
-                        Files.createDirectories(target.getParent());
-                    }
-                    Files.copy(path, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
-                }
-            }
-        }
-    }
-
     private CreateRequest buildRequest(LocalSaveCatalog.LocalSaveOption save) {
         StorageLinkSessionDto freshLink = this.wizard.storageState() == CreateWizardModel.StorageState.LINKED_THIS_RUN
                 ? this.storageLink
@@ -907,12 +866,6 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         return this.nameBox == null ? "" : this.nameBox.getValue().trim();
     }
 
-    private void drawWrappedText(GuiGraphics guiGraphics, Component text, int x, int y, int width, int color) {
-        List<net.minecraft.util.FormattedCharSequence> lines = this.font.split(text, width);
-        for (int index = 0; index < lines.size(); index++) {
-            guiGraphics.drawString(this.font, lines.get(index), x, y + index * 9, color);
-        }
-    }
 
     private boolean isIconHovered(int mouseX, int mouseY) {
         if (this.contentArea == null || this.wizard.step() != CreateWizardModel.Step.DETAILS) {
@@ -958,10 +911,6 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
 
     private String previewMotd() {
         return SharedWorldMetadataFormat.effectiveMotd(this.motdBox.getValue());
-    }
-
-    private static String blankOr(String value, String fallback) {
-        return value == null || value.isBlank() ? fallback : value;
     }
 
     static CreateSharedWorldScreen restored(SharedWorldScreen parent, CreateDraft draft, String errorMessage) {

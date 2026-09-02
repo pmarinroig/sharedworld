@@ -7,25 +7,17 @@ final class ReleaseStartupRecoveryResolver {
     ReleaseStartupRecoveryResolver() {
     }
 
-    Resolution resolve(
+    /** Whether the persisted release record is obsolete and should be cleared instead of resumed. */
+    boolean shouldClearPersistedRecord(
             SharedWorldReleaseCoordinator.ReleaseBackend backend,
             SharedWorldReleaseStore.ReleaseRecord record
-    ) throws Exception {
+    ) {
         try {
             WorldRuntimeStatusDto runtime = backend.runtimeStatus(record.worldId);
             SharedWorldReleasePolicy.ResumeDecision decision = SharedWorldReleasePolicy.reconcile(record, runtime);
-            boolean clearRecord = decision.clearBecauseObsoleteRecord()
-                    || decision.terminalPhase() != null
-                    || decision.backendFinalizationCompleted();
-            return new Resolution(clearRecord);
+            return decision.clearBecauseObsoleteRecord() || decision.backendFinalizationCompleted();
         } catch (Exception exception) {
-            if (SharedWorldApiClient.isDeletedWorldError(exception) || SharedWorldApiClient.isMembershipRevokedError(exception)) {
-                return new Resolution(true);
-            }
-            return new Resolution(false);
+            return SharedWorldApiClient.isDeletedWorldError(exception) || SharedWorldApiClient.isMembershipRevokedError(exception);
         }
-    }
-
-    record Resolution(boolean clearPersistedRecord) {
     }
 }

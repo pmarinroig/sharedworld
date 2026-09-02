@@ -12,7 +12,6 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.Font;
 import link.sharedworld.versioned.VersionedSelectionEntry;
-import net.minecraft.client.gui.components.ObjectSelectionList;
 import net.minecraft.client.gui.screens.FaviconTexture;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.FormattedCharSequence;
@@ -80,7 +79,7 @@ public final class SharedWorldServerList extends link.sharedworld.versioned.Vers
             return;
         }
 
-        link.sharedworld.SharedWorldClient.LOGGER.info("SharedWorld world list rebuilt ({} worlds)", worlds.size());
+        link.sharedworld.SharedWorldClient.LOGGER.debug("SharedWorld world list rebuilt ({} worlds)", worlds.size());
         this.clearEntries();
 
         Entry preferredEntry = null;
@@ -155,7 +154,7 @@ public final class SharedWorldServerList extends link.sharedworld.versioned.Vers
                     SharedWorldServerList.this.minecraft.font,
                     this.getX(),
                     this.getY(),
-                    displayName(this.world),
+                    SharedWorldText.displayWorldName(this.world),
                     this.world.motd(),
                     playerCount(this.world),
                     this.statusIcon
@@ -203,7 +202,7 @@ public final class SharedWorldServerList extends link.sharedworld.versioned.Vers
 
         @Override
         public Component getNarration() {
-            return Component.literal(displayName(this.world));
+            return Component.literal(SharedWorldText.displayWorldName(this.world));
         }
 
         private void refreshIconIfNeeded() {
@@ -340,14 +339,6 @@ public final class SharedWorldServerList extends link.sharedworld.versioned.Vers
         private boolean isMoveDownButton(double mouseX, double mouseY) {
             return mouseX >= 0 && mouseX < 16 && mouseY >= 16 && mouseY < 32;
         }
-    }
-
-    private static String displayName(WorldSummaryDto world) {
-        return SharedWorldText.displayWorldName(world.name());
-    }
-
-    private List<FormattedCharSequence> detailLines(WorldSummaryDto world, int width) {
-        return detailLines(this.minecraft.font, world.motd(), width);
     }
 
     private static Component playerCount(WorldSummaryDto world) {

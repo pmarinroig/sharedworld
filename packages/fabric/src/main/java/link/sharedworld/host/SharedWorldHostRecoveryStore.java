@@ -7,11 +7,8 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.Reader;
-import java.io.Writer;
-import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 
 public final class SharedWorldHostRecoveryStore implements SharedWorldHostingManager.HostRecoveryPersistence {
     private static final Logger LOGGER = LoggerFactory.getLogger("sharedworld-host-recovery");
@@ -48,29 +45,12 @@ public final class SharedWorldHostRecoveryStore implements SharedWorldHostingMan
 
     @Override
     public synchronized void save(SharedWorldHostingManager.HostRecoveryRecord record) throws IOException {
-        Files.createDirectories(this.file.getParent());
-        Path tempFile = this.file.resolveSibling(this.file.getFileName() + ".tmp");
-        try (Writer writer = Files.newBufferedWriter(tempFile)) {
-            GSON.toJson(record, writer);
-        }
-        try {
-            Files.move(tempFile, this.file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-        } catch (AtomicMoveNotSupportedException exception) {
-            Files.move(tempFile, this.file, StandardCopyOption.REPLACE_EXISTING);
-        } finally {
-            try {
-                Files.deleteIfExists(tempFile);
-            } catch (IOException ignored) {
-            }
-        }
+        link.sharedworld.util.AtomicJsonFile.write(this.file, GSON, record);
     }
 
     @Override
     public synchronized void clear() {
-        try {
-            Files.deleteIfExists(this.file);
-        } catch (IOException ignored) {
-        }
+        link.sharedworld.util.AtomicJsonFile.deleteQuietly(this.file);
     }
 
     private static boolean isValid(SharedWorldHostingManager.HostRecoveryRecord record) {

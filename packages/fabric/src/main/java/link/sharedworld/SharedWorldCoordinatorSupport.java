@@ -134,52 +134,27 @@ public final class SharedWorldCoordinatorSupport {
 
             @Override
             public void setScreen(Screen screen) {
-                Minecraft minecraft = Minecraft.getInstance();
-                if (minecraft.isSameThread()) {
-                    link.sharedworld.versioned.ClientCompat.setScreen(minecraft, screen);
-                    return;
-                }
-                minecraft.execute(() -> link.sharedworld.versioned.ClientCompat.setScreen(minecraft, screen));
+                onMainThread(() -> link.sharedworld.versioned.ClientCompat.setScreen(Minecraft.getInstance(), screen));
             }
 
             @Override
             public void disconnectFromWorld() {
-                Minecraft minecraft = Minecraft.getInstance();
-                if (minecraft.isSameThread()) {
-                    link.sharedworld.versioned.ClientCompat.disconnectFromWorld(minecraft);
-                    return;
-                }
-                minecraft.execute(() -> link.sharedworld.versioned.ClientCompat.disconnectFromWorld(minecraft));
+                onMainThread(() -> link.sharedworld.versioned.ClientCompat.disconnectFromWorld(Minecraft.getInstance()));
             }
 
             @Override
             public void openMainScreen(Screen parent) {
-                Minecraft minecraft = Minecraft.getInstance();
-                if (minecraft.isSameThread()) {
-                    SharedWorldClient.openMainScreen(parent);
-                    return;
-                }
-                minecraft.execute(() -> SharedWorldClient.openMainScreen(parent));
+                onMainThread(() -> SharedWorldClient.openMainScreen(parent));
             }
 
             @Override
             public void openMembershipRevokedScreen(Screen parent) {
-                Minecraft minecraft = Minecraft.getInstance();
-                if (minecraft.isSameThread()) {
-                    SharedWorldClient.openMembershipRevokedScreen(parent);
-                    return;
-                }
-                minecraft.execute(() -> SharedWorldClient.openMembershipRevokedScreen(parent));
+                onMainThread(() -> SharedWorldClient.openMembershipRevokedScreen(parent));
             }
 
             @Override
             public void connect(Screen parent, String joinTarget, String worldId, String worldName, long runtimeEpoch, Consumer<Throwable> failureHandler) {
-                Minecraft minecraft = Minecraft.getInstance();
-                if (minecraft.isSameThread()) {
-                    SharedWorldConnector.connect(parent, joinTarget, worldId, worldName, runtimeEpoch, failureHandler);
-                    return;
-                }
-                minecraft.execute(() -> SharedWorldConnector.connect(parent, joinTarget, worldId, worldName, runtimeEpoch, failureHandler));
+                onMainThread(() -> SharedWorldConnector.connect(parent, joinTarget, worldId, worldName, runtimeEpoch, failureHandler));
             }
 
             @Override
@@ -207,5 +182,15 @@ public final class SharedWorldCoordinatorSupport {
 
     public static PlayerIdentity currentPlayerIdentity() {
         return SharedWorldApiClient::currentPlayerUuid;
+    }
+
+    /** Runs on the client thread: inline when already there, else scheduled. */
+    private static void onMainThread(Runnable action) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.isSameThread()) {
+            action.run();
+            return;
+        }
+        minecraft.execute(action);
     }
 }

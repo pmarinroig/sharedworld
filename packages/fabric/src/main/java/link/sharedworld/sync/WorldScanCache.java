@@ -14,7 +14,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
@@ -175,18 +174,14 @@ public final class WorldScanCache {
     }
 
     private static String fingerprint(String packId, List<FingerprintEntry> entries) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            digest.update(("sharedworld-pack-v" + SharedWorldPack.FORMAT_VERSION + "\n").getBytes(StandardCharsets.UTF_8));
-            digest.update((packId + "\n").getBytes(StandardCharsets.UTF_8));
-            for (FingerprintEntry entry : entries.stream().sorted(java.util.Comparator.comparing(FingerprintEntry::path)).toList()) {
-                String line = entry.path() + "|" + entry.hash() + "|" + entry.size() + "|" + entry.contentType() + "\n";
-                digest.update(line.getBytes(StandardCharsets.UTF_8));
-            }
-            return HexFormat.of().formatHex(digest.digest());
-        } catch (NoSuchAlgorithmException exception) {
-            throw new RuntimeException("Missing SHA-256 implementation.", exception);
+        MessageDigest digest = LocalWorldHasher.newSha256();
+        digest.update(("sharedworld-pack-v" + SharedWorldPack.FORMAT_VERSION + "\n").getBytes(StandardCharsets.UTF_8));
+        digest.update((packId + "\n").getBytes(StandardCharsets.UTF_8));
+        for (FingerprintEntry entry : entries.stream().sorted(java.util.Comparator.comparing(FingerprintEntry::path)).toList()) {
+            String line = entry.path() + "|" + entry.hash() + "|" + entry.size() + "|" + entry.contentType() + "\n";
+            digest.update(line.getBytes(StandardCharsets.UTF_8));
         }
+        return HexFormat.of().formatHex(digest.digest());
     }
 
     private record FingerprintEntry(String path, String hash, long size, String contentType) {

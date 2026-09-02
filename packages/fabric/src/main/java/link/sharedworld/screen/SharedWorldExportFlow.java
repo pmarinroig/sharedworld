@@ -41,7 +41,7 @@ final class SharedWorldExportFlow {
             copyWorld(worldDirectory, target);
             rewriteLevelName(target.resolve("level.dat"), folderName);
         } catch (Exception exception) {
-            deleteRecursivelyQuietly(target);
+            link.sharedworld.sync.WorldSyncSupport.deleteRecursivelyQuietly(target);
             throw exception;
         }
         return new ExportResult(folderName, target);
@@ -116,21 +116,6 @@ final class SharedWorldExportFlow {
         dataTag.remove(WorldCanonicalizer.MODERN_OWNER_UUID_KEY);
         levelTag.put("Data", dataTag);
         NbtCompat.writeCompressed(levelTag, levelDat);
-    }
-
-    private static void deleteRecursivelyQuietly(Path root) {
-        if (root == null || !Files.exists(root)) {
-            return;
-        }
-        try (Stream<Path> stream = Files.walk(root)) {
-            stream.sorted(Comparator.reverseOrder()).forEach(path -> {
-                try {
-                    Files.deleteIfExists(path);
-                } catch (IOException ignored) {
-                }
-            });
-        } catch (IOException ignored) {
-        }
     }
 
     record ExportResult(String folderName, Path targetDirectory) {

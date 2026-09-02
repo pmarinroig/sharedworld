@@ -89,13 +89,6 @@ final class CreateWizardModel {
         return false;
     }
 
-    /** A completed link broke (relink cancelled/expired mid-run). */
-    void onLinkLost() {
-        if (this.storageState == StorageState.LINKED_THIS_RUN) {
-            this.storageState = StorageState.NOT_LINKED;
-        }
-    }
-
     boolean canAdvance(boolean saveSelected, boolean nameValid) {
         return switch (this.step) {
             case CONNECT_DRIVE -> false;

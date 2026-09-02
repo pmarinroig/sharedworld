@@ -75,18 +75,7 @@ public final class WorldSyncCoordinator {
     }
 
     public SnapshotManifestDto uploadSnapshot(String worldId, Path worldDirectory, String hostPlayerUuid, long runtimeEpoch, String hostToken) throws IOException, InterruptedException {
-        return this.uploadSnapshot(worldId, worldDirectory, hostPlayerUuid, runtimeEpoch, hostToken, (WorldSyncProgressListener) null);
-    }
-
-    public SnapshotManifestDto uploadSnapshot(String worldId, Path worldDirectory, String hostPlayerUuid, long runtimeEpoch, String hostToken, SnapshotUploadProgressListener progressListener) throws IOException, InterruptedException {
-        WorldSyncProgressListener listener = progressListener == null
-                ? null
-                : progress -> {
-                    if (STAGE_UPLOADING_CHANGED_FILES.equals(progress.stage()) && progress.bytesDone() != null && progress.bytesTotal() != null) {
-                        progressListener.onProgress(progress.bytesDone(), progress.bytesTotal());
-                    }
-                };
-        return this.uploadSnapshot(worldId, worldDirectory, hostPlayerUuid, runtimeEpoch, hostToken, listener);
+        return this.uploadSnapshot(worldId, worldDirectory, hostPlayerUuid, runtimeEpoch, hostToken, null);
     }
 
     /**
@@ -100,36 +89,20 @@ public final class WorldSyncCoordinator {
         WorldSyncSupport.report(progressListener, STAGE_PREPARING_SNAPSHOT, 0.02D, null, null, "Scanning world files");
         long scanStartedAt = System.nanoTime();
         WorldScanCache scanCache = WorldScanCache.load(this.worldStore.scanCacheFile(worldId));
-        List<PreparedWorldFile> canonicalFiles = WorldCanonicalizer.scanCanonical(worldDirectory, hostPlayerUuid, scanCache);
-        List<PreparedWorldFile> regionFiles = canonicalFiles.stream().filter(file -> SyncPathRules.isTerrainRegionFile(file.relativePath())).toList();
-        List<PreparedWorldFile> nonRegionFiles = canonicalFiles.stream().filter(file -> SyncPathRules.belongsInSuperpack(file.relativePath())).toList();
-        // Above the shard cap the non-region files travel as capped shard packs
-        // inside the region-bundle wire namespace (one blob must stay under the
-        // worker's request-body limit); below it they keep the single
-        // "non-region" superpack, wire-identical to pre-0.3.1 clients.
-        List<SyncPathRules.RegionBundleGroup> superpackShards = SyncPathRules.groupSuperpackFiles(nonRegionFiles);
-        boolean sharded = !superpackShards.isEmpty();
-        // Artifacts are lazy: the plan request needs only descriptors (answered
-        // from the scan cache when nothing changed), and bodies are built after
-        // the plan for exactly the packs it wants uploaded. Built bodies are
-        // deleted in the single finally, so a failure at any stage cannot leak
-        // pack/bundle/delta temps. Autosave retries every five minutes, so
-        // leaks here compound quickly.
-        List<WorldSyncSupport.LazyArtifact> regionBundles = new ArrayList<>(WorldSyncSupport.lazyRegionBundleArtifacts(regionFiles, scanCache));
-        if (sharded) {
-            regionBundles.addAll(WorldSyncSupport.lazyGroupedArtifacts(superpackShards, scanCache));
-        }
-        WorldSyncSupport.LazyArtifact nonRegionArtifact = sharded
-                ? null
-                : new WorldSyncSupport.LazyArtifact(SharedWorldPack.PACK_ID, nonRegionFiles, scanCache);
+        WorldSyncSupport.ScannedArtifacts scanned = WorldSyncSupport.ScannedArtifacts.split(
+                WorldCanonicalizer.scanCanonical(worldDirectory, hostPlayerUuid, scanCache), scanCache);
+        List<PreparedWorldFile> canonicalFiles = scanned.canonicalFiles;
+        List<WorldSyncSupport.LazyArtifact> regionBundles = scanned.regionBundles;
+        WorldSyncSupport.LazyArtifact nonRegionArtifact = scanned.nonRegionArtifact;
+        boolean sharded = scanned.sharded();
+        // Built bodies are deleted in the single finally, so a failure at any
+        // stage cannot leak pack/bundle/delta temps. Autosave retries every
+        // five minutes, so leaks here compound quickly.
         List<PreparedUpload> preparedUploads = List.of();
         try {
-            LocalPackDescriptorDto localPack = nonRegionArtifact == null ? null : nonRegionArtifact.descriptor();
-            LocalPackDescriptorDto[] bundleDescriptors = new LocalPackDescriptorDto[regionBundles.size()];
-            for (int i = 0; i < regionBundles.size(); i++) {
-                bundleDescriptors[i] = regionBundles.get(i).descriptor();
-            }
-            pruneScanCache(scanCache, canonicalFiles, regionBundles, nonRegionArtifact);
+            LocalPackDescriptorDto localPack = scanned.nonRegionDescriptor();
+            LocalPackDescriptorDto[] bundleDescriptors = scanned.bundleDescriptors();
+            pruneScanCache(scanCache, scanned);
             WorldSyncSupport.logTiming(LOGGER, "scan canonical files", worldId, scanStartedAt);
 
             WorldSyncSupport.report(progressListener, STAGE_REQUESTING_UPLOAD_PLAN, 0.14D, null, null, "Requesting upload plan");
@@ -173,8 +146,8 @@ public final class WorldSyncCoordinator {
                 return null;
             }
             preparedUploads = prepareUploads(worldId, plan, nonRegionArtifact, regionBundlesById, resolvedPolicy, progressListener);
-            Map<String, PreparedUpload> preparedByPath = preparedUploads.stream()
-                    .collect(Collectors.toMap(PreparedUpload::relativePath, prepared -> prepared));
+            Map<String, PreparedUpload> preparedByPackId = preparedUploads.stream()
+                    .collect(Collectors.toMap(PreparedUpload::packId, prepared -> prepared));
 
             long totalUploadBytes = preparedUploads.stream().mapToLong(PreparedUpload::bodySize).sum();
             uploadPreparedFiles(worldId, preparedUploads, resolvedPolicy, progressListener, totalUploadBytes,
@@ -184,7 +157,7 @@ public final class WorldSyncCoordinator {
             long finalizeStartedAt = System.nanoTime();
             List<ManifestFileDto> manifestFiles = new ArrayList<>(0);
             List<SnapshotPackDto> packs = new ArrayList<>(1 + (plan.regionBundleUploads() == null ? 0 : plan.regionBundleUploads().length));
-            PreparedUpload preparedPack = preparedByPath.get(SharedWorldPack.PACK_ID);
+            PreparedUpload preparedPack = preparedByPackId.get(SharedWorldPack.PACK_ID);
             if (preparedPack != null && preparedPack.snapshotPack() != null) {
                 packs.add(preparedPack.snapshotPack());
             } else if (plan.nonRegionPackUpload() != null) {
@@ -192,7 +165,7 @@ public final class WorldSyncCoordinator {
             }
             if (plan.regionBundleUploads() != null) {
                 for (UploadPackPlanDto upload : plan.regionBundleUploads()) {
-                    PreparedUpload preparedBundle = preparedByPath.get(upload.pack().packId());
+                    PreparedUpload preparedBundle = preparedByPackId.get(upload.pack().packId());
                     if (preparedBundle != null && preparedBundle.snapshotPack() != null) {
                         packs.add(preparedBundle.snapshotPack());
                     } else {
@@ -227,12 +200,7 @@ public final class WorldSyncCoordinator {
                     Files.deleteIfExists(preparedUpload.bodyPath());
                 }
             }
-            if (nonRegionArtifact != null) {
-                nonRegionArtifact.deleteBodyIfBuilt();
-            }
-            for (WorldSyncSupport.LazyArtifact bundle : regionBundles) {
-                bundle.deleteBodyIfBuilt();
-            }
+            scanned.deleteBodiesIfBuilt();
         }
     }
 
@@ -249,20 +217,12 @@ public final class WorldSyncCoordinator {
             return true;
         }
         WorldScanCache scanCache = WorldScanCache.load(this.worldStore.scanCacheFile(worldId));
-        List<WorldSyncSupport.LazyArtifact> artifacts = new ArrayList<>();
+        WorldSyncSupport.ScannedArtifacts scanned = null;
         try {
-            List<PreparedWorldFile> canonicalFiles = WorldCanonicalizer.scanCanonical(worldDirectory, hostPlayerUuid, scanCache);
-            List<PreparedWorldFile> regionFiles = canonicalFiles.stream().filter(file -> SyncPathRules.isTerrainRegionFile(file.relativePath())).toList();
-            List<PreparedWorldFile> nonRegionFiles = canonicalFiles.stream().filter(file -> SyncPathRules.belongsInSuperpack(file.relativePath())).toList();
-            List<SyncPathRules.RegionBundleGroup> superpackShards = SyncPathRules.groupSuperpackFiles(nonRegionFiles);
-            artifacts.addAll(WorldSyncSupport.lazyRegionBundleArtifacts(regionFiles, scanCache));
-            if (superpackShards.isEmpty()) {
-                artifacts.add(new WorldSyncSupport.LazyArtifact(SharedWorldPack.PACK_ID, nonRegionFiles, scanCache));
-            } else {
-                artifacts.addAll(WorldSyncSupport.lazyGroupedArtifacts(superpackShards, scanCache));
-            }
+            scanned = WorldSyncSupport.ScannedArtifacts.split(
+                    WorldCanonicalizer.scanCanonical(worldDirectory, hostPlayerUuid, scanCache), scanCache);
             Set<String> seen = new HashSet<>();
-            for (WorldSyncSupport.LazyArtifact artifact : artifacts) {
+            for (WorldSyncSupport.LazyArtifact artifact : scanned.all()) {
                 seen.add(artifact.packId());
                 if (!artifact.descriptor().hash().equals(baseline.get(artifact.packId()))) {
                     return true;
@@ -277,8 +237,8 @@ public final class WorldSyncCoordinator {
             return false;
         } finally {
             scanCache.save();
-            for (WorldSyncSupport.LazyArtifact artifact : artifacts) {
-                artifact.deleteBodyIfBuilt();
+            if (scanned != null) {
+                scanned.deleteBodiesIfBuilt();
             }
         }
     }
@@ -288,20 +248,16 @@ public final class WorldSyncCoordinator {
      * accumulate in the cache forever (worlds rename region tiles as they
      * grow).
      */
-    private static void pruneScanCache(
-            WorldScanCache scanCache,
-            List<PreparedWorldFile> canonicalFiles,
-            List<WorldSyncSupport.LazyArtifact> regionBundles,
-            WorldSyncSupport.LazyArtifact nonRegionArtifact
-    ) {
-        Set<String> paths = new HashSet<>(canonicalFiles.size());
-        for (PreparedWorldFile file : canonicalFiles) {
+    private static void pruneScanCache(WorldScanCache scanCache, WorldSyncSupport.ScannedArtifacts scanned) {
+        Set<String> paths = new HashSet<>(scanned.canonicalFiles.size());
+        for (PreparedWorldFile file : scanned.canonicalFiles) {
             paths.add(file.relativePath());
         }
-        Set<String> packIds = new HashSet<>(regionBundles.size() + 1);
-        for (WorldSyncSupport.LazyArtifact bundle : regionBundles) {
+        Set<String> packIds = new HashSet<>(scanned.regionBundles.size() + 1);
+        for (WorldSyncSupport.LazyArtifact bundle : scanned.regionBundles) {
             packIds.add(bundle.packId());
         }
+        WorldSyncSupport.LazyArtifact nonRegionArtifact = scanned.nonRegionArtifact;
         if (nonRegionArtifact != null) {
             packIds.add(nonRegionArtifact.packId());
         }
@@ -345,39 +301,25 @@ public final class WorldSyncCoordinator {
         WorldSyncSupport.report(progressListener, STAGE_CHECKING_LOCAL_CACHE, 0.08D, null, null, "Scanning local cache");
         long scanStartedAt = System.nanoTime();
         WorldScanCache scanCache = WorldScanCache.load(this.worldStore.scanCacheFile(worldId));
-        List<PreparedWorldFile> localCanonicalFiles = Files.exists(worldDirectory)
-                ? WorldCanonicalizer.scanCanonical(worldDirectory, hostPlayerUuid, scanCache)
-                : List.of();
-        List<LocalFileDescriptorDto> localFiles = localCanonicalFiles.stream()
+        // Same split as the upload side, so the backend can plan shard deltas
+        // against exactly what this cache holds. A body is only built if the
+        // plan actually bases a delta on the state just reported (rare; a
+        // stale or missing cached baseline).
+        WorldSyncSupport.ScannedArtifacts scanned = WorldSyncSupport.ScannedArtifacts.split(
+                Files.exists(worldDirectory) ? WorldCanonicalizer.scanCanonical(worldDirectory, hostPlayerUuid, scanCache) : List.of(),
+                scanCache);
+        List<LocalFileDescriptorDto> localFiles = scanned.canonicalFiles.stream()
                 .map(PreparedWorldFile::toDescriptor)
                 .toList();
-        List<PreparedWorldFile> localNonRegionFiles = localCanonicalFiles.stream().filter(file -> SyncPathRules.belongsInSuperpack(file.relativePath())).toList();
-        List<PreparedWorldFile> localRegionFiles = localCanonicalFiles.stream().filter(file -> SyncPathRules.isTerrainRegionFile(file.relativePath())).toList();
-        // Mirrors the upload-side split: a cache over the shard cap reports its
-        // non-region files as shard packs so the backend can plan shard deltas
-        // against exactly what we hold.
-        List<SyncPathRules.RegionBundleGroup> localSuperpackShards = SyncPathRules.groupSuperpackFiles(localNonRegionFiles);
-        boolean shardedLocal = !localSuperpackShards.isEmpty();
-        // Artifacts are lazy: descriptors answer the plan request, and a body
-        // is only built if the plan actually bases a delta on the state this
-        // client just reported (rare; a stale or missing cached baseline).
-        List<WorldSyncSupport.LazyArtifact> localRegionBundles = new ArrayList<>(WorldSyncSupport.lazyRegionBundleArtifacts(localRegionFiles, scanCache));
-        if (shardedLocal) {
-            localRegionBundles.addAll(WorldSyncSupport.lazyGroupedArtifacts(localSuperpackShards, scanCache));
-        }
-        WorldSyncSupport.LazyArtifact localPackArtifact = shardedLocal
-                ? null
-                : new WorldSyncSupport.LazyArtifact(SharedWorldPack.PACK_ID, localNonRegionFiles, scanCache);
+        List<WorldSyncSupport.LazyArtifact> localRegionBundles = scanned.regionBundles;
+        WorldSyncSupport.LazyArtifact localPackArtifact = scanned.nonRegionArtifact;
         // The guest cache warmer retries this flow every 30 seconds while the
         // backend is unreachable, so the plan request failure path must clean
         // its temps just like the apply path does.
         try {
-            LocalPackDescriptorDto localPack = localPackArtifact == null ? null : localPackArtifact.descriptor();
-            LocalPackDescriptorDto[] bundleDescriptors = new LocalPackDescriptorDto[localRegionBundles.size()];
-            for (int i = 0; i < localRegionBundles.size(); i++) {
-                bundleDescriptors[i] = localRegionBundles.get(i).descriptor();
-            }
-            pruneScanCache(scanCache, localCanonicalFiles, localRegionBundles, localPackArtifact);
+            LocalPackDescriptorDto localPack = scanned.nonRegionDescriptor();
+            LocalPackDescriptorDto[] bundleDescriptors = scanned.bundleDescriptors();
+            pruneScanCache(scanCache, scanned);
             WorldSyncSupport.logTiming(LOGGER, "scan local cache", worldId, scanStartedAt);
 
             WorldSyncSupport.report(progressListener, STAGE_REQUESTING_DOWNLOAD_PLAN, 0.18D, null, null, "Requesting download plan");
@@ -400,12 +342,7 @@ public final class WorldSyncCoordinator {
             new DownloadPlanApplier(this.apiClient, this.worldStore, worldId, worldDirectory, plan, localPackArtifact, reportedLocalBundles, scanCache, progressListener).apply();
         } finally {
             scanCache.save();
-            if (localPackArtifact != null) {
-                localPackArtifact.deleteBodyIfBuilt();
-            }
-            for (WorldSyncSupport.LazyArtifact bundle : localRegionBundles) {
-                bundle.deleteBodyIfBuilt();
-            }
+            scanned.deleteBodiesIfBuilt();
         }
 
         if (materializeHostPlayer) {
@@ -530,7 +467,7 @@ public final class WorldSyncCoordinator {
     private static void failOnOversizedUploadBody(List<PreparedUpload> preparedUploads, long maxUploadBodyBytes) throws IOException {
         for (PreparedUpload preparedUpload : preparedUploads) {
             if (preparedUpload.bodyPath() != null && preparedUpload.bodySize() > maxUploadBodyBytes) {
-                throw new IOException("SharedWorld cannot upload \"" + preparedUpload.relativePath() + "\": its "
+                throw new IOException("SharedWorld cannot upload \"" + preparedUpload.packId() + "\": its "
                         + megabytes(preparedUpload.bodySize()) + " MB body exceeds the " + megabytes(maxUploadBodyBytes)
                         + " MB upload limit.");
             }
@@ -576,7 +513,7 @@ public final class WorldSyncCoordinator {
         List<String> largestUploads = preparedUploads.stream()
                 .sorted(Comparator.comparingLong(PreparedUpload::bodySize).reversed())
                 .limit(5)
-                .map(upload -> upload.relativePath() + " (" + upload.bodySize() + " bytes)")
+                .map(upload -> upload.packId() + " (" + upload.bodySize() + " bytes)")
                 .toList();
 
         LOGGER.info(
@@ -611,9 +548,7 @@ public final class WorldSyncCoordinator {
                                 "Uploading changed files"
                         );
                     };
-                    String contentType = preparedUpload.manifestFile() != null
-                            ? preparedUpload.manifestFile().contentType()
-                            : "application/octet-stream";
+                    String contentType = "application/octet-stream";
                     String directStorageKey = preparedUpload.snapshotPack() != null
                             ? preparedUpload.snapshotPack().storageKey()
                             : null;
@@ -722,14 +657,7 @@ public final class WorldSyncCoordinator {
 
         long fullSize = Files.size(artifactFile);
         if (!canUseDelta) {
-            return new PreparedUpload(
-                    upload.pack().packId(),
-                    upload.fullUpload(),
-                    upload.fullUpload() == null ? null : artifactFile,
-                    upload.fullUpload() == null ? 0L : fullSize,
-                    null,
-                    new SnapshotPackDto(localPack.packId(), localPack.hash(), localPack.size(), upload.fullStorageKey(), fullTransferMode, null, null, 0, localPack.files())
-            );
+            return fullArtifactUpload(upload, localPack, artifactFile, fullSize, fullTransferMode);
         }
 
         Path deltaBody = Files.createTempFile("sharedworld-pack-delta-", ".bin");
@@ -738,14 +666,7 @@ public final class WorldSyncCoordinator {
         boolean useDelta = deltaSize <= Math.floor(fullSize * (1.0D - minSavingsRatio));
         if (!useDelta) {
             Files.deleteIfExists(deltaBody);
-            return new PreparedUpload(
-                    upload.pack().packId(),
-                    upload.fullUpload(),
-                    upload.fullUpload() == null ? null : artifactFile,
-                    upload.fullUpload() == null ? 0L : fullSize,
-                    null,
-                    new SnapshotPackDto(localPack.packId(), localPack.hash(), localPack.size(), upload.fullStorageKey(), fullTransferMode, null, null, 0, localPack.files())
-            );
+            return fullArtifactUpload(upload, localPack, artifactFile, fullSize, fullTransferMode);
         }
 
         int nextChainDepth = upload.baseChainDepth() == null ? 1 : upload.baseChainDepth() + 1;
@@ -759,7 +680,6 @@ public final class WorldSyncCoordinator {
                     null,
                     null,
                     0L,
-                    null,
                     new SnapshotPackDto(localPack.packId(), localPack.hash(), localPack.size(), upload.deltaStorageKey(), deltaTransferMode, upload.baseSnapshotId(), upload.baseHash(), nextChainDepth, 2, deltaSize, localPack.files())
             );
         }
@@ -768,22 +688,26 @@ public final class WorldSyncCoordinator {
                 upload.deltaUpload(),
                 deltaBody,
                 deltaSize,
-                null,
                 new SnapshotPackDto(localPack.packId(), localPack.hash(), localPack.size(), upload.deltaStorageKey(), deltaTransferMode, upload.baseSnapshotId(), upload.baseHash(), nextChainDepth, 2, deltaSize, localPack.files())
         );
     }
 
-    @FunctionalInterface
-    public interface SnapshotUploadProgressListener {
-        void onProgress(long uploadedBytes, long totalBytes);
+    /** A pack artifact ready to upload; uploadUrl/bodyPath are null when the blob already exists server-side. */
+    private static PreparedUpload fullArtifactUpload(UploadPackPlanDto upload, LocalPackDescriptorDto localPack, Path artifactFile, long fullSize, String fullTransferMode) {
+        return new PreparedUpload(
+                upload.pack().packId(),
+                upload.fullUpload(),
+                upload.fullUpload() == null ? null : artifactFile,
+                upload.fullUpload() == null ? 0L : fullSize,
+                new SnapshotPackDto(localPack.packId(), localPack.hash(), localPack.size(), upload.fullStorageKey(), fullTransferMode, null, null, 0, localPack.files())
+        );
     }
 
     private record PreparedUpload(
-            String relativePath,
+            String packId,
             SignedBlobUrlDto uploadUrl,
             Path bodyPath,
             long bodySize,
-            ManifestFileDto manifestFile,
             SnapshotPackDto snapshotPack
     ) {
     }

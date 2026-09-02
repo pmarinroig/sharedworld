@@ -22,6 +22,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.function.Consumer;
 
 public final class SharedWorldReleaseCoordinator {
     private static final Logger LOGGER = LoggerFactory.getLogger("sharedworld-release");
@@ -158,21 +159,14 @@ public final class SharedWorldReleaseCoordinator {
     }
 
     /**
-     * Responsibility:
      * Drive the single authoritative lifecycle-exit flow for the current client.
-     *
-     * Preconditions:
-     * At most one graceful release or forced terminal exit is active at a time.
-     *
-     * Postconditions:
-     * At most one phase effect is in flight, and lifecycle state advances toward a terminal or
-     * explicitly recoverable outcome without raw disconnect side paths.
-     *
-     * Stale-work rule:
-     * Async completions are keyed by releaseAttemptId and ignored once the active attempt changes.
-     *
-     * Authority source:
-     * Persisted release state plus coordinator-owned forced-exit state reconciled against backend runtime status.
+     * Preconditions: At most one graceful release or forced terminal exit is active at a time.
+     * Postconditions: At most one phase effect is in flight, and lifecycle state advances toward a
+     * terminal or explicitly recoverable outcome without raw disconnect side paths.
+     * Stale-work rule: Async completions are keyed by releaseAttemptId and ignored once the active
+     * attempt changes.
+     * Authority source: Persisted release state plus coordinator-owned forced-exit state reconciled
+     * against backend runtime status.
      */
     public void tick(Minecraft minecraft) {
         ensurePersistedReleaseRecoveryStarted();
@@ -230,20 +224,13 @@ public final class SharedWorldReleaseCoordinator {
     }
 
     /**
-     * Responsibility:
      * Start the durable release protocol for the currently hosted world.
-     *
-     * Preconditions:
-     * The client is the current local host and no other release attempt is active.
-     *
-     * Postconditions:
-     * A persisted release record exists and the blocking saving flow becomes authoritative.
-     *
-     * Stale-work rule:
-     * If a release already exists, it remains authoritative instead of starting a parallel one.
-     *
-     * Authority source:
-     * Active local host session plus persisted release state.
+     * Preconditions: The client is the current local host and no other release attempt is active.
+     * Postconditions: A persisted release record exists and the blocking saving flow becomes
+     * authoritative.
+     * Stale-work rule: If a release already exists, it remains authoritative instead of starting a
+     * parallel one.
+     * Authority source: Active local host session plus persisted release state.
      */
     public ReleaseDisplay beginGracefulDisconnect(Minecraft minecraft) {
         SharedWorldHostingManager.ActiveHostSession session = this.hostControl.activeHostSession();
@@ -256,47 +243,41 @@ public final class SharedWorldReleaseCoordinator {
         if (session == null || !this.clientShell.isLocalServer()) {
             return null;
         }
+        // Stale closed/non-blocking terminal state from an earlier release is
+        // auto-acknowledged; a live release or blocking terminal state is reused.
         if (this.state != null && SharedWorldReleasePolicy.isClosedTerminal(this.state.record.phase)) {
-            LOGGER.debug(
-                    "SharedWorld release diagnostics [beginGracefulDisconnect]: auto-clearing stale closed terminal state {} for {}",
-                    this.state.record.phase,
-                    this.state.record.worldId
-            );
             acknowledgeTerminal();
         }
         if (this.terminalState != null && !this.terminalState.blocking) {
-            LOGGER.debug(
-                    "SharedWorld release diagnostics [beginGracefulDisconnect]: auto-clearing stale terminal notice {} for {}",
-                    this.terminalState.phase,
-                    this.terminalState.worldId
-            );
             acknowledgeTerminal();
         }
         if (this.state != null) {
-            LOGGER.debug(
-                    "SharedWorld release diagnostics [beginGracefulDisconnect]: short-circuiting because active release state {} already exists for {}",
-                    this.state.record.phase,
-                    this.state.record.worldId
-            );
             return new ReleaseDisplay(this.state.record.worldId, this.state.record.worldName);
         }
         if (this.terminalState != null) {
-            LOGGER.debug(
-                    "SharedWorld release diagnostics [beginGracefulDisconnect]: short-circuiting because terminal state {} already exists for {}",
-                    this.terminalState.phase,
-                    this.terminalState.worldId
-            );
             return new ReleaseDisplay(this.terminalState.worldId, this.terminalState.worldName);
         }
 
-        this.hostControl.beginCoordinatedRelease();
-        SharedWorldReleaseStore.ReleaseRecord record = newRecordForSession(session, SharedWorldReleasePhase.BEGINNING_BACKEND_FINALIZATION);
-        record.vanillaDisconnectExpected = true;
-        this.terminalState = null;
-        this.state = new ReleaseState(record, SharedWorldReleasePolicy.blockingProgress(Component.translatable("screen.sharedworld.progress.uploading_world")), null);
-        persistAndApply(record);
+        SharedWorldReleaseStore.ReleaseRecord record = openCoordinatedRelease(session, opened -> opened.vanillaDisconnectExpected = true);
         scheduleBeginFinalization(record.releaseAttemptId);
         return new ReleaseDisplay(record.worldId, record.worldName);
+    }
+
+    /**
+     * Opens a coordinated release of the live host session, starting at backend
+     * finalization, and returns its persisted record.
+     */
+    private SharedWorldReleaseStore.ReleaseRecord openCoordinatedRelease(
+            SharedWorldHostingManager.ActiveHostSession session,
+            Consumer<SharedWorldReleaseStore.ReleaseRecord> customize
+    ) {
+        this.hostControl.beginCoordinatedRelease();
+        SharedWorldReleaseStore.ReleaseRecord record = newRecordForSession(session, SharedWorldReleasePhase.BEGINNING_BACKEND_FINALIZATION);
+        customize.accept(record);
+        this.terminalState = null;
+        this.state = new ReleaseState(record, uploadingWorldProgress(), null);
+        persistAndApply(record);
+        return record;
     }
 
     public boolean consumeDisconnectPassThrough() {
@@ -470,7 +451,7 @@ public final class SharedWorldReleaseCoordinator {
         current.errorMessage = null;
         current.errorKind = null;
         current.errorNeedsDriveReconnect = false;
-        current.progressState = SharedWorldReleasePolicy.blockingProgress(Component.translatable("screen.sharedworld.progress.uploading_world"));
+        current.progressState = uploadingWorldProgress();
         SharedWorldReleaseStore.ReleaseRecord updated = current.record.copy();
         updated.phase = SharedWorldReleasePolicy.resumePhaseForRetry(updated);
         updated.autoRetryCount = autoRetryCount;
@@ -530,7 +511,7 @@ public final class SharedWorldReleaseCoordinator {
         }
         ReleaseState current = this.state;
         if (current != null) {
-            if (!equalsIgnoreCase(current.record.worldId, worldId)) {
+            if (!SharedWorldReleaseStore.equalsIgnoreCase(current.record.worldId, worldId)) {
                 return false;
             }
             return discardLocalReleaseState();
@@ -552,7 +533,7 @@ public final class SharedWorldReleaseCoordinator {
             return false;
         }
         ReleaseState current = this.state;
-        if (current != null && equalsIgnoreCase(current.record.worldId, worldId)) {
+        if (current != null && SharedWorldReleaseStore.equalsIgnoreCase(current.record.worldId, worldId)) {
             return true;
         }
         return this.releaseStore.loadFor(worldId, this.playerIdentity.currentPlayerUuid()) != null;
@@ -587,20 +568,14 @@ public final class SharedWorldReleaseCoordinator {
     }
 
     /**
-     * Responsibility:
      * Enter the single forced-exit flow after host authority can no longer be trusted.
-     *
-     * Preconditions:
-     * The hosting manager already invalidated its local async work for this host attempt.
-     *
-     * Postconditions:
-     * Disconnect, reconciliation, and terminal UI are now owned by this coordinator alone.
-     *
-     * Stale-work rule:
-     * A newer forced-exit attempt supersedes any older authority-loss reconciliation work.
-     *
-     * Authority source:
-     * Backend runtime reconciliation for the reported host epoch/token.
+     * Preconditions: The hosting manager already invalidated its local async work for this host
+     * attempt.
+     * Postconditions: Disconnect, reconciliation, and terminal UI are now owned by this coordinator
+     * alone.
+     * Stale-work rule: A newer forced-exit attempt supersedes any older authority-loss
+     * reconciliation work.
+     * Authority source: Backend runtime reconciliation for the reported host epoch/token.
      */
     public void onHostAuthorityLost(
             SharedWorldHostingManager.ActiveHostSession session,
@@ -679,8 +654,8 @@ public final class SharedWorldReleaseCoordinator {
             return;
         }
         this.asyncBridge.supply(
-                () -> new StartupRecoveryResolution(this.startupRecoveryResolver.resolve(this.backend, record).clearPersistedRecord()),
-                (resolution, error) -> {
+                () -> this.startupRecoveryResolver.shouldClearPersistedRecord(this.backend, record),
+                (clearRecord, error) -> {
                     if (this.state != null || this.terminalState != null) {
                         return;
                     }
@@ -695,7 +670,7 @@ public final class SharedWorldReleaseCoordinator {
                     if (latest == null || latest.releaseAttemptId != record.releaseAttemptId) {
                         return;
                     }
-                    if (resolution != null && resolution.clearPersistedRecord()) {
+                    if (Boolean.TRUE.equals(clearRecord)) {
                         this.releaseStore.clear();
                         return;
                     }
@@ -708,7 +683,7 @@ public final class SharedWorldReleaseCoordinator {
         this.terminalState = null;
         this.state = new ReleaseState(
                 record.copy(),
-                SharedWorldReleasePolicy.blockingProgress(Component.translatable("screen.sharedworld.progress.uploading_world")),
+                uploadingWorldProgress(),
                 null
         );
         if (record.phase == SharedWorldReleasePhase.ERROR_RECOVERABLE) {
@@ -721,20 +696,15 @@ public final class SharedWorldReleaseCoordinator {
     }
 
     /**
-     * Responsibility:
      * Own every forced lifecycle exit once graceful release is not the active protocol.
-     *
-     * Preconditions:
-     * The caller has already classified the trigger and will no longer disconnect the client directly.
-     *
-     * Postconditions:
-     * Disconnect, reconciliation, and terminal UI now flow through this coordinator only.
-     *
-     * Stale-work rule:
-     * A newer forced-exit attempt supersedes older forced-exit callbacks and classification work.
-     *
-     * Authority source:
-     * Coordinator-owned terminal state plus backend runtime reconciliation when authority is in doubt.
+     * Preconditions: The caller has already classified the trigger and will no longer disconnect
+     * the client directly.
+     * Postconditions: Disconnect, reconciliation, and terminal UI now flow through this coordinator
+     * only.
+     * Stale-work rule: A newer forced-exit attempt supersedes older forced-exit callbacks and
+     * classification work.
+     * Authority source: Coordinator-owned terminal state plus backend runtime reconciliation when
+     * authority is in doubt.
      */
     private void beginForcedExit(
             ForcedExitReason reason,
@@ -758,7 +728,7 @@ public final class SharedWorldReleaseCoordinator {
                 worldId,
                 worldName,
                 SharedWorldReleasePhase.FORCED_DISCONNECTING,
-                SharedWorldReleasePolicy.blockingProgress(Component.translatable("screen.sharedworld.progress.uploading_world")),
+                uploadingWorldProgress(),
                 message,
                 null,
                 false,
@@ -791,7 +761,7 @@ public final class SharedWorldReleaseCoordinator {
                 worldId,
                 worldName,
                 ReleaseTerminalStateSupport.phaseFor(reasonKind),
-                SharedWorldReleasePolicy.blockingProgress(Component.translatable("screen.sharedworld.progress.uploading_world")),
+                uploadingWorldProgress(),
                 message,
                 reasonKind,
                 true,
@@ -947,7 +917,7 @@ public final class SharedWorldReleaseCoordinator {
         this.hostControl.beginCoordinatedRelease();
         SharedWorldReleaseStore.ReleaseRecord record = newRecordForSession(session, SharedWorldReleasePhase.DISCONNECTING_LOCAL_WORLD);
         record.pendingTerminalPhase = terminalPhase;
-        this.state = new ReleaseState(record, SharedWorldReleasePolicy.blockingProgress(Component.translatable("screen.sharedworld.progress.uploading_world"), "release_finishing"), null);
+        this.state = new ReleaseState(record, SharedWorldReleasePolicy.blockingProgress(uploadingWorldLabel(), "release_finishing"), null);
         persistAndApply(record);
         requestLocalDisconnect(record.releaseAttemptId);
     }
@@ -974,22 +944,12 @@ public final class SharedWorldReleaseCoordinator {
                 "SharedWorld host session for {} lost its integrated server without a coordinated exit; releasing the runtime now",
                 session.worldId()
         );
-        this.hostControl.beginCoordinatedRelease();
-        SharedWorldReleaseStore.ReleaseRecord record = newRecordForSession(session, SharedWorldReleasePhase.BEGINNING_BACKEND_FINALIZATION);
-        record.localDisconnectObserved = true;
-        this.terminalState = null;
-        this.state = new ReleaseState(record, SharedWorldReleasePolicy.blockingProgress(Component.translatable("screen.sharedworld.progress.uploading_world")), null);
-        persistAndApply(record);
+        SharedWorldReleaseStore.ReleaseRecord record = openCoordinatedRelease(session, opened -> opened.localDisconnectObserved = true);
         scheduleBeginFinalization(record.releaseAttemptId);
     }
 
     private void beginRevokedHostRelease(SharedWorldHostingManager.ActiveHostSession session) {
-        this.hostControl.beginCoordinatedRelease();
-        SharedWorldReleaseStore.ReleaseRecord record = newRecordForSession(session, SharedWorldReleasePhase.BEGINNING_BACKEND_FINALIZATION);
-        record.pendingTerminalPhase = SharedWorldReleasePhase.TERMINATED_REVOKED;
-        this.terminalState = null;
-        this.state = new ReleaseState(record, SharedWorldReleasePolicy.blockingProgress(Component.translatable("screen.sharedworld.progress.uploading_world")), null);
-        persistAndApply(record);
+        SharedWorldReleaseStore.ReleaseRecord record = openCoordinatedRelease(session, opened -> opened.pendingTerminalPhase = SharedWorldReleasePhase.TERMINATED_REVOKED);
         scheduleBeginFinalization(record.releaseAttemptId);
     }
 
@@ -1054,11 +1014,7 @@ public final class SharedWorldReleaseCoordinator {
                         return;
                     }
                     if (error != null) {
-                        if (SharedWorldApiClient.isDeletedWorldError(error)) {
-                            transitionTerminal(SharedWorldReleasePhase.TERMINATED_DELETED, null);
-                            return;
-                        }
-                        failRecoverable(SharedWorldText.string("screen.sharedworld.release_resume_failed", SharedWorldApiClient.friendlyErrorMessage(error)), SharedWorldTerminalReasonKind.RECOVERABLE_REMOTE_FAILURE);
+                        failReleaseTask(error, null, "screen.sharedworld.release_resume_failed");
                         return;
                     }
                     applyRuntimeReconciliation(latest.record, runtime);
@@ -1067,20 +1023,13 @@ public final class SharedWorldReleaseCoordinator {
     }
 
     /**
-     * Responsibility:
      * Reconcile persisted release state against the authoritative backend runtime.
-     *
-     * Preconditions:
-     * The provided record is the current persisted release attempt.
-     *
-     * Postconditions:
-     * The release becomes resumable, terminal, obsolete, or recoverably blocked with no ambiguous state.
-     *
-     * Stale-work rule:
-     * Reconciliation may discard obsolete local state, but it never revives an older release attempt.
-     *
-     * Authority source:
-     * Backend runtime status, not local assumptions.
+     * Preconditions: The provided record is the current persisted release attempt.
+     * Postconditions: The release becomes resumable, terminal, obsolete, or recoverably blocked
+     * with no ambiguous state.
+     * Stale-work rule: Reconciliation may discard obsolete local state, but it never revives an
+     * older release attempt.
+     * Authority source: Backend runtime status, not local assumptions.
      */
     private void applyRuntimeReconciliation(SharedWorldReleaseStore.ReleaseRecord record, WorldRuntimeStatusDto runtime) {
         ReleaseRuntimeReconciliation.Outcome outcome = ReleaseRuntimeReconciliation.reconcile(
@@ -1145,15 +1094,7 @@ public final class SharedWorldReleaseCoordinator {
                 return;
             }
             if (error != null) {
-                if (SharedWorldApiClient.isDeletedWorldError(error)) {
-                    transitionTerminal(SharedWorldReleasePhase.TERMINATED_DELETED, null);
-                    return;
-                }
-                if (SharedWorldApiClient.isHostNotActiveError(error)) {
-                    failRecoverable(SharedWorldText.string("screen.sharedworld.release_lost_authority_begin"), SharedWorldTerminalReasonKind.AUTHORITATIVE_LOSS);
-                    return;
-                }
-                failRecoverable(SharedWorldText.string("screen.sharedworld.release_begin_finalization_failed", SharedWorldApiClient.friendlyErrorMessage(error)), SharedWorldTerminalReasonKind.RECOVERABLE_REMOTE_FAILURE);
+                failReleaseTask(error, "screen.sharedworld.release_lost_authority_begin", "screen.sharedworld.release_begin_finalization_failed");
                 return;
             }
             this.hostControl.markCoordinatedBackendFinalizationStarted();
@@ -1239,10 +1180,6 @@ public final class SharedWorldReleaseCoordinator {
                         return;
                     }
                     if (error != null) {
-                        if (SharedWorldApiClient.isDeletedWorldError(error)) {
-                            transitionTerminal(SharedWorldReleasePhase.TERMINATED_DELETED, null);
-                            return;
-                        }
                         if (SharedWorldApiClient.isMembershipRevokedError(error)) {
                             transitionTerminal(SharedWorldReleasePhase.TERMINATED_REVOKED, null);
                             return;
@@ -1258,7 +1195,7 @@ public final class SharedWorldReleaseCoordinator {
                             failRecoverable(SharedWorldText.string("screen.sharedworld.release_upload_failed_reauth"), SharedWorldTerminalReasonKind.RECOVERABLE_REMOTE_FAILURE, true);
                             return;
                         }
-                        failRecoverable(SharedWorldText.string("screen.sharedworld.release_upload_snapshot_failed", SharedWorldApiClient.friendlyErrorMessage(error)), SharedWorldTerminalReasonKind.RECOVERABLE_REMOTE_FAILURE);
+                        failReleaseTask(error, null, "screen.sharedworld.release_upload_snapshot_failed");
                         return;
                     }
                     SharedWorldReleaseStore.ReleaseRecord updated = latest.record.copy();
@@ -1288,15 +1225,7 @@ public final class SharedWorldReleaseCoordinator {
                 return;
             }
             if (error != null) {
-                if (SharedWorldApiClient.isDeletedWorldError(error)) {
-                    transitionTerminal(SharedWorldReleasePhase.TERMINATED_DELETED, null);
-                    return;
-                }
-                if (SharedWorldApiClient.isHostNotActiveError(error)) {
-                    failRecoverable(SharedWorldText.string("screen.sharedworld.release_lost_authority_complete"), SharedWorldTerminalReasonKind.AUTHORITATIVE_LOSS);
-                    return;
-                }
-                failRecoverable(SharedWorldText.string("screen.sharedworld.release_complete_finalization_failed", SharedWorldApiClient.friendlyErrorMessage(error)), SharedWorldTerminalReasonKind.RECOVERABLE_REMOTE_FAILURE);
+                failReleaseTask(error, "screen.sharedworld.release_lost_authority_complete", "screen.sharedworld.release_complete_finalization_failed");
                 return;
             }
             SharedWorldReleaseStore.ReleaseRecord updated = latest.record.copy();
@@ -1333,7 +1262,7 @@ public final class SharedWorldReleaseCoordinator {
         current.record = updated;
         current.errorMessage = errorMessage;
         current.errorKind = null;
-        current.progressState = SharedWorldReleasePolicy.blockingProgress(Component.translatable("screen.sharedworld.progress.uploading_world"), "release_finishing");
+        current.progressState = SharedWorldReleasePolicy.blockingProgress(uploadingWorldLabel(), "release_finishing");
         clearRelayedReleaseProgress();
         this.releaseStore.clear();
         this.hostControl.clearHostedSessionAfterCoordinatedRelease();
@@ -1341,6 +1270,31 @@ public final class SharedWorldReleaseCoordinator {
 
     private void failRecoverable(String errorMessage, SharedWorldTerminalReasonKind errorKind) {
         failRecoverable(errorMessage, errorKind, false);
+    }
+
+    /**
+     * Shared tail of every release task failure: a deleted world ends the release,
+     * lost host authority (for tasks that can lose it) is recoverable as such, and
+     * anything else is a recoverable remote failure carrying the friendly message.
+     */
+    private void failReleaseTask(Throwable error, String authorityLostKey, String failureKey) {
+        if (SharedWorldApiClient.isDeletedWorldError(error)) {
+            transitionTerminal(SharedWorldReleasePhase.TERMINATED_DELETED, null);
+            return;
+        }
+        if (authorityLostKey != null && SharedWorldApiClient.isHostNotActiveError(error)) {
+            failRecoverable(SharedWorldText.string(authorityLostKey), SharedWorldTerminalReasonKind.AUTHORITATIVE_LOSS);
+            return;
+        }
+        failRecoverable(SharedWorldText.string(failureKey, SharedWorldApiClient.friendlyErrorMessage(error)), SharedWorldTerminalReasonKind.RECOVERABLE_REMOTE_FAILURE);
+    }
+
+    private static SharedWorldProgressState uploadingWorldProgress() {
+        return SharedWorldReleasePolicy.blockingProgress(uploadingWorldLabel());
+    }
+
+    private static Component uploadingWorldLabel() {
+        return Component.translatable("screen.sharedworld.progress.uploading_world");
     }
 
     private void failRecoverable(String errorMessage, SharedWorldTerminalReasonKind errorKind, boolean needsDriveReconnect) {
@@ -1408,25 +1362,21 @@ public final class SharedWorldReleaseCoordinator {
         current.progressState = switch (progress.stage()) {
             case WorldSyncCoordinator.STAGE_UPLOADING_CHANGED_FILES -> SharedWorldProgressState.determinate(
                     Component.translatable("screen.sharedworld.saving_title"),
-                    Component.translatable("screen.sharedworld.progress.uploading_world"),
+                    uploadingWorldLabel(),
                     "release_uploading",
                     progress.fraction(),
                     current.progressState,
                     progress.bytesDone(),
                     progress.bytesTotal()
             );
-            case WorldSyncCoordinator.STAGE_FINALIZING_SNAPSHOT -> SharedWorldReleasePolicy.blockingProgress(Component.translatable("screen.sharedworld.progress.uploading_world"), "release_finishing");
-            default -> SharedWorldReleasePolicy.blockingProgress(Component.translatable("screen.sharedworld.progress.uploading_world"), "release_preparing");
+            case WorldSyncCoordinator.STAGE_FINALIZING_SNAPSHOT -> SharedWorldReleasePolicy.blockingProgress(uploadingWorldLabel(), "release_finishing");
+            default -> SharedWorldReleasePolicy.blockingProgress(uploadingWorldLabel(), "release_preparing");
         };
         this.hostControl.relayCoordinatedReleaseProgress(current.progressState);
     }
 
     private void clearRelayedReleaseProgress() {
         this.hostControl.clearCoordinatedReleaseProgress();
-    }
-
-    private static boolean equalsIgnoreCase(String left, String right) {
-        return left != null && right != null && left.equalsIgnoreCase(right);
     }
 
     private static boolean shouldMarkLocalDisconnectObserved(SharedWorldReleaseStore.ReleaseRecord record) {
@@ -1475,7 +1425,7 @@ public final class SharedWorldReleaseCoordinator {
     private SharedWorldReleaseStore.ReleaseRecord pendingReleaseRecordFor(String worldId) {
         ReleaseState current = this.state;
         if (current != null) {
-            return equalsIgnoreCase(current.record.worldId, worldId) ? current.record.copy() : null;
+            return SharedWorldReleaseStore.equalsIgnoreCase(current.record.worldId, worldId) ? current.record.copy() : null;
         }
         return this.releaseStore.loadFor(worldId, this.playerIdentity.currentPlayerUuid());
     }
@@ -1496,14 +1446,6 @@ public final class SharedWorldReleaseCoordinator {
         }
     }
 
-    static Throwable rootCause(Throwable throwable) {
-        Throwable current = throwable;
-        while (current.getCause() != null && current.getCause() != current) {
-            current = current.getCause();
-        }
-        return current;
-    }
-
     public record ReleaseDisplay(String worldId, String worldName) {
     }
 
@@ -1519,9 +1461,6 @@ public final class SharedWorldReleaseCoordinator {
             boolean blocking,
             boolean needsDriveReconnect
     ) {
-    }
-
-    private record StartupRecoveryResolution(boolean clearPersistedRecord) {
     }
 
     private static final class ReleaseState {

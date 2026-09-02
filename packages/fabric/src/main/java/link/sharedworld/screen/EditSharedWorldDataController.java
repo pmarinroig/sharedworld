@@ -11,9 +11,12 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.Executor;
 import java.util.function.Consumer;
+import static link.sharedworld.util.Errors.rootCause;
 
 final class EditSharedWorldDataController {
     private final SharedWorldApiClient apiClient;
@@ -34,103 +37,47 @@ final class EditSharedWorldDataController {
     }
 
     void reload(String worldId, Consumer<LoadedState> onSuccess, Consumer<Throwable> onError) {
-        CompletableFuture.supplyAsync(() -> {
-            try {
-                WorldDetailsDto loadedDetails = this.apiClient.getWorld(worldId);
-                WorldSnapshotSummaryDto[] snapshotArray = this.apiClient.listSnapshots(worldId);
-                // 0.4.1 backends stop inlining usage into world details; the
-                // dedicated fetch is display-only and must never fail reload.
-                link.sharedworld.api.SharedWorldModels.StorageUsageSummaryDto usage = loadedDetails.storageUsage();
-                if (usage == null) {
-                    try {
-                        usage = this.apiClient.getStorageUsage(worldId);
-                    } catch (Exception ignored) {
-                        usage = null;
-                    }
+        submit(() -> {
+            WorldDetailsDto loadedDetails = this.apiClient.getWorld(worldId);
+            WorldSnapshotSummaryDto[] snapshotArray = this.apiClient.listSnapshots(worldId);
+            // 0.4.1 backends stop inlining usage into world details; the
+            // dedicated fetch is display-only and must never fail reload.
+            link.sharedworld.api.SharedWorldModels.StorageUsageSummaryDto usage = loadedDetails.storageUsage();
+            if (usage == null) {
+                try {
+                    usage = this.apiClient.getStorageUsage(worldId);
+                } catch (Exception ignored) {
+                    usage = null;
                 }
-                return new LoadedState(loadedDetails, List.of(snapshotArray), usage);
-            } catch (Exception exception) {
-                throw new RuntimeException(exception);
             }
-        }, this.ioExecutor).whenComplete((loaded, error) -> this.mainThreadExecutor.accept(() -> {
-            if (error != null) {
-                onError.accept(rootCause(error));
-                return;
-            }
-            onSuccess.accept(loaded);
-        }));
+            return new LoadedState(loadedDetails, List.of(snapshotArray), usage);
+        }, onSuccess, onError);
     }
 
     void saveDetails(SaveDetailsRequest request, Consumer<WorldDetailsDto> onSuccess, Consumer<Throwable> onError) {
-        CompletableFuture.supplyAsync(() -> {
-            try {
-                String customIconBase64 = SharedWorldMetadataIcons.encodeSelectedIcon(this.iconStore, request.selectedIcon());
-                return this.apiClient.updateWorld(
-                        request.worldId(),
-                        request.name(),
-                        request.motd(),
-                        null,
-                        customIconBase64,
-                        request.clearCustomIcon()
-                );
-            } catch (Exception exception) {
-                throw new RuntimeException(exception);
-            }
-        }, this.ioExecutor).whenComplete((updated, error) -> this.mainThreadExecutor.accept(() -> {
-            if (error != null) {
-                onError.accept(rootCause(error));
-                return;
-            }
-            onSuccess.accept(updated);
-        }));
+        submit(() -> {
+            String customIconBase64 = SharedWorldMetadataIcons.encodeSelectedIcon(this.iconStore, request.selectedIcon());
+            return this.apiClient.updateWorld(
+                    request.worldId(),
+                    request.name(),
+                    request.motd(),
+                    null,
+                    customIconBase64,
+                    request.clearCustomIcon()
+            );
+        }, onSuccess, onError);
     }
 
     void restoreSnapshot(String worldId, String snapshotId, Runnable onSuccess, Consumer<Throwable> onError) {
-        CompletableFuture.runAsync(() -> {
-            try {
-                this.apiClient.restoreSnapshot(worldId, snapshotId);
-            } catch (Exception exception) {
-                throw new RuntimeException(exception);
-            }
-        }, this.ioExecutor).whenComplete((ignored, error) -> this.mainThreadExecutor.accept(() -> {
-            if (error != null) {
-                onError.accept(rootCause(error));
-                return;
-            }
-            onSuccess.run();
-        }));
+        submit(() -> this.apiClient.restoreSnapshot(worldId, snapshotId), onSuccess, onError);
     }
 
     void deleteSnapshots(String worldId, java.util.List<String> snapshotIds, Runnable onSuccess, Consumer<Throwable> onError) {
-        CompletableFuture.runAsync(() -> {
-            try {
-                this.apiClient.deleteSnapshots(worldId, snapshotIds);
-            } catch (Exception exception) {
-                throw new RuntimeException(exception);
-            }
-        }, this.ioExecutor).whenComplete((ignored, error) -> this.mainThreadExecutor.accept(() -> {
-            if (error != null) {
-                onError.accept(rootCause(error));
-                return;
-            }
-            onSuccess.run();
-        }));
+        submit(() -> this.apiClient.deleteSnapshots(worldId, snapshotIds), onSuccess, onError);
     }
 
     void kickMember(String worldId, String playerUuid, Runnable onSuccess, Consumer<Throwable> onError) {
-        CompletableFuture.runAsync(() -> {
-            try {
-                this.apiClient.kickMember(worldId, playerUuid);
-            } catch (Exception exception) {
-                throw new RuntimeException(exception);
-            }
-        }, this.ioExecutor).whenComplete((ignored, error) -> this.mainThreadExecutor.accept(() -> {
-            if (error != null) {
-                onError.accept(rootCause(error));
-                return;
-            }
-            onSuccess.run();
-        }));
+        submit(() -> this.apiClient.kickMember(worldId, playerUuid), onSuccess, onError);
     }
 
     void setMemberCommandPermission(
@@ -140,19 +87,7 @@ final class EditSharedWorldDataController {
             Consumer<WorldMembershipDto> onSuccess,
             Consumer<Throwable> onError
     ) {
-        CompletableFuture.supplyAsync(() -> {
-            try {
-                return this.apiClient.setMemberCommandPermission(worldId, playerUuid, canUseCommands);
-            } catch (Exception exception) {
-                throw new RuntimeException(exception);
-            }
-        }, this.ioExecutor).whenComplete((membership, error) -> this.mainThreadExecutor.accept(() -> {
-            if (error != null) {
-                onError.accept(rootCause(error));
-                return;
-            }
-            onSuccess.accept(membership);
-        }));
+        submit(() -> this.apiClient.setMemberCommandPermission(worldId, playerUuid, canUseCommands), onSuccess, onError);
     }
 
     void saveSettings(
@@ -161,19 +96,36 @@ final class EditSharedWorldDataController {
             Consumer<WorldDetailsDto> onSuccess,
             Consumer<Throwable> onError
     ) {
+        submit(() -> this.apiClient.putWorldSettings(worldId, settings), onSuccess, onError);
+    }
+
+    /** Runs work on the IO executor and delivers its result (or root cause) on the main thread. */
+    private <T> void submit(Callable<T> work, Consumer<T> onSuccess, Consumer<Throwable> onError) {
         CompletableFuture.supplyAsync(() -> {
             try {
-                return this.apiClient.putWorldSettings(worldId, settings);
+                return work.call();
             } catch (Exception exception) {
-                throw new RuntimeException(exception);
+                throw new CompletionException(exception);
             }
-        }, this.ioExecutor).whenComplete((details, error) -> this.mainThreadExecutor.accept(() -> {
+        }, this.ioExecutor).whenComplete((result, error) -> this.mainThreadExecutor.accept(() -> {
             if (error != null) {
                 onError.accept(rootCause(error));
                 return;
             }
-            onSuccess.accept(details);
+            onSuccess.accept(result);
         }));
+    }
+
+    private void submit(ThrowingRunnable work, Runnable onSuccess, Consumer<Throwable> onError) {
+        submit(() -> {
+            work.run();
+            return null;
+        }, ignored -> onSuccess.run(), onError);
+    }
+
+    @FunctionalInterface
+    private interface ThrowingRunnable {
+        void run() throws Exception;
     }
 
     static List<WorldMembershipDto> normalizedMemberships(WorldDetailsDto details) {
@@ -195,14 +147,6 @@ final class EditSharedWorldDataController {
         List<WorldSnapshotSummaryDto> sorted = new ArrayList<>(snapshots);
         sorted.sort(Comparator.comparing(WorldSnapshotSummaryDto::createdAt).reversed());
         return sorted;
-    }
-
-    static Throwable rootCause(Throwable throwable) {
-        Throwable current = throwable;
-        while (current.getCause() != null && current.getCause() != current) {
-            current = current.getCause();
-        }
-        return current;
     }
 
     record LoadedState(

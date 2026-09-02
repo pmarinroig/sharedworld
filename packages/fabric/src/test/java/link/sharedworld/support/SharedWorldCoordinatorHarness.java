@@ -587,7 +587,6 @@ public final class SharedWorldCoordinatorHarness {
         private ObserveWaitingResponseDto currentObservation;
         private int enterCalls;
         private int waitingCalls;
-        private int abandonFinalizationCalls;
         public final java.util.List<String> releaseHostCalls = new java.util.ArrayList<>();
 
         @Override
@@ -611,13 +610,6 @@ public final class SharedWorldCoordinatorHarness {
             this.waitingCalls += 1;
             this.failures.throwIfNeeded("setSessionWaitingFalse");
             return this.currentObservation == null ? null : this.currentObservation.runtime();
-        }
-
-        @Override
-        public SharedWorldModels.FinalizationActionResultDto abandonFinalization(String worldId) throws Exception {
-            this.abandonFinalizationCalls += 1;
-            this.failures.throwIfNeeded("abandonFinalization");
-            return new SharedWorldModels.FinalizationActionResultDto(worldId, null, null, "idle");
         }
 
         @Override
@@ -656,10 +648,6 @@ public final class SharedWorldCoordinatorHarness {
 
         public int waitingCalls() {
             return this.waitingCalls;
-        }
-
-        public int abandonFinalizationCalls() {
-            return this.abandonFinalizationCalls;
         }
 
         private ObserveWaitingResponseDto nextObservation() {

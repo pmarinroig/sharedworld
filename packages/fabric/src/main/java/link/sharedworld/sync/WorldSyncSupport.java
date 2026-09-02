@@ -25,7 +25,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLongArray;
 import java.util.stream.Stream;
 
-final class WorldSyncSupport {
+public final class WorldSyncSupport {
     private static final Logger LOGGER = LoggerFactory.getLogger("sharedworld-sync");
 
     private WorldSyncSupport() {
@@ -100,7 +100,8 @@ final class WorldSyncSupport {
         }
     }
 
-    static void deleteRecursively(Path root) throws IOException {
+    /** Deletes a tree; a missing root is a no-op, the first failing entry aborts. */
+    public static void deleteRecursively(Path root) throws IOException {
         if (!Files.exists(root)) {
             return;
         }
@@ -111,13 +112,25 @@ final class WorldSyncSupport {
         }
     }
 
-    static void deleteRecursivelyQuietly(Path root) {
-        try {
-            if (Files.exists(root)) {
-                deleteRecursively(root);
+    /** Best-effort tree delete: keeps going past entries that fail and logs once. */
+    public static void deleteRecursivelyQuietly(Path root) {
+        if (root == null || !Files.exists(root)) {
+            return;
+        }
+        try (Stream<Path> stream = Files.walk(root)) {
+            boolean[] failed = {false};
+            stream.sorted(Comparator.reverseOrder()).forEach(path -> {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (IOException ignored) {
+                    failed[0] = true;
+                }
+            });
+            if (failed[0]) {
+                LOGGER.warn("SharedWorld could not fully delete {}", root);
             }
         } catch (IOException exception) {
-            LOGGER.warn("SharedWorld failed to clean up a sync temp directory {}", root, exception);
+            LOGGER.warn("SharedWorld failed to delete {}", root, exception);
         }
     }
 
@@ -240,6 +253,75 @@ final class WorldSyncSupport {
      * <p>Thread-safe: upload preparation calls {@link #body()} from a worker
      * pool.
      */
+    /**
+     * A scanned world split into the lazy artifacts the wire knows. Above the
+     * shard cap the non-region files travel as capped shard packs inside the
+     * region-bundle namespace (one blob must stay under the worker's request-body
+     * limit); below it they keep the single "non-region" superpack, wire-identical
+     * to pre-0.3.1 clients. The upload and download sides must split identically
+     * so pack ids line up, which is why both go through here. Artifacts are lazy:
+     * descriptors answer the plan request (from the scan cache when nothing
+     * changed) and bodies are built only for the packs a plan actually needs;
+     * callers release them with {@link #deleteBodiesIfBuilt()} in a finally.
+     */
+    static final class ScannedArtifacts {
+        final List<PreparedWorldFile> canonicalFiles;
+        /** Region bundles, plus the superpack shards when sharded. */
+        final List<LazyArtifact> regionBundles;
+        /** The single non-region superpack; null when sharded. */
+        final LazyArtifact nonRegionArtifact;
+
+        private ScannedArtifacts(List<PreparedWorldFile> canonicalFiles, List<LazyArtifact> regionBundles, LazyArtifact nonRegionArtifact) {
+            this.canonicalFiles = canonicalFiles;
+            this.regionBundles = regionBundles;
+            this.nonRegionArtifact = nonRegionArtifact;
+        }
+
+        static ScannedArtifacts split(List<PreparedWorldFile> canonicalFiles, WorldScanCache scanCache) {
+            List<PreparedWorldFile> regionFiles = canonicalFiles.stream().filter(file -> SyncPathRules.isTerrainRegionFile(file.relativePath())).toList();
+            List<PreparedWorldFile> nonRegionFiles = canonicalFiles.stream().filter(file -> SyncPathRules.belongsInSuperpack(file.relativePath())).toList();
+            List<SyncPathRules.RegionBundleGroup> superpackShards = SyncPathRules.groupSuperpackFiles(nonRegionFiles);
+            List<LazyArtifact> regionBundles = new java.util.ArrayList<>(lazyRegionBundleArtifacts(regionFiles, scanCache));
+            if (superpackShards.isEmpty()) {
+                return new ScannedArtifacts(canonicalFiles, regionBundles, new LazyArtifact(SharedWorldPack.PACK_ID, nonRegionFiles, scanCache));
+            }
+            regionBundles.addAll(lazyGroupedArtifacts(superpackShards, scanCache));
+            return new ScannedArtifacts(canonicalFiles, regionBundles, null);
+        }
+
+        boolean sharded() {
+            return this.nonRegionArtifact == null;
+        }
+
+        LocalPackDescriptorDto nonRegionDescriptor() throws IOException {
+            return this.nonRegionArtifact == null ? null : this.nonRegionArtifact.descriptor();
+        }
+
+        LocalPackDescriptorDto[] bundleDescriptors() throws IOException {
+            LocalPackDescriptorDto[] descriptors = new LocalPackDescriptorDto[this.regionBundles.size()];
+            for (int i = 0; i < descriptors.length; i++) {
+                descriptors[i] = this.regionBundles.get(i).descriptor();
+            }
+            return descriptors;
+        }
+
+        /** Every artifact, the non-region superpack first when present. */
+        List<LazyArtifact> all() {
+            List<LazyArtifact> all = new java.util.ArrayList<>(this.regionBundles.size() + 1);
+            if (this.nonRegionArtifact != null) {
+                all.add(this.nonRegionArtifact);
+            }
+            all.addAll(this.regionBundles);
+            return all;
+        }
+
+        void deleteBodiesIfBuilt() throws IOException {
+            for (LazyArtifact artifact : all()) {
+                artifact.deleteBodyIfBuilt();
+            }
+        }
+    }
+
     static final class LazyArtifact {
         private final String packId;
         private final List<PreparedWorldFile> files;

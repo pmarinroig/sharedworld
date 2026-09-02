@@ -5,7 +5,6 @@ import link.sharedworld.versioned.GuiBlit;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import link.sharedworld.versioned.VersionedSelectionEntry;
-import net.minecraft.client.gui.components.ObjectSelectionList;
 import net.minecraft.client.gui.screens.FaviconTexture;
 import net.minecraft.network.chat.Component;
 
@@ -55,11 +54,6 @@ final class LocalSaveSelectionList extends link.sharedworld.versioned.VersionedS
         // the screen lays it out), leaving a stale scroll that pushes every row
         // outside the clip. Start from the top deterministically.
         this.setScrollAmount(0);
-    }
-
-    LocalSaveCatalog.LocalSaveOption selectedSave() {
-        Entry selected = this.getSelected();
-        return selected == null ? null : selected.save;
     }
 
     @Override

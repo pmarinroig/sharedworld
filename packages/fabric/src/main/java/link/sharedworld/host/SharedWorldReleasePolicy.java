@@ -38,62 +38,26 @@ final class SharedWorldReleasePolicy {
         boolean backendStarted = record.backendFinalizationStarted;
         boolean backendCompleted = record.backendFinalizationCompleted;
         if (runtime == null) {
-            return new ResumeDecision(
-                    backendStarted,
-                    backendCompleted,
-                    null,
-                    SharedWorldText.string("screen.sharedworld.release_runtime_status_unavailable"),
-                    SharedWorldTerminalReasonKind.UNEXPECTED_LOCAL_INVARIANT_BREACH,
-                    null,
-                    false,
-                    null
-            );
+            return new ResumeDecision(backendStarted, backendCompleted, SharedWorldText.string("screen.sharedworld.release_runtime_status_unavailable"), SharedWorldTerminalReasonKind.UNEXPECTED_LOCAL_INVARIANT_BREACH, null, false, null);
         }
         boolean sameEpoch = runtime.runtimeEpoch() == record.runtimeEpoch;
         if ("host-finalizing".equals(runtime.phase()) && sameEpoch) {
-            return new ResumeDecision(true, false, null, null, null, null, false, null);
+            return new ResumeDecision(true, false, null, null, null, false, null);
         }
         if (("host-live".equals(runtime.phase()) || "host-starting".equals(runtime.phase())) && sameEpoch) {
-            return new ResumeDecision(false, false, null, null, null, null, false, null);
+            return new ResumeDecision(false, false, null, null, null, false, null);
         }
         if (!record.backendFinalizationStarted
                 && ("handoff-waiting".equals(runtime.phase()) || "idle".equals(runtime.phase()) || !sameEpoch)) {
-            return new ResumeDecision(
-                    false,
-                    false,
-                    null,
-                    null,
-                    null,
-                    null,
-                    true,
-                    SharedWorldText.string("screen.sharedworld.release_cleared_stale_state")
-            );
+            return new ResumeDecision(false, false, null, null, null, true, SharedWorldText.string("screen.sharedworld.release_cleared_stale_state"));
         }
         if (record.backendFinalizationStarted && ("handoff-waiting".equals(runtime.phase()) || "idle".equals(runtime.phase()) || !sameEpoch)) {
             if (record.finalUploadCompleted) {
-                return new ResumeDecision(true, true, null, null, null, null, false, null);
+                return new ResumeDecision(true, true, null, null, null, false, null);
             }
-            return new ResumeDecision(
-                    true,
-                    false,
-                    null,
-                    authorityLossMessage(record),
-                    SharedWorldTerminalReasonKind.AUTHORITATIVE_LOSS,
-                    authorityLossStage(record),
-                    false,
-                    null
-            );
+            return new ResumeDecision(true, false, authorityLossMessage(record), SharedWorldTerminalReasonKind.AUTHORITATIVE_LOSS, authorityLossStage(record), false, null);
         }
-        return new ResumeDecision(
-                backendStarted,
-                backendCompleted,
-                null,
-                SharedWorldText.string("screen.sharedworld.release_runtime_state_mismatch"),
-                SharedWorldTerminalReasonKind.UNEXPECTED_LOCAL_INVARIANT_BREACH,
-                null,
-                false,
-                null
-        );
+        return new ResumeDecision(backendStarted, backendCompleted, SharedWorldText.string("screen.sharedworld.release_runtime_state_mismatch"), SharedWorldTerminalReasonKind.UNEXPECTED_LOCAL_INVARIANT_BREACH, null, false, null);
     }
 
     static SharedWorldProgressState progressFor(SharedWorldReleasePhase phase, SharedWorldProgressState previous) {
@@ -169,7 +133,6 @@ final class SharedWorldReleasePolicy {
     record ResumeDecision(
             boolean backendFinalizationStarted,
             boolean backendFinalizationCompleted,
-            SharedWorldReleasePhase terminalPhase,
             String recoverableError,
             SharedWorldTerminalReasonKind errorKind,
             ReleaseAuthorityLossStage authorityLossStage,

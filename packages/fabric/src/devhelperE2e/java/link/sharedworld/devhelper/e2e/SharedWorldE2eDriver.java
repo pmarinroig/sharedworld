@@ -730,7 +730,7 @@ public final class SharedWorldE2eDriver {
                             minecraft.screen == null ? "none" : minecraft.screen.getClass().getSimpleName());
                     return;
                 }
-                if (SharedWorldClient.hostingManager().isReleaseComplete()) {
+                if (SharedWorldClient.hostingManager().startupView().complete()) {
                     this.markers.emit("release-complete", null);
                     this.hostStep = HostStep.AWAIT_EXIT;
                     return;
@@ -776,7 +776,7 @@ public final class SharedWorldE2eDriver {
                     WidgetAutomation.pressButton(pauseScreen, "menu.returnToMenu");
                     return;
                 }
-                if (SharedWorldClient.hostingManager().isReleaseComplete()) {
+                if (SharedWorldClient.hostingManager().startupView().complete()) {
                     this.markers.emit("release-complete", null);
                     this.hostStep = HostStep.AWAIT_EXIT;
                 }
@@ -1127,7 +1127,7 @@ public final class SharedWorldE2eDriver {
                     WidgetAutomation.pressButton(pauseScreen, "menu.returnToMenu");
                     return;
                 }
-                if (SharedWorldClient.hostingManager().isReleaseComplete()) {
+                if (SharedWorldClient.hostingManager().startupView().complete()) {
                     this.markers.emit("release-complete", null);
                     this.guestStep = GuestStep.AWAIT_EXIT;
                 }

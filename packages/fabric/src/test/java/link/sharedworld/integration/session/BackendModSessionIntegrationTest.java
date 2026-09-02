@@ -227,10 +227,5 @@ final class BackendModSessionIntegrationTest {
         public SharedWorldModels.WorldRuntimeStatusDto cancelWaiting(String worldId, String waiterSessionId) throws Exception {
             return this.client.cancelWaiting(worldId, waiterSessionId);
         }
-
-        @Override
-        public SharedWorldModels.FinalizationActionResultDto abandonFinalization(String worldId) throws Exception {
-            return this.client.abandonFinalization(worldId);
-        }
     }
 }

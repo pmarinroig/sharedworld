@@ -21,10 +21,6 @@ final class ReleaseRuntimeReconciliation {
         if (decision.clearBecauseObsoleteRecord()) {
             return Outcome.clearPersisted(decision.obsoleteRecordMessage());
         }
-        if (decision.terminalPhase() != null) {
-            updated.phase = decision.terminalPhase();
-            return Outcome.persist(updated);
-        }
         if (decision.recoverableError() != null) {
             updated.phase = SharedWorldReleasePhase.ERROR_RECOVERABLE;
             return Outcome.recoverable(

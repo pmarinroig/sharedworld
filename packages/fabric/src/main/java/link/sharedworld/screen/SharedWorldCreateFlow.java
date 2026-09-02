@@ -25,22 +25,17 @@ final class SharedWorldCreateFlow {
     }
 
     /**
-     * Responsibility:
-     * Create a SharedWorld, stage the imported save, seed the first snapshot, and release the seed lease.
-     *
-     * Preconditions:
-     * The request is fully populated and the caller supplies a progress sink owned by the UI.
-     *
-     * Postconditions:
-     * The new world exists remotely with an initial snapshot, or the flow fails without stranding the
-     * seed lease and without leaving a snapshot-less world behind.
-     *
-     * Stale-work rule:
-     * Initial upload always uses the exact epoch/token returned for this create flow; the pipeline's
-     * keep-alive heartbeat covers the whole copy+upload so the seed lease cannot expire mid-create.
-     *
-     * Authority source:
-     * Backend world creation + temporary host assignment for the initial snapshot upload.
+     * Create a SharedWorld, stage the imported save, seed the first snapshot, and release the seed
+     * lease.
+     * Preconditions: The request is fully populated and the caller supplies a progress sink owned
+     * by the UI.
+     * Postconditions: The new world exists remotely with an initial snapshot, or the flow fails
+     * without stranding the seed lease and without leaving a snapshot-less world behind.
+     * Stale-work rule: Initial upload always uses the exact epoch/token returned for this create
+     * flow; the pipeline's keep-alive heartbeat covers the whole copy+upload so the seed lease
+     * cannot expire mid-create.
+     * Authority source: Backend world creation + temporary host assignment for the initial snapshot
+     * upload.
      */
     /** What the hub needs after a create: the world to select and open the share code for. */
     record Outcome(link.sharedworld.api.SharedWorldModels.WorldSummaryDto world) {

@@ -9,12 +9,9 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
@@ -211,7 +208,7 @@ public final class WorldCanonicalizer {
         return new PreparedWorldFile(
                 sourcePath,
                 relativePath,
-                hashBytes(bytes),
+                LocalWorldHasher.hashBytes(bytes),
                 bytes.length,
                 bytes.length,
                 CONTENT_TYPE,
@@ -224,14 +221,6 @@ public final class WorldCanonicalizer {
         try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             NbtIo.writeCompressed(tag, output);
             return output.toByteArray();
-        }
-    }
-
-    private static String hashBytes(byte[] bytes) {
-        try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
-        } catch (NoSuchAlgorithmException exception) {
-            throw new RuntimeException("Missing SHA-256 implementation.", exception);
         }
     }
 

@@ -11,6 +11,27 @@ import java.nio.file.Path;
  * action on a menu screen.
  */
 final class SharedWorldFolderPicker {
+    /**
+     * Folder dialog plus validation as a local save: null when the player cancelled
+     * or the folder is not a usable save (the reason is shown on the banner).
+     */
+    static LocalSaveCatalog.LocalSaveOption chooseSaveFolder(net.minecraft.client.Minecraft minecraft, SharedWorldStatusBanner banner) {
+        Path chosen = chooseFolder(link.sharedworld.SharedWorldText.string("screen.sharedworld.select_folder_title"));
+        if (chosen == null) {
+            return null;
+        }
+        try {
+            return LocalSaveFolderValidator.validate(
+                    chosen,
+                    minecraft.gameDirectory.toPath().resolve("sharedworld").resolve("worlds"),
+                    link.sharedworld.versioned.ClientCompat.currentDataVersion()
+            );
+        } catch (LocalSaveFolderValidator.InvalidSaveFolderException exception) {
+            banner.set(SharedWorldStatusBanner.Kind.ERROR, net.minecraft.network.chat.Component.literal(exception.getMessage()));
+            return null;
+        }
+    }
+
     private SharedWorldFolderPicker() {
     }
 

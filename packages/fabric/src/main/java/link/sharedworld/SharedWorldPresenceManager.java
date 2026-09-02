@@ -80,20 +80,15 @@ public final class SharedWorldPresenceManager implements link.sharedworld.realti
     }
 
     /**
-     * Responsibility:
-     * Maintain guest presence (socket frames + merged beats) without owning join/host/release lifecycle state.
-     *
-     * Preconditions:
-     * Presence tracking only applies while the player is actively connected as a guest.
-     *
-     * Postconditions:
-     * The desired present/absent state is eventually flushed in order, with revoked/deleted exits escalated.
-     *
-     * Stale-work rule:
-     * Only the latest desired presence state is kept; older flushes may be superseded before they run.
-     *
-     * Authority source:
-     * Current guest play session, not UI or waiting-flow state.
+     * Maintain guest presence (socket frames + merged beats) without owning join/host/release
+     * lifecycle state.
+     * Preconditions: Presence tracking only applies while the player is actively connected as a
+     * guest.
+     * Postconditions: The desired present/absent state is eventually flushed in order, with
+     * revoked/deleted exits escalated.
+     * Stale-work rule: Only the latest desired presence state is kept; older flushes may be
+     * superseded before they run.
+     * Authority source: Current guest play session, not UI or waiting-flow state.
      */
     public void tick(Minecraft client) {
         SharedWorldPlaySessionTracker.ActiveWorldSession session = SharedWorldClient.playSessionTracker().currentSession();
@@ -280,21 +275,15 @@ public final class SharedWorldPresenceManager implements link.sharedworld.realti
     }
 
     /**
-     * Responsibility:
-     * Escalate guest-side forced exits into the release coordinator instead of disconnecting directly.
-     *
-     * Preconditions:
-     * Presence observed a revoked/deleted backend response for the active guest world.
-     *
-     * Postconditions:
-     * The unified terminal-flow owner now controls disconnect and terminal UI.
-     *
-     * Stale-work rule:
-     * If the guest session already ended or moved to a different world, this becomes a no-op instead
-     * of letting a delayed revoke/delete response from world A terminate world B.
-     *
-     * Authority source:
-     * The failed presence world id plus the active guest play session.
+     * Escalate guest-side forced exits into the release coordinator instead of disconnecting
+     * directly.
+     * Preconditions: Presence observed a revoked/deleted backend response for the active guest
+     * world.
+     * Postconditions: The unified terminal-flow owner now controls disconnect and terminal UI.
+     * Stale-work rule: If the guest session already ended or moved to a different world, this
+     * becomes a no-op instead of letting a delayed revoke/delete response from world A terminate
+     * world B.
+     * Authority source: The failed presence world id plus the active guest play session.
      */
     private static void handleForcedGuestExit(ForcedExitReason reason, String worldId) {
         Minecraft client = Minecraft.getInstance();

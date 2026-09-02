@@ -13,24 +13,24 @@ final class ReleaseStartupRecoveryResolverTest {
     void deletedWorldRecoveryClearsPersistedRecord() throws Exception {
         ReleaseStartupRecoveryResolver resolver = new ReleaseStartupRecoveryResolver();
 
-        ReleaseStartupRecoveryResolver.Resolution resolution = resolver.resolve(
+        boolean clearRecord = resolver.shouldClearPersistedRecord(
                 new FailingBackend(new SharedWorldApiClient.SharedWorldApiException("world_not_found", "gone", 404)),
                 record("world-1")
         );
 
-        assertTrue(resolution.clearPersistedRecord());
+        assertTrue(clearRecord);
     }
 
     @Test
     void transientRecoveryErrorKeepsPersistedRecordForRetry() throws Exception {
         ReleaseStartupRecoveryResolver resolver = new ReleaseStartupRecoveryResolver();
 
-        ReleaseStartupRecoveryResolver.Resolution resolution = resolver.resolve(
+        boolean clearRecord = resolver.shouldClearPersistedRecord(
                 new FailingBackend(new IOException("network down")),
                 record("world-1")
         );
 
-        assertFalse(resolution.clearPersistedRecord());
+        assertFalse(clearRecord);
     }
 
     private static SharedWorldReleaseStore.ReleaseRecord record(String worldId) {

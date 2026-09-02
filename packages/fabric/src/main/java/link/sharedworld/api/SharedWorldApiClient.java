@@ -118,18 +118,15 @@ public final class SharedWorldApiClient {
     }
 
     public List<WorldSummaryDto> listWorlds() throws IOException, InterruptedException {
-        ensureSession();
         return Arrays.asList(withTransportRetry(() -> conditionalGet("/worlds", WorldSummaryDto[].class)));
     }
 
     public WorldDetailsDto getWorld(String worldId) throws IOException, InterruptedException {
-        ensureSession();
         return conditionalGet("/worlds/" + worldId, WorldDetailsDto.class);
     }
 
     /** On-demand storage usage (0.4.1+): world details no longer carry it inline. */
     public SharedWorldModels.StorageUsageSummaryDto getStorageUsage(String worldId) throws IOException, InterruptedException {
-        ensureSession();
         return request("GET", "/worlds/" + worldId + "/storage-usage", null, SharedWorldModels.StorageUsageSummaryDto.class, true);
     }
 
@@ -166,7 +163,6 @@ public final class SharedWorldApiClient {
             boolean useLinkedStorageAccount,
             String linkedStorageProvider
     ) throws IOException, InterruptedException {
-        ensureSession();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("name", name);
         body.put("motdLine1", blankToNull(motdLine1));
@@ -191,7 +187,6 @@ public final class SharedWorldApiClient {
             String customIconPngBase64,
             boolean clearCustomIcon
     ) throws IOException, InterruptedException {
-        ensureSession();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("name", name);
         body.put("motdLine1", blankToNull(motdLine1));
@@ -202,14 +197,9 @@ public final class SharedWorldApiClient {
     }
 
     public WorldDetailsDto putWorldSettings(String worldId, SharedWorldModels.WorldSettingsDto settings) throws IOException, InterruptedException {
-        ensureSession();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("settings", settings);
         return request("PUT", "/worlds/" + worldId + "/settings", body, WorldDetailsDto.class, true);
-    }
-
-    public StorageLinkSessionDto createStorageLink() throws IOException, InterruptedException {
-        return createStorageLink(false);
     }
 
     public StorageLinkSessionDto createStorageLink(boolean forceConsent) throws IOException, InterruptedException {
@@ -218,7 +208,6 @@ public final class SharedWorldApiClient {
 
     /** 0.5.0: provider "s3" starts a bring-your-own-bucket link (null = Google Drive). */
     public StorageLinkSessionDto createStorageLink(boolean forceConsent, String provider) throws IOException, InterruptedException {
-        ensureSession();
         Map<String, Object> body = new LinkedHashMap<>();
         if (forceConsent) {
             body.put("forceConsent", true);
@@ -235,7 +224,6 @@ public final class SharedWorldApiClient {
 
     /** 0.5.0: provider "s3" reads the S3 account summary (null = the server default, Google Drive). */
     public SharedWorldModels.StorageAccountSummaryDto getStorageAccount(String provider) throws IOException, InterruptedException {
-        ensureSession();
         if (provider == null || provider.isBlank()) {
             return request("GET", "/storage/account", null, SharedWorldModels.StorageAccountSummaryDto.class, true);
         }
@@ -249,7 +237,6 @@ public final class SharedWorldApiClient {
 
     /** 0.5.0: provider "s3" unlinks the S3 account instead. */
     public void unlinkStorageAccount(String provider) throws IOException, InterruptedException {
-        ensureSession();
         if (provider == null || provider.isBlank()) {
             request("DELETE", "/storage/account", null, null, true);
             return;
@@ -263,37 +250,30 @@ public final class SharedWorldApiClient {
      * (~8s of sequential Drive deletes) but still has real network tail.
      */
     public SharedWorldModels.AccountDeleteStepDto deleteAccountStep() throws IOException, InterruptedException {
-        ensureSession();
         return request("DELETE", "/account", null, SharedWorldModels.AccountDeleteStepDto.class, true, Duration.ofSeconds(60));
     }
 
     public StorageLinkSessionDto getStorageLink(String sessionId) throws IOException, InterruptedException {
-        ensureSession();
         return request("GET", "/storage/link-sessions/" + sessionId, null, StorageLinkSessionDto.class, true);
     }
 
     public StorageLinkSessionDto cancelStorageLink(String sessionId) throws IOException, InterruptedException {
-        ensureSession();
         return request("POST", "/storage/link-sessions/" + sessionId + "/cancel", Map.of(), StorageLinkSessionDto.class, true);
     }
 
     public void deleteWorld(String worldId) throws IOException, InterruptedException {
-        ensureSession();
         request("DELETE", "/worlds/" + worldId, null, null, true);
     }
 
     public InviteCodeDto createInvite(String worldId) throws IOException, InterruptedException {
-        ensureSession();
         return request("POST", "/worlds/" + worldId + "/invites", Map.of(), InviteCodeDto.class, true);
     }
 
     public ResetInviteResponseDto resetInvite(String worldId) throws IOException, InterruptedException {
-        ensureSession();
         return request("POST", "/worlds/" + worldId + "/invites/reset", Map.of(), ResetInviteResponseDto.class, true);
     }
 
     public void kickMember(String worldId, String playerUuid) throws IOException, InterruptedException {
-        ensureSession();
         request("DELETE", "/worlds/" + worldId + "/members/" + playerUuid, null, null, true);
     }
 
@@ -302,14 +282,12 @@ public final class SharedWorldApiClient {
             String playerUuid,
             boolean canUseCommands
     ) throws IOException, InterruptedException {
-        ensureSession();
         Map<String, Object> body = Map.of("canUseCommands", canUseCommands);
         return request("PATCH", "/worlds/" + worldId + "/members/" + playerUuid, body,
                 SharedWorldModels.WorldMembershipDto.class, true);
     }
 
     public WorldDetailsDto redeemInvite(String code) throws IOException, InterruptedException {
-        ensureSession();
         return request("POST", "/invites/redeem", Map.of("code", code), WorldDetailsDto.class, true);
     }
 
@@ -317,12 +295,7 @@ public final class SharedWorldApiClient {
         return enterSession(worldId, null, false);
     }
 
-    public EnterSessionResponseDto enterSession(String worldId, String waiterSessionId) throws IOException, InterruptedException {
-        return enterSession(worldId, waiterSessionId, false);
-    }
-
     public EnterSessionResponseDto enterSession(String worldId, String waiterSessionId, boolean acknowledgeUncleanShutdown) throws IOException, InterruptedException {
-        ensureSession();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("waiterSessionId", waiterSessionId);
         body.put("acknowledgeUncleanShutdown", acknowledgeUncleanShutdown);
@@ -330,12 +303,10 @@ public final class SharedWorldApiClient {
     }
 
     public WorldRuntimeStatusDto runtimeStatus(String worldId) throws IOException, InterruptedException {
-        ensureSession();
         return requestWithTransportRetry("GET", "/worlds/" + worldId + "/runtime", WorldRuntimeStatusDto.class);
     }
 
     public SharedWorldModels.HostHeartbeatResponseDto heartbeatHost(String worldId, long runtimeEpoch, String hostToken, String joinTarget) throws IOException, InterruptedException {
-        ensureSession();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("runtimeEpoch", runtimeEpoch);
         body.put("hostToken", hostToken);
@@ -351,7 +322,6 @@ public final class SharedWorldApiClient {
 
     /** Persist the managed server's current gamerule/difficulty/game-mode values (host runtime authority, not ownership). */
     public SharedWorldModels.HostGameRulesReportResponseDto reportHostGameRules(String worldId, long runtimeEpoch, String hostToken, Map<String, Boolean> gamerules, String difficulty, String defaultGameMode) throws IOException, InterruptedException {
-        ensureSession();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("runtimeEpoch", runtimeEpoch);
         body.put("hostToken", hostToken);
@@ -366,7 +336,6 @@ public final class SharedWorldApiClient {
     }
 
     public void setHostStartupProgress(String worldId, long runtimeEpoch, String hostToken, SharedWorldModels.StartupProgressDto progress) throws IOException, InterruptedException {
-        ensureSession();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("runtimeEpoch", runtimeEpoch);
         body.put("hostToken", hostToken);
@@ -383,7 +352,6 @@ public final class SharedWorldApiClient {
     }
 
     public SharedWorldModels.GuestHeartbeatResponseDto setPresence(String worldId, boolean present, long guestSessionEpoch, long presenceSequence) throws IOException, InterruptedException {
-        ensureSession();
         return request(
                 "POST",
                 "/worlds/" + worldId + "/presence",
@@ -398,7 +366,6 @@ public final class SharedWorldApiClient {
     }
 
     public FinalizationActionResultDto beginFinalization(String worldId, long runtimeEpoch, String hostToken) throws IOException, InterruptedException {
-        ensureSession();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("runtimeEpoch", runtimeEpoch);
         body.put("hostToken", hostToken);
@@ -406,7 +373,6 @@ public final class SharedWorldApiClient {
     }
 
     public FinalizationActionResultDto completeFinalization(String worldId, long runtimeEpoch, String hostToken) throws IOException, InterruptedException {
-        ensureSession();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("runtimeEpoch", runtimeEpoch);
         body.put("hostToken", hostToken);
@@ -414,48 +380,39 @@ public final class SharedWorldApiClient {
     }
 
     public FinalizationActionResultDto abandonFinalization(String worldId) throws IOException, InterruptedException {
-        ensureSession();
         return request("POST", "/worlds/" + worldId + "/abandon-finalization", Map.of(), FinalizationActionResultDto.class, true);
     }
 
     public ObserveWaitingResponseDto observeWaiting(String worldId, String waiterSessionId) throws IOException, InterruptedException {
-        ensureSession();
         return request("POST", "/worlds/" + worldId + "/session/waiting/observe", Map.of("waiterSessionId", waiterSessionId), ObserveWaitingResponseDto.class, true);
     }
 
     public WorldRuntimeStatusDto cancelWaiting(String worldId, String waiterSessionId) throws IOException, InterruptedException {
-        ensureSession();
         return request("POST", "/worlds/" + worldId + "/session/waiting/cancel", Map.of("waiterSessionId", waiterSessionId), WorldRuntimeStatusDto.class, true);
     }
 
     public SnapshotManifestDto latestManifest(String worldId) throws IOException, InterruptedException {
-        ensureSession();
         return requestWithTransportRetry("GET", "/worlds/" + worldId + "/snapshots/latest-manifest", SnapshotManifestDto.class);
     }
 
     public WorldSnapshotSummaryDto[] listSnapshots(String worldId) throws IOException, InterruptedException {
-        ensureSession();
         return request("GET", "/worlds/" + worldId + "/snapshots", null, WorldSnapshotSummaryDto[].class, true);
     }
 
     public SnapshotActionResultDto restoreSnapshot(String worldId, String snapshotId) throws IOException, InterruptedException {
-        ensureSession();
         return request("POST", "/worlds/" + worldId + "/snapshots/" + snapshotId + "/restore", Map.of(), SnapshotActionResultDto.class, true);
     }
 
     public SnapshotActionResultDto deleteSnapshot(String worldId, String snapshotId) throws IOException, InterruptedException {
-        ensureSession();
         return request("DELETE", "/worlds/" + worldId + "/snapshots/" + snapshotId, null, SnapshotActionResultDto.class, true);
     }
 
     /** 0.4.5: one request for any number of backups; the backend answers once the rows are gone. */
     public DeleteSnapshotsResultDto deleteSnapshots(String worldId, java.util.List<String> snapshotIds) throws IOException, InterruptedException {
-        ensureSession();
         return request("POST", "/worlds/" + worldId + "/snapshots/delete", Map.of("snapshotIds", snapshotIds), DeleteSnapshotsResultDto.class, true);
     }
 
     public UploadPlanDto prepareUploads(String worldId, long runtimeEpoch, String hostToken, LocalFileDescriptorDto[] files, LocalPackDescriptorDto nonRegionPack, LocalPackDescriptorDto[] regionBundles) throws IOException, InterruptedException {
-        ensureSession();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("runtimeEpoch", runtimeEpoch);
         body.put("hostToken", hostToken);
@@ -467,12 +424,7 @@ public final class SharedWorldApiClient {
         return requestWithTransportRetry("POST", "/worlds/" + worldId + "/uploads/prepare", body, UploadPlanDto.class, SNAPSHOT_REQUEST_TIMEOUT);
     }
 
-    public UploadPlanDto prepareUploads(String worldId, LocalFileDescriptorDto[] files, LocalPackDescriptorDto nonRegionPack, LocalPackDescriptorDto[] regionBundles) throws IOException, InterruptedException {
-        return prepareUploads(worldId, -1L, null, files, nonRegionPack, regionBundles);
-    }
-
     public SnapshotManifestDto finalizeSnapshot(String worldId, long runtimeEpoch, String hostToken, String baseSnapshotId, ManifestFileDto[] files, SnapshotPackDto[] packs) throws IOException, InterruptedException {
-        ensureSession();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("runtimeEpoch", runtimeEpoch);
         body.put("hostToken", hostToken);
@@ -494,10 +446,6 @@ public final class SharedWorldApiClient {
         );
     }
 
-    public SnapshotManifestDto finalizeSnapshot(String worldId, String baseSnapshotId, ManifestFileDto[] files, SnapshotPackDto[] packs) throws IOException, InterruptedException {
-        return finalizeSnapshot(worldId, -1L, null, baseSnapshotId, files, packs);
-    }
-
     /**
      * POST with the local state in the body: the pre-0.3.1 GET carried it in
      * x-sharedworld-* headers, which overflow edge header limits on worlds
@@ -505,7 +453,6 @@ public final class SharedWorldApiClient {
      * the backend always deploys before the mod releases.
      */
     public DownloadPlanDto downloadPlan(String worldId, LocalFileDescriptorDto[] files, LocalPackDescriptorDto nonRegionPack, LocalPackDescriptorDto[] regionBundles) throws IOException, InterruptedException {
-        ensureSession();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("files", files);
         body.put("nonRegionPack", nonRegionPack);
@@ -517,7 +464,6 @@ public final class SharedWorldApiClient {
     public SharedWorldModels.CreateBlobSessionResponseDto createBlobSession(
             String worldId, String storageKey, long runtimeEpoch, String hostToken, String contentType, long contentLength, String blobStamp
     ) throws IOException, InterruptedException {
-        ensureSession();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("storageKey", storageKey);
         body.put("runtimeEpoch", runtimeEpoch);
@@ -535,7 +481,6 @@ public final class SharedWorldApiClient {
     public SharedWorldModels.CommitBlobSessionResponseDto commitBlobSession(
             String worldId, String uploadId, long runtimeEpoch, String hostToken, String blobStamp
     ) throws IOException, InterruptedException {
-        ensureSession();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("uploadId", uploadId);
         body.put("runtimeEpoch", runtimeEpoch);
@@ -868,16 +813,11 @@ public final class SharedWorldApiClient {
     }
 
     public void releaseHost(String worldId, boolean graceful, long runtimeEpoch, String hostToken) throws IOException, InterruptedException {
-        ensureSession();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("graceful", graceful);
         body.put("runtimeEpoch", runtimeEpoch);
         body.put("hostToken", hostToken);
         request("POST", "/worlds/" + worldId + "/release-host", body, null, true);
-    }
-
-    public void releaseHost(String worldId, boolean graceful) throws IOException, InterruptedException {
-        releaseHost(worldId, graceful, -1L, null);
     }
 
     /**
@@ -1321,8 +1261,12 @@ public final class SharedWorldApiClient {
     }
 
     private <T> T request(String method, String path, Object body, Class<T> responseType, boolean authenticated, Duration timeout) throws IOException, InterruptedException {
+        return request(method, path, body, responseType, authenticated, timeout, false);
+    }
+
+    private <T> T request(String method, String path, Object body, Class<T> responseType, boolean authenticated, Duration timeout, boolean conditional) throws IOException, InterruptedException {
         try {
-            return requestOnce(method, path, body, responseType, authenticated, timeout);
+            return requestOnce(method, path, body, responseType, authenticated, timeout, conditional);
         } catch (SharedWorldApiException exception) {
             // A rejected session token (expired server-side, wiped backend,
             // stale persisted token) is recoverable: re-authenticate once and
@@ -1332,11 +1276,17 @@ public final class SharedWorldApiClient {
                 throw exception;
             }
             invalidateSession();
-            return requestOnce(method, path, body, responseType, true, timeout);
+            return requestOnce(method, path, body, responseType, true, timeout, conditional);
         }
     }
 
-    private <T> T requestOnce(String method, String path, Object body, Class<T> responseType, boolean authenticated, Duration timeout) throws IOException, InterruptedException {
+    /**
+     * One HTTP round trip. With conditional set (GETs the backend hands weak
+     * ETags to), If-None-Match comes from the per-path cache: a 304 answers
+     * from the cached body without parsing the empty 304 body, a 200 refreshes
+     * the cache from the ETag header.
+     */
+    private <T> T requestOnce(String method, String path, Object body, Class<T> responseType, boolean authenticated, Duration timeout, boolean conditional) throws IOException, InterruptedException {
         HttpRequest.Builder builder = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + path))
                 .timeout(timeout)
@@ -1354,7 +1304,20 @@ public final class SharedWorldApiClient {
             builder.header("authorization", "Bearer " + ensureSession().token());
         }
 
+        CachedGet cached = conditional ? conditionalGetCache.get(path) : null;
+        if (cached != null) {
+            builder.header("if-none-match", cached.etag());
+        }
+
         HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+        if (conditional && response.statusCode() == 304) {
+            if (cached != null) {
+                return parseJson(cached.body(), responseType);
+            }
+            // A 304 without a cached body (evicted mid-flight): retry plain.
+            conditionalGetCache.remove(path);
+            return request(method, path, body, responseType, authenticated, timeout, false);
+        }
         if (response.statusCode() >= 400) {
             ErrorDto error = tryParseError(response.body(), response.statusCode());
             throw new SharedWorldApiException(
@@ -1365,13 +1328,21 @@ public final class SharedWorldApiClient {
                     error.reason()
             );
         }
-
-        if (responseType == null) {
-            return null;
+        if (conditional) {
+            String etag = response.headers().firstValue("etag").orElse(null);
+            if (etag != null && !etag.isEmpty()) {
+                conditionalGetCache.put(path, new CachedGet(etag, response.body()));
+            } else {
+                conditionalGetCache.remove(path);
+            }
         }
 
+        return responseType == null ? null : parseJson(response.body(), responseType);
+    }
+
+    private <T> T parseJson(String body, Class<T> responseType) throws IOException {
         try {
-            return gson.fromJson(response.body(), responseType);
+            return gson.fromJson(body, responseType);
         } catch (JsonSyntaxException exception) {
             throw new IOException("Failed to parse SharedWorld response.", exception);
         }
@@ -1442,67 +1413,9 @@ public final class SharedWorldApiClient {
     private final java.util.concurrent.ConcurrentHashMap<String, CachedGet> conditionalGetCache =
             new java.util.concurrent.ConcurrentHashMap<>();
 
-    /**
-     * Conditional GET for the two world read endpoints: sends If-None-Match
-     * from the per-path cache; a 304 answers from the cached body (never
-     * parsing the empty 304 body), a 200 refreshes the cache from the ETag
-     * header. Only worth it for endpoints the backend hands weak ETags to.
-     */
+    /** Conditional GET for the world read endpoints the backend hands weak ETags to. */
     private <T> T conditionalGet(String path, Class<T> responseType) throws IOException, InterruptedException {
-        try {
-            return conditionalGetOnce(path, responseType);
-        } catch (SharedWorldApiException exception) {
-            if (exception.status() != 401
-                    || !("invalid_session".equals(exception.error()) || "expired_session".equals(exception.error()))) {
-                throw exception;
-            }
-            invalidateSession();
-            return conditionalGetOnce(path, responseType);
-        }
-    }
-
-    private <T> T conditionalGetOnce(String path, Class<T> responseType) throws IOException, InterruptedException {
-        CachedGet cached = conditionalGetCache.get(path);
-        HttpRequest.Builder builder = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl + path))
-                .timeout(Duration.ofSeconds(20))
-                .header("accept", "application/json")
-                .header("x-sharedworld-version", modVersion())
-                .header("authorization", "Bearer " + ensureSession().token())
-                .GET();
-        if (cached != null) {
-            builder.header("if-none-match", cached.etag());
-        }
-        HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() == 304) {
-            if (cached != null) {
-                return gson.fromJson(cached.body(), responseType);
-            }
-            // A 304 without a cached body (evicted mid-flight): retry plain.
-            conditionalGetCache.remove(path);
-            return request("GET", path, null, responseType, true);
-        }
-        if (response.statusCode() >= 400) {
-            ErrorDto error = tryParseError(response.body(), response.statusCode());
-            throw new SharedWorldApiException(
-                    error.error(),
-                    error.message(),
-                    error.status(),
-                    parseRetryAfterSeconds(response.headers().firstValue("retry-after").orElse(null)),
-                    error.reason()
-            );
-        }
-        String etag = response.headers().firstValue("etag").orElse(null);
-        if (etag != null && !etag.isEmpty()) {
-            conditionalGetCache.put(path, new CachedGet(etag, response.body()));
-        } else {
-            conditionalGetCache.remove(path);
-        }
-        try {
-            return gson.fromJson(response.body(), responseType);
-        } catch (JsonSyntaxException exception) {
-            throw new IOException("Failed to parse SharedWorld response.", exception);
-        }
+        return request("GET", path, null, responseType, true, DEFAULT_REQUEST_TIMEOUT, true);
     }
 
     /**

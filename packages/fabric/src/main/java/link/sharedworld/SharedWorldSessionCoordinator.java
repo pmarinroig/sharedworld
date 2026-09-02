@@ -2,7 +2,6 @@ package link.sharedworld;
 
 import link.sharedworld.api.SharedWorldApiClient;
 import link.sharedworld.api.SharedWorldModels.EnterSessionResponseDto;
-import link.sharedworld.api.SharedWorldModels.FinalizationActionResultDto;
 import link.sharedworld.api.SharedWorldModels.ObserveWaitingResponseDto;
 import link.sharedworld.api.SharedWorldModels.WorldRuntimeStatusDto;
 import link.sharedworld.api.SharedWorldModels.WorldSummaryDto;
@@ -60,11 +59,6 @@ public final class SharedWorldSessionCoordinator {
                     @Override
                     public WorldRuntimeStatusDto cancelWaiting(String worldId, String waiterSessionId) throws Exception {
                         return apiClient.cancelWaiting(worldId, waiterSessionId);
-                    }
-
-                    @Override
-                    public FinalizationActionResultDto abandonFinalization(String worldId) throws Exception {
-                        return apiClient.abandonFinalization(worldId);
                     }
 
                     @Override
@@ -141,20 +135,14 @@ public final class SharedWorldSessionCoordinator {
     }
 
     /**
-     * Responsibility:
      * Start a fresh join attempt and hand off the result to the waiting/host/connect flow.
-     *
-     * Preconditions:
-     * The caller selected a world and the coordinator is free to begin a new session entry.
-     *
-     * Postconditions:
-     * The client either connects immediately, enters the waiting flow, or opens host startup.
-     *
-     * Stale-work rule:
-     * The backend decides connect/wait/host; the client never infers host eligibility locally.
-     *
-     * Authority source:
-     * The backend enter-session response.
+     * Preconditions: The caller selected a world and the coordinator is free to begin a new session
+     * entry.
+     * Postconditions: The client either connects immediately, enters the waiting flow, or opens
+     * host startup.
+     * Stale-work rule: The backend decides connect/wait/host; the client never infers host
+     * eligibility locally.
+     * Authority source: The backend enter-session response.
      */
     public void beginJoin(Screen parent, WorldSummaryDto world) {
         // A double-activated Join button must not send a second enterSession:
@@ -163,7 +151,7 @@ public final class SharedWorldSessionCoordinator {
         if (this.pendingJoinAttempt != null && this.pendingJoinAttempt.worldId.equals(world.id())) {
             return;
         }
-        beginJoinAttempt(parent, world.id(), displayName(world), world.ownerUuid(), null, false, false, false, null, SharedWorldHostingManager.StartupMode.NORMAL);
+        beginJoinAttempt(parent, world.id(), SharedWorldText.displayWorldName(world), world.ownerUuid(), null, false, false, false, null, SharedWorldHostingManager.StartupMode.NORMAL);
     }
 
     public void acknowledgeUncleanShutdown(Screen parent, String worldId, String worldName) {
@@ -171,20 +159,13 @@ public final class SharedWorldSessionCoordinator {
     }
 
     /**
-     * Responsibility:
      * Start a fresh backend-owned session entry attempt, including restarts from waiting recovery.
-     *
-     * Preconditions:
-     * The caller already chose the world and wants the backend to resolve connect / wait / host.
-     *
-     * Postconditions:
-     * Exactly one of connect, host-acquired, waiting, or explicit error occurs for this attempt.
-     *
-     * Stale-work rule:
-     * Only the newest pending join attempt may update coordinator state or UI.
-     *
-     * Authority source:
-     * The backend enter-session response.
+     * Preconditions: The caller already chose the world and wants the backend to resolve connect /
+     * wait / host.
+     * Postconditions: Exactly one of connect, host-acquired, waiting, or explicit error occurs for
+     * this attempt.
+     * Stale-work rule: Only the newest pending join attempt may update coordinator state or UI.
+     * Authority source: The backend enter-session response.
      */
     private void beginJoinAttempt(Screen parent, String worldId, String worldName, String ownerUuid, String previousJoinTarget, boolean hostChangeFlow, boolean returnToSharedWorldMenu, boolean acknowledgeUncleanShutdown, RecoveryFingerprint resumedRecoveryFingerprint, SharedWorldHostingManager.StartupMode startupMode) {
         beginJoinAttempt(parent, worldId, worldName, ownerUuid, previousJoinTarget, hostChangeFlow, returnToSharedWorldMenu, acknowledgeUncleanShutdown, resumedRecoveryFingerprint, startupMode, false);
@@ -241,20 +222,12 @@ public final class SharedWorldSessionCoordinator {
     }
 
     /**
-     * Responsibility:
      * Drive the waiting flow poll loop and recovery auto-resume.
-     *
-     * Preconditions:
-     * Waiting state, if present, is the sole active join/wait coordinator state.
-     *
-     * Postconditions:
-     * Runtime observations either keep waiting, connect, or escalate to assigned-host claim.
-     *
-     * Stale-work rule:
-     * Poll results are ignored once the waiting state changed or transitioned.
-     *
-     * Authority source:
-     * The backend runtime status and waiting heartbeat response.
+     * Preconditions: Waiting state, if present, is the sole active join/wait coordinator state.
+     * Postconditions: Runtime observations either keep waiting, connect, or escalate to
+     * assigned-host claim.
+     * Stale-work rule: Poll results are ignored once the waiting state changed or transitioned.
+     * Authority source: The backend runtime status and waiting heartbeat response.
      */
     public void tick(Minecraft client) {
         if (!this.autoResumeChecked && !this.clientShell.hasLevel() && !this.clientShell.hasSingleplayerServer()) {
@@ -262,7 +235,7 @@ public final class SharedWorldSessionCoordinator {
             maybeResumePersistedRecovery();
         }
         WaitingFlowState state = this.waitingState;
-        if (state == null || state.requestInFlight || state.cancelInFlight || state.discardInFlight) {
+        if (state == null || state.requestInFlight || state.cancelInFlight) {
             return;
         }
         long now = this.clock.nowMillis();
@@ -297,22 +270,13 @@ public final class SharedWorldSessionCoordinator {
                 state.progressState,
                 state.lastRuntimeStatus,
                 state.cancelInFlight,
-                state.discardInFlight,
-                state.discardErrorMessage,
-                SharedWorldWaitingFlowLogic.canDiscardPendingFinalization(
-                        state.ownerUuid,
-                        this.playerIdentity.currentPlayerUuid(),
-                        state.lastRuntimeStatus,
-                        state.cancelInFlight || state.discardInFlight,
-                        this.clock.nowMillis()
-                ),
                 state.parent
         );
     }
 
     public void cancelWaiting() {
         WaitingFlowState state = this.waitingState;
-        if (state == null || state.cancelInFlight || state.discardInFlight) {
+        if (state == null || state.cancelInFlight) {
             return;
         }
         state.cancelInFlight = true;
@@ -367,23 +331,7 @@ public final class SharedWorldSessionCoordinator {
         state.lastPollAt = 0L;
     }
 
-    /**
-     * Responsibility:
-     * Request owner-only abandonment of a stranded previous-host finalization from the waiting flow.
-     *
-     * Preconditions:
-     * The current waiting flow explicitly allows the owner to discard stalled finalization state.
-     *
-     * Postconditions:
-     * The discard request either completes, routes to a terminal deleted/revoked outcome, or records
-     * a visible waiting-flow error without bypassing coordinator ownership.
-     *
-     * Stale-work rule:
-     * Completion is ignored once the active waiting flow changed.
-     *
-     * Authority source:
-     * Backend finalization abandonment response, not the confirmation screen.
-     */
+    /** Forces the next tick to poll the waited world immediately. */
     public void refreshWaitingNow() {
         WaitingFlowState state = this.waitingState;
         if (state != null) {
@@ -412,22 +360,15 @@ public final class SharedWorldSessionCoordinator {
     }
 
     /**
-     * Responsibility:
-     * Exit the current guest play session once the backend says its hosting runtime is over,
-     * then immediately re-enter the backend-owned join flow (wait / connect / host).
-     *
-     * Preconditions:
-     * The guest runtime watcher observed an authoritative non-live runtime for the connected world.
-     *
-     * Postconditions:
-     * The client leaves the dead server proactively (no vanilla timeout) and the normal
-     * enter-session flow owns what happens next.
-     *
-     * Stale-work rule:
-     * An already-active waiting flow or pending join attempt keeps ownership; this becomes a no-op.
-     *
-     * Authority source:
-     * The backend runtime status observation that triggered the departure.
+     * Exit the current guest play session once the backend says its hosting runtime is over, then
+     * immediately re-enter the backend-owned join flow (wait / connect / host).
+     * Preconditions: The guest runtime watcher observed an authoritative non-live runtime for the
+     * connected world.
+     * Postconditions: The client leaves the dead server proactively (no vanilla timeout) and the
+     * normal enter-session flow owns what happens next.
+     * Stale-work rule: An already-active waiting flow or pending join attempt keeps ownership; this
+     * becomes a no-op.
+     * Authority source: The backend runtime status observation that triggered the departure.
      */
     public boolean beginHostDepartureRejoin(Screen parent, String worldId, String worldName, String previousJoinTarget) {
         if (worldId == null || worldId.isBlank()) {
@@ -549,20 +490,12 @@ public final class SharedWorldSessionCoordinator {
     }
 
     /**
-     * Responsibility:
      * Interpret an enter-session result without mixing it with the waiting flow poll logic.
-     *
-     * Preconditions:
-     * The result came from the backend and belongs to the current user request.
-     *
-     * Postconditions:
-     * Exactly one of connect, host-acquired, or waiting flow activation occurs.
-     *
-     * Stale-work rule:
-     * Runtime data is only used to connect immediately when the backend already exposed a join target.
-     *
-     * Authority source:
-     * The backend enter-session response.
+     * Preconditions: The result came from the backend and belongs to the current user request.
+     * Postconditions: Exactly one of connect, host-acquired, or waiting flow activation occurs.
+     * Stale-work rule: Runtime data is only used to connect immediately when the backend already
+     * exposed a join target.
+     * Authority source: The backend enter-session response.
      */
     private void handleEnterSession(Screen parent, String ownerUuid, String worldName, String previousJoinTarget, EnterSessionResponseDto result, boolean hostChangeFlow, boolean returnToSharedWorldMenu, RecoveryFingerprint resumedRecoveryFingerprint, SharedWorldHostingManager.StartupMode startupMode, boolean automaticTakeover) {
         if ("connect".equals(result.action())) {
@@ -653,10 +586,6 @@ public final class SharedWorldSessionCoordinator {
         );
     }
 
-    private void startWaitingFlow(Screen parent, String worldId, String worldName, String ownerUuid, String previousJoinTarget, String waiterSessionId, boolean hostChangeFlow, boolean returnToSharedWorldMenu) {
-        startWaitingFlow(parent, worldId, worldName, ownerUuid, previousJoinTarget, waiterSessionId, hostChangeFlow, returnToSharedWorldMenu, false);
-    }
-
     private void startWaitingFlow(Screen parent, String worldId, String worldName, String ownerUuid, String previousJoinTarget, String waiterSessionId, boolean hostChangeFlow, boolean returnToSharedWorldMenu, boolean automaticTakeover) {
         this.waitingState = new WaitingFlowState(++this.joinAttemptCounter, parent, worldId, worldName, ownerUuid, previousJoinTarget, waiterSessionId, hostChangeFlow, returnToSharedWorldMenu, automaticTakeover);
         this.waitingState.waitingStartedAt = this.clock.nowMillis();
@@ -679,21 +608,14 @@ public final class SharedWorldSessionCoordinator {
     }
 
     /**
-     * Responsibility:
-     * Observe the authoritative waiting/runtime state and decide whether to keep waiting,
-     * connect, or claim an assigned host slot.
-     *
-     * Preconditions:
-     * The provided state is still the active waiting flow owned by this coordinator.
-     *
-     * Postconditions:
-     * The waiting UI is updated, or the flow transitions to connect / host-acquired.
-     *
-     * Stale-work rule:
-     * Async completions are ignored once waitingState no longer points at this flow.
-     *
-     * Authority source:
-     * The backend waiting heartbeat or runtime status response.
+     * Observe the authoritative waiting/runtime state and decide whether to keep waiting, connect,
+     * or claim an assigned host slot.
+     * Preconditions: The provided state is still the active waiting flow owned by this coordinator.
+     * Postconditions: The waiting UI is updated, or the flow transitions to connect /
+     * host-acquired.
+     * Stale-work rule: Async completions are ignored once waitingState no longer points at this
+     * flow.
+     * Authority source: The backend waiting heartbeat or runtime status response.
      */
     private void poll(WaitingFlowState state, long now) {
         if (state.waiterSessionId == null || state.waiterSessionId.isBlank()) {
@@ -735,15 +657,7 @@ public final class SharedWorldSessionCoordinator {
                 return;
             }
             state.consecutivePollFailures = 0;
-            SharedWorldWaitingFlowLogic.PollDecision decision = SharedWorldWaitingFlowLogic.evaluateObservation(
-                    new SharedWorldWaitingFlowLogic.WaitingContext(
-                            state.worldId,
-                            state.worldName,
-                            state.previousJoinTarget,
-                            state.hostChangeFlow
-                    ),
-                    observation
-            );
+            SharedWorldWaitingFlowLogic.PollDecision decision = SharedWorldWaitingFlowLogic.evaluateObservation(state.hostChangeFlow, observation);
             applyPollDecision(state, decision);
         });
     }
@@ -900,10 +814,6 @@ public final class SharedWorldSessionCoordinator {
         ));
     }
 
-    private static String displayName(WorldSummaryDto world) {
-        return SharedWorldText.displayWorldName(world.name());
-    }
-
     private boolean matchesPendingJoinAttempt(PendingJoinAttempt attempt) {
         return this.pendingJoinAttempt != null
                 && this.pendingJoinAttempt.attemptId == attempt.attemptId
@@ -920,9 +830,6 @@ public final class SharedWorldSessionCoordinator {
             SharedWorldProgressState progressState,
             WorldRuntimeStatusDto runtimeStatus,
             boolean cancelInFlight,
-            boolean discardInFlight,
-            String discardErrorMessage,
-            boolean canDiscardPendingFinalization,
             Screen parent
     ) {
     }
@@ -943,8 +850,6 @@ public final class SharedWorldSessionCoordinator {
         private boolean requestInFlight;
         private int consecutivePollFailures;
         private boolean cancelInFlight;
-        private boolean discardInFlight;
-        private String discardErrorMessage;
         private String statusMessage = Component.translatable("screen.sharedworld.waiting").getString();
         private SharedWorldProgressState progressState;
         private WorldRuntimeStatusDto lastRuntimeStatus;
@@ -982,8 +887,6 @@ public final class SharedWorldSessionCoordinator {
         ObserveWaitingResponseDto observeWaiting(String worldId, String waiterSessionId) throws Exception;
 
         WorldRuntimeStatusDto cancelWaiting(String worldId, String waiterSessionId) throws Exception;
-
-        FinalizationActionResultDto abandonFinalization(String worldId) throws Exception;
 
         /** Hands a freshly-assigned lease back (declined automatic takeover). */
         void releaseHost(String worldId, boolean graceful, long runtimeEpoch, String hostToken) throws Exception;

@@ -3,25 +3,16 @@ package link.sharedworld;
 import link.sharedworld.api.SharedWorldModels.WorldRuntimeStatusDto;
 
 /**
- * Responsibility:
  * Decide, from one authoritative runtime observation, whether the hosting session a guest is
  * connected to is still alive.
- *
- * Preconditions:
- * The caller is currently connected as a guest and knows the runtime epoch it joined under
- * (0 when unknown).
- *
- * Postconditions:
- * Exactly one outcome is returned; every departure outcome is backed by an authoritative
- * backend state that can never revert to "this epoch is live again".
- *
- * Stale-work rule:
- * Anything ambiguous (missing status, unknown phase) stays CONTINUE; only the vanilla
- * connection remains the backstop there. A departure must never be inferred from a guess.
- *
- * Authority source:
- * The backend runtime status; epochs are monotonic and finalizing/idle states are terminal
- * for the epoch the guest joined under.
+ * Preconditions: The caller is currently connected as a guest and knows the runtime epoch it joined
+ * under (0 when unknown).
+ * Postconditions: Exactly one outcome is returned; every departure outcome is backed by an
+ * authoritative backend state that can never revert to "this epoch is live again".
+ * Stale-work rule: Anything ambiguous (missing status, unknown phase) stays CONTINUE; only the
+ * vanilla connection remains the backstop there. A departure must never be inferred from a guess.
+ * Authority source: The backend runtime status; epochs are monotonic and finalizing/idle states are
+ * terminal for the epoch the guest joined under.
  */
 public final class SharedWorldGuestRuntimeWatchLogic {
     private SharedWorldGuestRuntimeWatchLogic() {

@@ -115,20 +115,8 @@ public final class ReplaceSharedWorldScreen extends link.sharedworld.versioned.V
     }
 
     private void selectWorldFolder() {
-        java.nio.file.Path chosen = SharedWorldFolderPicker.chooseFolder(
-                SharedWorldText.string("screen.sharedworld.select_folder_title"));
-        if (chosen == null) {
-            return;
-        }
-        LocalSaveCatalog.LocalSaveOption option;
-        try {
-            option = LocalSaveFolderValidator.validate(
-                    chosen,
-                    this.minecraft.gameDirectory.toPath().resolve("sharedworld").resolve("worlds"),
-                    link.sharedworld.versioned.ClientCompat.currentDataVersion()
-            );
-        } catch (LocalSaveFolderValidator.InvalidSaveFolderException exception) {
-            this.banner.set(SharedWorldStatusBanner.Kind.ERROR, Component.literal(exception.getMessage()));
+        LocalSaveCatalog.LocalSaveOption option = SharedWorldFolderPicker.chooseSaveFolder(this.minecraft, this.banner);
+        if (option == null) {
             return;
         }
         this.banner.clearSticky();

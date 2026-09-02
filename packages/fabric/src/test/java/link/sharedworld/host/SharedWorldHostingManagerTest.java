@@ -1082,7 +1082,7 @@ final class SharedWorldHostingManagerTest {
             assertEquals(0, leaseState.heartbeatCount());
             assertEquals(staleHeartbeatAt, getField(manager, "lastHeartbeatAt"));
             assertEquals(SharedWorldHostingManager.Phase.SAVING, manager.phase());
-            assertNull(manager.errorMessage());
+            assertNull(manager.startupView().errorMessage());
         }
     }
 
@@ -1209,7 +1209,7 @@ final class SharedWorldHostingManagerTest {
             background.runNext();
             mainThread.runAll();
 
-            assertFalse(manager.hasError());
+            assertFalse(manager.startupView().hasError());
             assertEquals(SharedWorldHostingManager.Phase.RELEASING, manager.phase());
             assertEquals(0, leaseState.heartbeatCount());
             assertNotNull(coordinator.view());
@@ -1541,7 +1541,11 @@ final class SharedWorldHostingManagerTest {
                 null,
                 null,
                 null,
-                memberships
+                memberships,
+                null,
+                null,
+                null,
+                null
         );
     }
 
@@ -1571,7 +1575,9 @@ final class SharedWorldHostingManagerTest {
                 null,
                 new SharedWorldModels.HostHeartbeatMembershipDto[0],
                 settings,
-                settingsRevision
+                settingsRevision,
+                null,
+                null
         );
     }
 

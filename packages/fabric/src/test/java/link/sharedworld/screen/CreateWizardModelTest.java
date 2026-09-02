@@ -59,15 +59,12 @@ class CreateWizardModelTest {
     }
 
     @Test
-    void createIsBlockedUntilStorageIsSatisfied() {
+    void createIsAllowedOnceStorageIsLinked() {
         CreateWizardModel model = new CreateWizardModel();
         model.onStorageAccountChecked(false);
         model.onLinkCompleted();
         model.advance(true, true);
         assertTrue(model.canAdvance(true, true));
-
-        model.onLinkLost();
-        assertFalse(model.canAdvance(true, true));
     }
 
     @Test

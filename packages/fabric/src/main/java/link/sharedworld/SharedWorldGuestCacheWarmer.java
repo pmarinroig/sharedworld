@@ -44,20 +44,14 @@ public final class SharedWorldGuestCacheWarmer implements link.sharedworld.realt
     }
 
     /**
-     * Responsibility:
      * Warm guest-side canonical cache opportunistically without owning any lifecycle transition.
-     *
-     * Preconditions:
-     * The player is already connected as a guest and no host/release flow owns the local client.
-     *
-     * Postconditions:
-     * At most one best-effort cache warmup runs, and failures stay non-fatal.
-     *
-     * Stale-work rule:
-     * Warmup work is abandoned when the active guest world changes or the session ends.
-     *
-     * Authority source:
-     * The current guest play session plus pushed snapshot events / merged-beat snapshot ids.
+     * Preconditions: The player is already connected as a guest and no host/release flow owns the
+     * local client.
+     * Postconditions: At most one best-effort cache warmup runs, and failures stay non-fatal.
+     * Stale-work rule: Warmup work is abandoned when the active guest world changes or the session
+     * ends.
+     * Authority source: The current guest play session plus pushed snapshot events / merged-beat
+     * snapshot ids.
      */
     public void tick(Minecraft client) {
         SharedWorldPlaySessionTracker.ActiveWorldSession session = SharedWorldClient.playSessionTracker().currentSession();

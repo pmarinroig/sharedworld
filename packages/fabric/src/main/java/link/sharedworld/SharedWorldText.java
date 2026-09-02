@@ -29,6 +29,10 @@ public final class SharedWorldText {
         return string("screen.sharedworld.motd_hint", SharedWorldApiClient.currentPlayerName());
     }
 
+    public static String displayWorldName(link.sharedworld.api.SharedWorldModels.WorldSummaryDto world) {
+        return displayWorldName(world.name());
+    }
+
     public static String displayWorldName(String worldName) {
         return worldName == null || worldName.isBlank()
                 ? string("screen.sharedworld.unnamed_world")

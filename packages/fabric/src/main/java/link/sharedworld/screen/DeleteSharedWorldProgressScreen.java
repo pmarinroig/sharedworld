@@ -91,7 +91,7 @@ public final class DeleteSharedWorldProgressScreen extends link.sharedworld.vers
                         ));
                     } else {
                         SharedWorldClient.releaseCoordinator().discardPendingReleaseIfMatches(this.world.id());
-                        this.parent.onChildOperationFinished(null, null);
+                        this.parent.onChildOperationFinished(null);
                         link.sharedworld.versioned.GuiCompat.clearFocus(this.parent);
                         link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, this.parent);
                     }
@@ -116,7 +116,4 @@ public final class DeleteSharedWorldProgressScreen extends link.sharedworld.vers
         return ownerUuid.replace("-", "").equalsIgnoreCase(SharedWorldApiClient.currentPlayerUuid());
     }
 
-    private static String displayName(WorldSummaryDto world) {
-        return SharedWorldText.displayWorldName(world.name());
-    }
 }

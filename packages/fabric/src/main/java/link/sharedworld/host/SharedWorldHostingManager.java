@@ -257,20 +257,14 @@ public final class SharedWorldHostingManager {
 
 
     /**
-     * Responsibility:
      * Start a single local host attempt for the backend-assigned runtime epoch/token.
-     *
-     * Preconditions:
-     * The backend already elected this player as host and supplied the current runtime epoch/token.
-     *
-     * Postconditions:
-     * The manager owns one startup attempt that either becomes RUNNING, is canceled, or fails.
-     *
-     * Stale-work rule:
-     * Async work from older host attempts must be ignored once startupAttemptId or hostSessionGeneration changes.
-     *
-     * Authority source:
-     * Backend host assignment for the current runtime epoch/token.
+     * Preconditions: The backend already elected this player as host and supplied the current
+     * runtime epoch/token.
+     * Postconditions: The manager owns one startup attempt that either becomes RUNNING, is
+     * canceled, or fails.
+     * Stale-work rule: Async work from older host attempts must be ignored once startupAttemptId or
+     * hostSessionGeneration changes.
+     * Authority source: Backend host assignment for the current runtime epoch/token.
      */
     public void beginHosting(Screen launchingScreen, WorldSummaryDto world, HostAssignmentDto assignment) {
         beginHosting(launchingScreen, world, assignment, StartupMode.NORMAL);
@@ -288,14 +282,7 @@ public final class SharedWorldHostingManager {
             // of leaking a lease no local attempt will ever heartbeat.
             if (assignment != null
                     && (assignment.runtimeEpoch() != this.runtimeEpoch || !Objects.equals(assignment.hostToken(), this.hostToken))) {
-                String staleWorldId = world.id();
-                CompletableFuture.runAsync(() -> {
-                    try {
-                        this.apiClient.releaseHost(staleWorldId, false, assignment.runtimeEpoch(), assignment.hostToken());
-                    } catch (Exception exception) {
-                        LOGGER.warn("SharedWorld failed to release a duplicate host assignment", exception);
-                    }
-                }, this.backgroundExecutor);
+                releaseHostAsync(world.id(), assignment.runtimeEpoch(), assignment.hostToken(), "SharedWorld failed to release a duplicate host assignment");
             }
             return;
         }
@@ -317,28 +304,8 @@ public final class SharedWorldHostingManager {
         this.startupMode = startupMode == null ? StartupMode.NORMAL : startupMode;
         this.startupRecoveringLocalCrash = false;
         this.hostSessionGeneration += 1L;
-        this.publishedJoinTarget = null;
-        this.coordinatedRelease = CoordinatedRelease.NONE;
-        this.errorMessage = null;
-        this.lastHeartbeatAt = 0L;
-        this.lastHeartbeatAttemptAt = 0L;
-        this.immediateHeartbeatRequested = false;
-        this.lastGameRulesLocalPollAt = 0L;
-        this.consecutiveHeartbeatFailures = 0;
-        this.lastAutosaveAt = 0L;
-        // Without this, a failure episode announced in a previous session
-        // would fake a "backups are working again" chat line in this one.
-        resetAutosaveFailureTracking();
-        this.heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS;
-        this.autosaveIntervalMs = AUTOSAVE_INTERVAL_MS;
-        this.gameRulesSync.reset();
-        this.startupProgressRelayActive = false;
+        resetAttemptRuntimeState();
         this.startupStarted.set(true);
-        this.saveInFlight.set(0L);
-        this.heartbeatInFlight.set(0L);
-        this.startupCancelRequested = false;
-        this.cancelDisconnectIssued.set(false);
-        this.startupProgressRelay.reset();
         long startupAttemptId = this.startupAttemptId + 1L;
         this.startupAttemptId = startupAttemptId;
         this.events.onHostStartupBegan(world.id());
@@ -394,20 +361,14 @@ public final class SharedWorldHostingManager {
     }
 
     /**
-     * Responsibility:
      * Drive the authoritative host lifecycle loop for the active local host attempt.
-     *
-     * Preconditions:
-     * If startupStarted is true, this manager is the sole owner of the local host execution state.
-     *
-     * Postconditions:
-     * Exactly one phase-specific driver runs per tick, and stale async work cannot re-enter the loop.
-     *
-     * Stale-work rule:
-     * Async callbacks are validated against HostAttemptContext before they mutate state.
-     *
-     * Authority source:
-     * Backend runtime authority plus local host execution state.
+     * Preconditions: If startupStarted is true, this manager is the sole owner of the local host
+     * execution state.
+     * Postconditions: Exactly one phase-specific driver runs per tick, and stale async work cannot
+     * re-enter the loop.
+     * Stale-work rule: Async callbacks are validated against HostAttemptContext before they mutate
+     * state.
+     * Authority source: Backend runtime authority plus local host execution state.
      */
     public void tick(Minecraft minecraft) {
         this.startupProgressRelay.tick();
@@ -612,24 +573,16 @@ public final class SharedWorldHostingManager {
     }
 
     /**
-     * Responsibility:
      * Expose the current startup state to passive UI code without giving the UI ownership.
-     *
-     * Preconditions:
-     * None.
-     *
-     * Postconditions:
-     * The returned view mirrors current startup progress, cancelability, and error state only.
-     *
-     * Stale-work rule:
-     * Consumers must treat the view as read-only and use manager intents for any mutation.
-     *
-     * Authority source:
-     * Local host execution state owned by this manager.
+     * Preconditions: None.
+     * Postconditions: The returned view mirrors current startup progress, cancelability, and error
+     * state only.
+     * Stale-work rule: Consumers must treat the view as read-only and use manager intents for any
+     * mutation.
+     * Authority source: Local host execution state owned by this manager.
      */
     public StartupView startupView() {
         return new StartupView(
-                this.phase != Phase.IDLE,
                 this.phase == Phase.ERROR,
                 this.phase == Phase.IDLE,
                 isStartupCancelable(),
@@ -637,10 +590,6 @@ public final class SharedWorldHostingManager {
                 this.errorMessage,
                 this.pendingLocalChangesPrompt
         );
-    }
-
-    public boolean isReleaseComplete() {
-        return this.phase == Phase.IDLE;
     }
 
     public ActiveHostSession activeHostSession() {
@@ -787,20 +736,15 @@ public final class SharedWorldHostingManager {
     }
 
     /**
-     * Responsibility:
-     * Tear down local host execution after the terminal-flow owner has decided this host session must end.
-     *
-     * Preconditions:
-     * The release coordinator already owns disconnect/UI sequencing for this terminal exit.
-     *
-     * Postconditions:
-     * Local hosting state is cleared without performing another disconnect side effect.
-     *
-     * Stale-work rule:
-     * This method only clears current local state; it must not revive or mutate an older host attempt.
-     *
-     * Authority source:
-     * SharedWorldReleaseCoordinator terminal flow.
+     * Tear down local host execution after the terminal-flow owner has decided this host session
+     * must end.
+     * Preconditions: The release coordinator already owns disconnect/UI sequencing for this
+     * terminal exit.
+     * Postconditions: Local hosting state is cleared without performing another disconnect side
+     * effect.
+     * Stale-work rule: This method only clears current local state; it must not revive or mutate an
+     * older host attempt.
+     * Authority source: SharedWorldReleaseCoordinator terminal flow.
      */
     public void clearHostedSessionAfterTerminalExit() {
         resetState();
@@ -849,18 +793,6 @@ public final class SharedWorldHostingManager {
 
     public String statusMessage() {
         return this.statusMessage;
-    }
-
-    public String errorMessage() {
-        return this.errorMessage;
-    }
-
-    public SharedWorldProgressState progressState() {
-        return this.progressState;
-    }
-
-    public boolean hasError() {
-        return this.phase == Phase.ERROR;
     }
 
     private void prepareAndOpen(long startupAttemptId) {
@@ -997,20 +929,13 @@ public final class SharedWorldHostingManager {
     }
 
     /**
-     * Responsibility:
      * Send the next authoritative heartbeat for the current host attempt.
-     *
-     * Preconditions:
-     * The current HostAttemptContext still matches the active host epoch/token.
-     *
-     * Postconditions:
-     * Success refreshes local liveness bookkeeping; failure is classified by authority/error type.
-     *
-     * Stale-work rule:
-     * Completion is ignored unless the callback still matches the current HostAttemptContext.
-     *
-     * Authority source:
-     * Backend runtime authority for the current host epoch/token.
+     * Preconditions: The current HostAttemptContext still matches the active host epoch/token.
+     * Postconditions: Success refreshes local liveness bookkeeping; failure is classified by
+     * authority/error type.
+     * Stale-work rule: Completion is ignored unless the callback still matches the current
+     * HostAttemptContext.
+     * Authority source: Backend runtime authority for the current host epoch/token.
      */
     private void heartbeat(String joinTarget) {
         heartbeat(joinTarget, false);
@@ -1205,20 +1130,13 @@ public final class SharedWorldHostingManager {
     }
 
     /**
-     * Responsibility:
      * Capture and publish an autosave or initial snapshot for the current host attempt.
-     *
-     * Preconditions:
-     * The current HostAttemptContext still owns the active hosted world.
-     *
-     * Postconditions:
-     * The snapshot is uploaded or the failure is classified without letting stale work mutate state.
-     *
-     * Stale-work rule:
-     * Upload completions, progress, and cleanup only apply if the HostAttemptContext is still current.
-     *
-     * Authority source:
-     * Current HostAttemptContext plus backend upload authorization.
+     * Preconditions: The current HostAttemptContext still owns the active hosted world.
+     * Postconditions: The snapshot is uploaded or the failure is classified without letting stale
+     * work mutate state.
+     * Stale-work rule: Upload completions, progress, and cleanup only apply if the
+     * HostAttemptContext is still current.
+     * Authority source: Current HostAttemptContext plus backend upload authorization.
      */
     private void uploadSnapshot(boolean initialSnapshot) {
         HostAttemptContext context = currentAttemptContext();
@@ -1242,7 +1160,7 @@ public final class SharedWorldHostingManager {
                         requireHostPlayerUuid(),
                         context.runtimeEpoch(),
                         context.hostToken(),
-                        progress -> applySaveSyncProgress(context, progress, false)
+                        progress -> applySaveSyncProgress(context, progress)
                 );
                 dispatchToMainThread(() -> {
                     if (!isCurrentAttempt(context)) {
@@ -1409,13 +1327,18 @@ public final class SharedWorldHostingManager {
         this.errorMessage = throwable == null ? message : message + " " + throwable.getMessage();
         invalidateAsyncOperations();
         setPhase(Phase.ERROR, this.errorMessage);
-        CompletableFuture.runAsync(() -> {
+        if (context != null) {
+            releaseHostAsync(context.worldId(), context.runtimeEpoch(), context.hostToken(), "SharedWorld failed to release lease after startup error");
+        }
+    }
+
+    /** Best-effort lease release off the main thread; a failure is logged, never surfaced. */
+    private CompletableFuture<Void> releaseHostAsync(String worldId, long runtimeEpoch, String hostToken, String failureLog) {
+        return CompletableFuture.runAsync(() -> {
             try {
-                if (context != null) {
-                    this.apiClient.releaseHost(context.worldId(), false, context.runtimeEpoch(), context.hostToken());
-                }
+                this.apiClient.releaseHost(worldId, false, runtimeEpoch, hostToken);
             } catch (Exception exception) {
-                LOGGER.warn("SharedWorld failed to release lease after startup error", exception);
+                LOGGER.warn(failureLog, exception);
             }
         }, this.backgroundExecutor);
     }
@@ -1485,14 +1408,14 @@ public final class SharedWorldHostingManager {
         this.statusMessage = statusMessage;
         this.phaseStartedAt = System.currentTimeMillis();
         this.progressState = switch (phase) {
-            case PREPARING -> HostProgressStateFactory.startupIndeterminate("preparing_world", Component.translatable("screen.sharedworld.progress.preparing_world"), this.progressState);
-            case OPENING_WORLD -> HostProgressStateFactory.startupIndeterminate("finishing_up", Component.translatable("screen.sharedworld.progress.finishing_up"), this.progressState);
-            case PUBLISHING -> HostProgressStateFactory.startupIndeterminate("becoming_host", Component.translatable("screen.sharedworld.progress.becoming_host"), this.progressState);
-            case WAITING_FOR_E4MC -> HostProgressStateFactory.startupIndeterminate("connecting", Component.translatable("screen.sharedworld.progress.connecting"), this.progressState);
-            case CONFIRMING_HOST -> HostProgressStateFactory.startupIndeterminate("connecting", Component.translatable("screen.sharedworld.progress.connecting"), this.progressState);
+            case PREPARING -> HostProgressStateFactory.startupIndeterminate("preparing_world", this.progressState);
+            case OPENING_WORLD -> HostProgressStateFactory.startupIndeterminate("finishing_up", this.progressState);
+            case PUBLISHING -> HostProgressStateFactory.startupIndeterminate("becoming_host", this.progressState);
+            case WAITING_FOR_E4MC -> HostProgressStateFactory.startupIndeterminate("connecting", this.progressState);
+            case CONFIRMING_HOST -> HostProgressStateFactory.startupIndeterminate("connecting", this.progressState);
             case RUNNING -> null;
-            case CANCELLING -> HostProgressStateFactory.startupIndeterminate("finishing_up", Component.translatable("screen.sharedworld.progress.finishing_up"), this.progressState);
-            case SAVING -> HostProgressStateFactory.savingIndeterminate("saving_world", Component.translatable("screen.sharedworld.progress.saving_world"), this.progressState);
+            case CANCELLING -> HostProgressStateFactory.startupIndeterminate("finishing_up", this.progressState);
+            case SAVING -> HostProgressStateFactory.savingIndeterminate("saving_world", this.progressState);
             case RELEASING -> releasingProgressState();
             case ERROR -> null;
             case IDLE -> null;
@@ -1506,14 +1429,8 @@ public final class SharedWorldHostingManager {
             this.cancelLeaseReleaseSettled = true;
             return;
         }
-        CompletableFuture.runAsync(() -> {
-            try {
-                this.apiClient.releaseHost(worldId, false, context.runtimeEpoch(), context.hostToken());
-            } catch (Exception exception) {
-                LOGGER.warn("SharedWorld failed to release host after startup cancel", exception);
-            }
-        }, this.backgroundExecutor).whenComplete((unused, error) ->
-                dispatchToMainThread(() -> this.cancelLeaseReleaseSettled = true));
+        releaseHostAsync(worldId, context.runtimeEpoch(), context.hostToken(), "SharedWorld failed to release host after startup cancel")
+                .whenComplete((unused, error) -> dispatchToMainThread(() -> this.cancelLeaseReleaseSettled = true));
     }
 
     private HostAttemptContext currentAttemptContext() {
@@ -1580,30 +1497,12 @@ public final class SharedWorldHostingManager {
         String clearedWorldId = this.world == null ? null : this.world.id();
         this.phase = Phase.IDLE;
         this.statusMessage = "";
-        this.errorMessage = null;
         this.world = null;
         this.hostPlayerUuid = null;
-        this.coordinatedRelease = CoordinatedRelease.NONE;
-        this.startupCancelRequested = false;
         this.cancelLeaseReleaseSettled = false;
-        this.publishedJoinTarget = null;
-        this.lastHeartbeatAt = 0L;
-        this.lastHeartbeatAttemptAt = 0L;
-        this.immediateHeartbeatRequested = false;
-        this.lastGameRulesLocalPollAt = 0L;
-        this.consecutiveHeartbeatFailures = 0;
-        this.lastAutosaveAt = 0L;
-        resetAutosaveFailureTracking();
-        this.heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS;
-        this.autosaveIntervalMs = AUTOSAVE_INTERVAL_MS;
+        resetAttemptRuntimeState();
         this.startupStarted.set(false);
-        this.saveInFlight.set(0L);
-        this.heartbeatInFlight.set(0L);
-        this.gameRulesSync.reset();
-        this.cancelDisconnectIssued.set(false);
         this.progressState = null;
-        this.startupProgressRelayActive = false;
-        this.startupProgressRelay.reset();
         this.runtimeEpoch = 0L;
         this.hostToken = null;
         this.startupMode = StartupMode.NORMAL;
@@ -1615,97 +1514,64 @@ public final class SharedWorldHostingManager {
         this.events.onHostStateCleared(clearedWorldId);
     }
 
+    /** Per-attempt runtime bookkeeping shared by a fresh attempt and a full reset. */
+    private void resetAttemptRuntimeState() {
+        this.publishedJoinTarget = null;
+        this.coordinatedRelease = CoordinatedRelease.NONE;
+        this.errorMessage = null;
+        this.lastHeartbeatAt = 0L;
+        this.lastHeartbeatAttemptAt = 0L;
+        this.immediateHeartbeatRequested = false;
+        this.lastGameRulesLocalPollAt = 0L;
+        this.consecutiveHeartbeatFailures = 0;
+        this.lastAutosaveAt = 0L;
+        // Without this, a failure episode announced in a previous session
+        // would fake a "backups are working again" chat line in this one.
+        resetAutosaveFailureTracking();
+        this.heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS;
+        this.autosaveIntervalMs = AUTOSAVE_INTERVAL_MS;
+        this.gameRulesSync.reset();
+        this.startupProgressRelayActive = false;
+        this.startupProgressRelay.reset();
+        this.saveInFlight.set(0L);
+        this.heartbeatInFlight.set(0L);
+        this.startupCancelRequested = false;
+        this.cancelDisconnectIssued.set(false);
+    }
+
     private void applyStartupSyncProgress(long startupAttemptId, WorldSyncProgress progress) {
         if (!isActiveStartupAttempt(startupAttemptId)) {
             return;
         }
+        // A startup upload is either a crash recovery or a local-changes publish;
+        // anything else uploading at startup is reported as generic preparation.
+        String localUploadPhase = this.startupRecoveringLocalCrash ? "recovering_local_world"
+                : this.startupPublishingLocalChanges ? "uploading_local_changes"
+                : null;
         this.progressState = switch (progress.stage()) {
-            case WorldSyncCoordinator.STAGE_UPLOADING_CHANGED_FILES -> this.startupRecoveringLocalCrash
-                    ? HostProgressStateFactory.startupDeterminate(
-                    "recovering_local_world",
-                    Component.translatable("screen.sharedworld.progress.recovering_local_world"),
-                    progress.fraction(),
-                    this.progressState,
-                    progress.bytesDone(),
-                    progress.bytesTotal()
-            )
-                    : this.startupPublishingLocalChanges
-                    ? HostProgressStateFactory.startupDeterminate(
-                    "uploading_local_changes",
-                    Component.translatable("screen.sharedworld.progress.uploading_local_changes"),
-                    progress.fraction(),
-                    this.progressState,
-                    progress.bytesDone(),
-                    progress.bytesTotal()
-            )
-                    : HostProgressStateFactory.startupIndeterminate(
-                    "preparing_world",
-                    Component.translatable("screen.sharedworld.progress.preparing_world"),
-                    this.progressState
-            );
-            case WorldSyncCoordinator.STAGE_FINALIZING_SNAPSHOT -> this.startupRecoveringLocalCrash
-                    ? HostProgressStateFactory.startupIndeterminate(
-                    "recovering_local_world",
-                    Component.translatable("screen.sharedworld.progress.recovering_local_world"),
-                    this.progressState
-            )
-                    : this.startupPublishingLocalChanges
-                    ? HostProgressStateFactory.startupIndeterminate(
-                    "uploading_local_changes",
-                    Component.translatable("screen.sharedworld.progress.uploading_local_changes"),
-                    this.progressState
-            )
-                    : HostProgressStateFactory.startupIndeterminate(
-                    "preparing_world",
-                    Component.translatable("screen.sharedworld.progress.preparing_world"),
-                    this.progressState
-            );
-            case WorldSyncCoordinator.STAGE_DOWNLOADING_CHANGED_FILES -> HostProgressStateFactory.startupDeterminate(
-                    "syncing_world",
-                    Component.translatable("screen.sharedworld.progress.syncing_world"),
-                    progress.fraction(),
-                    this.progressState,
-                    progress.bytesDone(),
-                    progress.bytesTotal()
-            );
-            case WorldSyncCoordinator.STAGE_APPLYING_WORLD_UPDATE -> HostProgressStateFactory.startupIndeterminate(
-                    "finishing_up",
-                    Component.translatable("screen.sharedworld.progress.finishing_up"),
-                    this.progressState
-            );
-            default -> HostProgressStateFactory.startupIndeterminate(
-                    "preparing_world",
-                    Component.translatable("screen.sharedworld.progress.preparing_world"),
-                    this.progressState
-            );
+            case WorldSyncCoordinator.STAGE_UPLOADING_CHANGED_FILES -> localUploadPhase == null
+                    ? HostProgressStateFactory.startupIndeterminate("preparing_world", this.progressState)
+                    : HostProgressStateFactory.startupDeterminate(localUploadPhase, progress.fraction(), this.progressState, progress.bytesDone(), progress.bytesTotal());
+            case WorldSyncCoordinator.STAGE_FINALIZING_SNAPSHOT ->
+                    HostProgressStateFactory.startupIndeterminate(localUploadPhase == null ? "preparing_world" : localUploadPhase, this.progressState);
+            case WorldSyncCoordinator.STAGE_DOWNLOADING_CHANGED_FILES ->
+                    HostProgressStateFactory.startupDeterminate("syncing_world", progress.fraction(), this.progressState, progress.bytesDone(), progress.bytesTotal());
+            case WorldSyncCoordinator.STAGE_APPLYING_WORLD_UPDATE -> HostProgressStateFactory.startupIndeterminate("finishing_up", this.progressState);
+            default -> HostProgressStateFactory.startupIndeterminate("preparing_world", this.progressState);
         };
         this.statusMessage = this.progressState.label().getString();
         relayStartupProgressIfNeeded();
     }
 
-    private void applySaveSyncProgress(HostAttemptContext context, WorldSyncProgress progress, boolean releasingAfterUpload) {
+    private void applySaveSyncProgress(HostAttemptContext context, WorldSyncProgress progress) {
         if (!isCurrentAttempt(context)) {
             return;
         }
         this.progressState = switch (progress.stage()) {
-            case WorldSyncCoordinator.STAGE_UPLOADING_CHANGED_FILES -> HostProgressStateFactory.savingDeterminate(
-                    "saving_world",
-                    Component.translatable("screen.sharedworld.progress.saving_world"),
-                    progress.fraction(),
-                    this.progressState,
-                    progress.bytesDone(),
-                    progress.bytesTotal()
-            );
-            case WorldSyncCoordinator.STAGE_FINALIZING_SNAPSHOT -> HostProgressStateFactory.savingIndeterminate(
-                    releasingAfterUpload ? "finishing_up" : "finishing_up",
-                    Component.translatable("screen.sharedworld.progress.finishing_up"),
-                    this.progressState
-            );
-            default -> HostProgressStateFactory.savingIndeterminate(
-                    "saving_world",
-                    Component.translatable("screen.sharedworld.progress.saving_world"),
-                    this.progressState
-            );
+            case WorldSyncCoordinator.STAGE_UPLOADING_CHANGED_FILES ->
+                    HostProgressStateFactory.savingDeterminate("saving_world", progress.fraction(), this.progressState, progress.bytesDone(), progress.bytesTotal());
+            case WorldSyncCoordinator.STAGE_FINALIZING_SNAPSHOT -> HostProgressStateFactory.savingIndeterminate("finishing_up", this.progressState);
+            default -> HostProgressStateFactory.savingIndeterminate("saving_world", this.progressState);
         };
         this.statusMessage = this.progressState.label().getString();
         relayStartupProgressIfNeeded();
@@ -1825,7 +1691,6 @@ public final class SharedWorldHostingManager {
     }
 
     public record StartupView(
-            boolean active,
             boolean hasError,
             boolean complete,
             boolean canCancel,

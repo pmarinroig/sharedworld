@@ -11,6 +11,7 @@ import net.minecraft.util.FormattedCharSequence;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import static link.sharedworld.util.Errors.rootCause;
 
 /**
  * The quit-time upload failed because the Google Drive grant is dead. The
@@ -161,13 +162,5 @@ public final class ReleaseDriveReconnectScreen extends link.sharedworld.versione
     public void removed() {
         this.reconnectGeneration++;
         super.removed();
-    }
-
-    private static Throwable rootCause(Throwable error) {
-        Throwable current = error;
-        while (current.getCause() != null && current.getCause() != current) {
-            current = current.getCause();
-        }
-        return current;
     }
 }

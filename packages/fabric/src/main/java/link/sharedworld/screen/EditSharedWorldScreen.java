@@ -10,7 +10,6 @@ import link.sharedworld.api.SharedWorldModels.WorldMembershipDto;
 import link.sharedworld.api.SharedWorldModels.WorldSnapshotSummaryDto;
 import link.sharedworld.api.SharedWorldModels.WorldSummaryDto;
 import link.sharedworld.sync.ManagedWorldStore;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
@@ -22,11 +21,9 @@ import net.minecraft.client.gui.layouts.HeaderAndFooterLayout;
 import net.minecraft.client.gui.layouts.LinearLayout;
 import net.minecraft.client.gui.navigation.ScreenRectangle;
 import net.minecraft.client.gui.screens.FaviconTexture;
-import net.minecraft.client.gui.screens.Screen;
 import link.sharedworld.versioned.GuiBlit;
 import link.sharedworld.versioned.VersionedScreen;
 import net.minecraft.network.chat.Component;
-import net.minecraft.util.FormattedCharSequence;
 
 import static link.sharedworld.screen.EditScreenFormats.blankOr;
 import static link.sharedworld.screen.EditScreenFormats.formatBytes;
@@ -39,6 +36,7 @@ import static link.sharedworld.screen.EditScreenFormats.formatUsedByWorld;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.function.Function;
 import java.util.Objects;
 import java.util.function.Consumer;
 
@@ -58,6 +56,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
     private final HeaderAndFooterLayout layout = new HeaderAndFooterLayout(this, 0, FOOTER_HEIGHT);
     private final TabManager tabManager = new TabManager(this::addRenderableWidget, this::removeWidget);
 
+    private static final int TAB_COUNT = 5;
     private final DetailsTab detailsTab = new DetailsTab();
     private final SettingsTab settingsTab = new SettingsTab();
     private final BackupsTab backupsTab = new BackupsTab();
@@ -309,9 +308,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         int columnWidth = Math.min(170, this.contentArea.width() / 2 - 24);
         int leftColumn = this.contentArea.left() + (this.contentArea.width() / 2 - columnWidth) / 2;
         if (!this.isOwner()) {
-            this.drawWrappedText(
-                    guiGraphics,
-                    Component.translatable("screen.sharedworld.settings_owner_only"),
+            WrappedText.draw(guiGraphics, this.font, Component.translatable("screen.sharedworld.settings_owner_only"),
                     leftColumn,
                     top + 14,
                     this.contentArea.width() - 76,
@@ -323,9 +320,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
             // Under the max-backups button (third row of the left column): the
             // one thing worth a warning here; lowering the cap below what is
             // stored deletes backups the moment the settings are saved.
-            this.drawWrappedText(
-                    guiGraphics,
-                    doomed == 1
+            WrappedText.draw(guiGraphics, this.font, doomed == 1
                             ? Component.translatable("screen.sharedworld.settings_max_backups_lower_warning_one")
                             : Component.translatable("screen.sharedworld.settings_max_backups_lower_warning", doomed),
                     leftColumn,
@@ -378,12 +373,12 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         this.drawPanel(guiGraphics, detailX, detailY, detailWidth, this.contentArea.height() - 36, 0x7F000000, 0xFF6C6C6C);
 
         if (this.selectedSnapshot == null) {
-            this.drawWrappedText(guiGraphics, Component.translatable("screen.sharedworld.backups_empty"), detailX + 12, detailY + 18, detailWidth - 24, 0xFFB8C5D6);
+            WrappedText.draw(guiGraphics, this.font, Component.translatable("screen.sharedworld.backups_empty"), detailX + 12, detailY + 18, detailWidth - 24, 0xFFB8C5D6);
             return;
         }
         int marked = this.markedBackupIds().size();
         if (marked > 0) {
-            this.drawWrappedText(guiGraphics, Component.translatable("screen.sharedworld.backups_marked", marked), detailX + 12, detailY + 84, detailWidth - 24, 0xFFF2C25B);
+            WrappedText.draw(guiGraphics, this.font, Component.translatable("screen.sharedworld.backups_marked", marked), detailX + 12, detailY + 84, detailWidth - 24, 0xFFF2C25B);
         }
 
         this.drawKeyValue(guiGraphics, detailX + 12, detailY + 18, Component.translatable("screen.sharedworld.backups_created"), formatTimestamp(this.selectedSnapshot.createdAt()), 84);
@@ -393,7 +388,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
                 ? "screen.sharedworld.backups_state_current"
                 : "screen.sharedworld.backups_state_earlier"), 84);
         if (!this.isOwner() && !this.selectedSnapshot.isLatest()) {
-            this.drawWrappedText(guiGraphics, Component.translatable("screen.sharedworld.backups_owner_only"), detailX + 12, detailY + 96, detailWidth - 24, 0xFFFFD37A);
+            WrappedText.draw(guiGraphics, this.font, Component.translatable("screen.sharedworld.backups_owner_only"), detailX + 12, detailY + 96, detailWidth - 24, 0xFFFFD37A);
         }
 
     }
@@ -406,7 +401,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         this.drawPanel(guiGraphics, detailX, detailY, detailWidth, this.contentArea.height() - 36, 0x7F000000, 0xFF6C6C6C);
 
         if (this.selectedMember == null) {
-            this.drawWrappedText(guiGraphics, Component.translatable("screen.sharedworld.members_empty"), detailX + 12, detailY + 18, detailWidth - 24, 0xFFB8C5D6);
+            WrappedText.draw(guiGraphics, this.font, Component.translatable("screen.sharedworld.members_empty"), detailX + 12, detailY + 18, detailWidth - 24, 0xFFB8C5D6);
             return;
         }
 
@@ -424,7 +419,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
                 84
         );
         if (!this.isOwner() && !this.isOwnerMembership(this.selectedMember)) {
-            this.drawWrappedText(guiGraphics, Component.translatable("screen.sharedworld.members_owner_only"), detailX + 12, detailY + 96, detailWidth - 24, 0xFFFFD37A);
+            WrappedText.draw(guiGraphics, this.font, Component.translatable("screen.sharedworld.members_owner_only"), detailX + 12, detailY + 96, detailWidth - 24, 0xFFFFD37A);
         }
 
     }
@@ -461,7 +456,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
             String warningKey = fraction >= 0.99
                     ? "screen.sharedworld.storage_quota_full"
                     : "screen.sharedworld.storage_quota_near_full";
-            this.drawWrappedText(guiGraphics, Component.translatable(warningKey), left, top + 14, width, fraction >= 0.99 ? 0xFFFF6A6A : 0xFFFFD37A);
+            WrappedText.draw(guiGraphics, this.font, Component.translatable(warningKey), left, top + 14, width, fraction >= 0.99 ? 0xFFFF6A6A : 0xFFFFD37A);
         }
     }
 
@@ -470,12 +465,10 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         boolean tabsUnlocked = !this.loading;
 
         if (this.tabNavigationBar != null) {
-            link.sharedworld.versioned.TabBarCompat.setTabActive(this.tabNavigationBar, 0, true);
-            link.sharedworld.versioned.TabBarCompat.setTabActive(this.tabNavigationBar, 1, tabsUnlocked);
-            link.sharedworld.versioned.TabBarCompat.setTabActive(this.tabNavigationBar, 2, tabsUnlocked);
-            link.sharedworld.versioned.TabBarCompat.setTabActive(this.tabNavigationBar, 3, tabsUnlocked);
-            link.sharedworld.versioned.TabBarCompat.setTabActive(this.tabNavigationBar, 4, tabsUnlocked);
-            link.sharedworld.versioned.TabBarCompat.setTabActive(this.tabNavigationBar, 5, tabsUnlocked);
+            // Tab 0 (details) stays reachable while loading; the rest unlock with the data.
+            for (int tab = 0; tab < TAB_COUNT; tab++) {
+                link.sharedworld.versioned.TabBarCompat.setTabActive(this.tabNavigationBar, tab, tab == 0 || tabsUnlocked);
+            }
         }
 
         this.backButton.setMessage(Component.translatable("gui.back"));
@@ -486,12 +479,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
             this.replaceWorldButton.active = !this.loading && !this.actionInFlight && this.isOwner() && this.details != null;
         }
         if (this.selectAllBackupsButton != null) {
-            int deletable = 0;
-            for (WorldSnapshotSummaryDto snapshot : this.snapshots) {
-                if (!snapshot.isLatest()) {
-                    deletable += 1;
-                }
-            }
+            long deletable = this.snapshots.stream().filter(snapshot -> !snapshot.isLatest()).count();
             int marked = this.markedBackupIds().size();
             this.selectAllBackupsButton.visible = currentTab == this.backupsTab && this.isOwner() && deletable > 1;
             this.selectAllBackupsButton.active = this.canManageBackups();
@@ -674,8 +662,8 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         this.storageUsage = loaded.storageUsage();
         this.snapshots = EditSharedWorldDataController.sortedSnapshots(loaded.snapshots());
         this.memberships = EditSharedWorldDataController.normalizedMemberships(loaded.details());
-        this.selectedSnapshot = this.chooseSelectedSnapshot(this.selectedSnapshot == null ? null : this.selectedSnapshot.snapshotId());
-        this.selectedMember = this.chooseSelectedMember(this.selectedMember == null ? null : this.selectedMember.playerUuid());
+        this.selectedSnapshot = chooseSelected(this.snapshots, this.selectedSnapshot == null ? null : this.selectedSnapshot.snapshotId(), WorldSnapshotSummaryDto::snapshotId);
+        this.selectedMember = chooseSelected(this.memberships, this.selectedMember == null ? null : this.selectedMember.playerUuid(), WorldMembershipDto::playerUuid);
         this.populateDetailFields();
         this.refreshPreview();
         this.snapshotList.setSnapshots(this.snapshots, this.selectedSnapshot == null ? null : this.selectedSnapshot.snapshotId());
@@ -754,7 +742,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
                     this.actionInFlight = false;
                     this.setStatusSuccessKey("screen.sharedworld.edit_status_saved");
                     this.reloadData();
-                    this.parent.onChildOperationFinished(null, this.world.id());
+                    this.parent.onChildOperationFinished(this.world.id());
                 },
                 error -> {
                     this.savingDetails = false;
@@ -936,28 +924,7 @@ public final class EditSharedWorldScreen extends VersionedScreen {
                 return customIcon;
             }
             if (this.details != null && !Objects.equals(this.details.customIconStorageKey(), this.world.customIconStorageKey())) {
-                WorldSummaryDto summary = new WorldSummaryDto(
-                        this.details.id(),
-                        this.details.slug(),
-                        this.details.name(),
-                        this.details.ownerUuid(),
-                        this.details.motd(),
-                        this.details.customIconStorageKey(),
-                        this.details.customIconDownload(),
-                        this.details.memberCount(),
-                        this.details.status(),
-                        this.details.lastSnapshotId(),
-                        this.details.lastSnapshotAt(),
-                        this.details.activeHostUuid(),
-                        this.details.activeHostPlayerName(),
-                        this.details.activeJoinTarget(),
-                        this.details.onlinePlayerCount(),
-                        this.details.onlinePlayerNames(),
-                        this.details.storageProvider(),
-                        this.details.storageLinked(),
-                        this.details.storageAccountEmail()
-                );
-                customIcon = SharedWorldClient.customIconStore().resolveCachedIcon(summary);
+                customIcon = SharedWorldClient.customIconStore().resolveCachedIcon(this.details.customIconStorageKey(), this.details.customIconDownload());
                 if (customIcon != null) {
                     return customIcon;
                 }
@@ -988,17 +955,8 @@ public final class EditSharedWorldScreen extends VersionedScreen {
             this.setStatusWarningKey("screen.sharedworld.edit_status_remove_confirm");
             return;
         }
-        Tab currentTab = this.tabManager.getCurrentTab();
-        if (currentTab == this.detailsTab) {
-            if (this.isDetailsDirty()) {
-                this.setStatusInfoKey("screen.sharedworld.edit_status_ready_to_save");
-            } else {
-                this.statusBanner.clearSticky();
-            }
-        } else if (currentTab == this.backupsTab) {
-            this.statusBanner.clearSticky();
-        } else if (currentTab == this.membersTab) {
-            this.statusBanner.clearSticky();
+        if (this.tabManager.getCurrentTab() == this.detailsTab && this.isDetailsDirty()) {
+            this.setStatusInfoKey("screen.sharedworld.edit_status_ready_to_save");
         } else {
             this.statusBanner.clearSticky();
         }
@@ -1108,32 +1066,12 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         return SharedWorldMetadataFormat.effectiveMotd(this.motdBox.getValue());
     }
 
-    private WorldSnapshotSummaryDto chooseSelectedSnapshot(String preferredId) {
-        if (this.snapshots.isEmpty()) {
+    /** The item with preferredId when present, else the first item, else null. */
+    private static <T> T chooseSelected(List<T> items, String preferredId, Function<T, String> idOf) {
+        if (items.isEmpty()) {
             return null;
         }
-        if (preferredId != null) {
-            for (WorldSnapshotSummaryDto snapshot : this.snapshots) {
-                if (preferredId.equals(snapshot.snapshotId())) {
-                    return snapshot;
-                }
-            }
-        }
-        return this.snapshots.get(0);
-    }
-
-    private WorldMembershipDto chooseSelectedMember(String preferredPlayerUuid) {
-        if (this.memberships.isEmpty()) {
-            return null;
-        }
-        if (preferredPlayerUuid != null) {
-            for (WorldMembershipDto membership : this.memberships) {
-                if (preferredPlayerUuid.equals(membership.playerUuid())) {
-                    return membership;
-                }
-            }
-        }
-        return this.memberships.get(0);
+        return items.stream().filter(item -> preferredId != null && preferredId.equals(idOf.apply(item))).findFirst().orElse(items.get(0));
     }
 
     /** Automation hook for the dev-helper drivers: select a tab by index. */
@@ -1154,12 +1092,9 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         this.confirmKick = false;
     }
 
-    private void setStatusInfo(String message) {
-        this.statusBanner.set(SharedWorldStatusBanner.Kind.INFO, Component.literal(message));
-    }
 
     private void setStatusInfoKey(String key, Object... args) {
-        this.setStatusInfo(SharedWorldText.string(key, args));
+        this.statusBanner.set(SharedWorldStatusBanner.Kind.INFO, Component.translatable(key, args));
     }
 
     private void setStatusSuccess(String message) {
@@ -1168,15 +1103,13 @@ public final class EditSharedWorldScreen extends VersionedScreen {
     }
 
     private void setStatusSuccessKey(String key, Object... args) {
-        this.setStatusSuccess(SharedWorldText.string(key, args));
+        // Confirmations clear themselves; prompts and errors stay until acted on.
+        this.statusBanner.setTransient(SharedWorldStatusBanner.Kind.SUCCESS, Component.translatable(key, args), SUCCESS_STATUS_TTL_MS);
     }
 
-    private void setStatusWarning(String message) {
-        this.statusBanner.set(SharedWorldStatusBanner.Kind.WARNING, Component.literal(message));
-    }
 
     private void setStatusWarningKey(String key, Object... args) {
-        this.setStatusWarning(SharedWorldText.string(key, args));
+        this.statusBanner.set(SharedWorldStatusBanner.Kind.WARNING, Component.translatable(key, args));
     }
 
     private void setStatusError(String message) {
@@ -1191,10 +1124,6 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         guiGraphics.vLine(x + width - 1, y, y + height - 1, border);
     }
 
-    private void drawKeyValue(GuiGraphics guiGraphics, int x, int y, Component key, String value) {
-        this.drawKeyValue(guiGraphics, x, y, key, value, 108);
-    }
-
     private void drawKeyValue(GuiGraphics guiGraphics, int x, int y, Component key, String value, int valueOffset) {
         this.drawKeyValue(guiGraphics, x, y, key, value, valueOffset, Integer.MAX_VALUE);
     }
@@ -1203,19 +1132,6 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         guiGraphics.drawString(this.font, key, x, y, 0xFF8EA3BC);
         String display = blankOr(value, SharedWorldText.string("screen.sharedworld.not_set"));
         guiGraphics.drawString(this.font, Component.literal(SharedWorldText.truncate(this.font, display, maxValueWidth)), x + valueOffset, y, 0xFFFFFFFF);
-    }
-
-    private void drawWrappedText(GuiGraphics guiGraphics, Component text, int x, int y, int width, int color) {
-        this.drawWrappedTextMeasured(guiGraphics, text, x, y, width, color);
-    }
-
-    /** Same, returning the Y just below the last drawn line. */
-    private int drawWrappedTextMeasured(GuiGraphics guiGraphics, Component text, int x, int y, int width, int color) {
-        List<FormattedCharSequence> lines = this.font.split(text, width);
-        for (int index = 0; index < lines.size(); index++) {
-            guiGraphics.drawString(this.font, lines.get(index), x, y + index * 9, color);
-        }
-        return y + lines.size() * 9;
     }
 
     private boolean shouldShowDetailsValidation() {

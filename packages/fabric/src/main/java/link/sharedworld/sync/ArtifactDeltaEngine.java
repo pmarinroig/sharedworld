@@ -193,7 +193,7 @@ public final class ArtifactDeltaEngine {
         // (≤ V2_TARGET_BLOCK_COUNT entries) regardless of file size.
         java.util.HashMap<Integer, java.util.List<long[]>> index = new java.util.HashMap<>();
         java.util.HashMap<Long, byte[]> strongByOffset = new java.util.HashMap<>();
-        java.security.MessageDigest digest = newSha256();
+        java.security.MessageDigest digest = LocalWorldHasher.newSha256();
         if (baseLength > 0L) {
             try (BufferedInputStream base = new BufferedInputStream(Files.newInputStream(baseFile))) {
                 byte[] block = new byte[blockSize];
@@ -454,14 +454,6 @@ public final class ArtifactDeltaEngine {
             linear[i] = ring[(start + i) % length];
         }
         return linear;
-    }
-
-    private static java.security.MessageDigest newSha256() throws IOException {
-        try {
-            return java.security.MessageDigest.getInstance("SHA-256");
-        } catch (java.security.NoSuchAlgorithmException exception) {
-            throw new IOException("SHA-256 unavailable.", exception);
-        }
     }
 
     public record DeltaStats(long artifactSize, int copiedBlocks, int literalBlocks, long literalBytes) {

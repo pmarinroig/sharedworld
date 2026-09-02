@@ -374,7 +374,7 @@ final class DownloadPlanApplier {
                     WorldSyncSupport.withTransportRetries(this.policy, () -> this.apiClient.downloadBlobToFile(step.download(), artifactFile, (bytesTransferred, ignoredTotalBytes) ->
                             reportFileTransfer(fileIndex, stepStart, step.artifactSize(), bytesTransferred)
                     ));
-                    fileTransferred = finalizeFileTransfer(fileIndex, stepStart, step.artifactSize());
+                    fileTransferred = reportFileTransfer(fileIndex, stepStart, step.artifactSize(), step.artifactSize());
                     currentBase = artifactFile;
                 } else {
                         throw new IOException("SharedWorld download step had unknown transfer mode " + step.transferMode() + ".");
@@ -468,7 +468,7 @@ final class DownloadPlanApplier {
                     WorldSyncSupport.withTransportRetries(this.policy, () -> this.apiClient.downloadRawBlobToFile(step.download(), artifactFile, (bytesTransferred, ignoredTotalBytes) ->
                             reportFileTransfer(fileIndex, stepStart, step.artifactSize(), bytesTransferred)
                     ));
-                    fileTransferred = finalizeFileTransfer(fileIndex, stepStart, step.artifactSize());
+                    fileTransferred = reportFileTransfer(fileIndex, stepStart, step.artifactSize(), step.artifactSize());
                     currentBase = artifactFile;
                 } else if (deltaTransferMode.equals(step.transferMode())) {
                     Path baseFile = resolveGroupedDeltaBase(currentBase, baselineFile, reportedLocalArtifact, step);
@@ -478,7 +478,7 @@ final class DownloadPlanApplier {
                     WorldSyncSupport.withTransportRetries(this.policy, () -> this.apiClient.downloadRawBlobToFile(step.download(), artifactFile, (bytesTransferred, ignoredTotalBytes) ->
                             reportFileTransfer(fileIndex, stepStart, step.artifactSize(), bytesTransferred)
                     ));
-                    fileTransferred = finalizeFileTransfer(fileIndex, stepStart, step.artifactSize());
+                    fileTransferred = reportFileTransfer(fileIndex, stepStart, step.artifactSize(), step.artifactSize());
                     Path patchedFile = Files.createTempFile(this.worldStore.worldContainer(this.worldId), "pack-patched-", ".pack");
                     try {
                         ArtifactDeltaEngine.applyDelta(baseFile, artifactFile, patchedFile);
@@ -543,26 +543,15 @@ final class DownloadPlanApplier {
         return null;
     }
 
-    private void reportFileTransfer(int fileIndex, long stepStart, long stepSize, long stepTransferred) {
+    /**
+     * Records that stepTransferred bytes of the step starting at stepStart within
+     * file fileIndex are done, reports overall progress, and returns the file's
+     * cumulative byte position. Passing stepTransferred == stepSize finalizes the step.
+     */
+    private long reportFileTransfer(int fileIndex, long stepStart, long stepSize, long stepTransferred) {
         long totalFileBytes = this.downloadFileSizes[fileIndex];
         long clampedTransferred = Math.max(0L, Math.min(stepTransferred, stepSize));
         long overallForFile = Math.max(0L, Math.min(stepStart + clampedTransferred, totalFileBytes));
-        long previous = this.perFileDownloadedBytes.getAndSet(fileIndex, overallForFile);
-        long delta = Math.max(0L, overallForFile - previous);
-        long current = this.downloadedBytes.addAndGet(delta);
-        WorldSyncSupport.report(
-                this.progressListener,
-                WorldSyncCoordinator.STAGE_DOWNLOADING_CHANGED_FILES,
-                WorldSyncSupport.weightedTransferFraction(current, this.totalDownloadBytes, this.perFileDownloadedBytes, this.downloadFileSizes),
-                current,
-                this.totalDownloadBytes,
-                "Downloading changed files"
-        );
-    }
-
-    private long finalizeFileTransfer(int fileIndex, long stepStart, long stepSize) {
-        long totalFileBytes = this.downloadFileSizes[fileIndex];
-        long overallForFile = Math.max(0L, Math.min(stepStart + stepSize, totalFileBytes));
         long previous = this.perFileDownloadedBytes.getAndSet(fileIndex, overallForFile);
         long delta = Math.max(0L, overallForFile - previous);
         long current = this.downloadedBytes.addAndGet(delta);

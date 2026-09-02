@@ -75,7 +75,7 @@ public final class SharedWorldIntegrationBackend {
     }
 
     public static SharedWorldModels.StorageLinkSessionDto linkStorage(SharedWorldApiClient client) throws IOException, InterruptedException {
-        SharedWorldModels.StorageLinkSessionDto pending = client.createStorageLink();
+        SharedWorldModels.StorageLinkSessionDto pending = client.createStorageLink(false);
         HttpResponse<String> callbackResponse = HTTP.send(
                 HttpRequest.newBuilder().uri(URI.create(pending.authUrl())).GET().build(),
                 HttpResponse.BodyHandlers.ofString()

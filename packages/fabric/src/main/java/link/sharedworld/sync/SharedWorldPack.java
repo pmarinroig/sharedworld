@@ -14,7 +14,6 @@ import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -172,7 +171,7 @@ public final class SharedWorldPack {
             if (target.getParent() != null) {
                 Files.createDirectories(target.getParent());
             }
-            MessageDigest digest = newSha256();
+            MessageDigest digest = LocalWorldHasher.newSha256();
             try (SeekableByteChannel channel = Files.newByteChannel(packFile);
                  var output = Files.newOutputStream(target)) {
                 channel.position(entry.offset());
@@ -191,14 +190,6 @@ public final class SharedWorldPack {
             extractedHashes.put(entry.relativePath(), HexFormat.of().formatHex(digest.digest()));
         }
         return extractedHashes;
-    }
-
-    private static MessageDigest newSha256() throws IOException {
-        try {
-            return MessageDigest.getInstance("SHA-256");
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IOException("Missing SHA-256 implementation.", exception);
-        }
     }
 
     public static PackedManifestFileDto[] describe(Path packFile) throws IOException {

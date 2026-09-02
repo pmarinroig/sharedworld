@@ -1,6 +1,8 @@
 package link.sharedworld.screen;
 
 import link.sharedworld.SharedWorldClient;
+import link.sharedworld.SharedWorldClientConfigStore;
+import link.sharedworld.SharedWorldListComparison;
 import link.sharedworld.SharedWorldText;
 import link.sharedworld.api.SharedWorldApiClient;
 import link.sharedworld.api.SharedWorldModels.WorldSummaryDto;
@@ -18,6 +20,7 @@ import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import static link.sharedworld.util.Errors.rootCause;
 
 public final class SharedWorldScreen extends link.sharedworld.versioned.VersionedScreen {
     private static final long AUTO_REFRESH_IDLE_MS = 15_000L;
@@ -50,7 +53,7 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
     public SharedWorldScreen(Screen parent) {
         super(Component.translatable("screen.sharedworld.title"));
         this.parent = parent;
-        this.worlds.addAll(SharedWorldClient.cachedWorlds());
+        this.worlds.addAll(SharedWorldClient.listState().cachedWorlds());
         SharedWorldClient.ensureRealtimeStarted();
     }
 
@@ -66,7 +69,7 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
                 36,
                 this
         ), this::addRenderableWidget);
-        this.serverList.setWorlds(this.worlds, SharedWorldClient.cachedSelectedWorldId());
+        this.serverList.setWorlds(this.worlds, SharedWorldClient.listState().selectedWorldId());
 
         LinearLayout footer = this.layout.addToFooter(link.sharedworld.versioned.LayoutCompat.verticalLayout(4));
         link.sharedworld.versioned.LayoutCompat.defaultCellSetting(footer).alignHorizontallyCenter();
@@ -157,7 +160,7 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
         }
 
         WorldSummaryDto selected = this.selectedWorld();
-        String selectedWorldId = selected == null ? SharedWorldClient.cachedSelectedWorldId() : selected.id();
+        String selectedWorldId = selected == null ? SharedWorldClient.listState().selectedWorldId() : selected.id();
         boolean coldLoad = this.worlds.isEmpty();
         this.refreshInFlight = true;
         this.loading = coldLoad;
@@ -178,12 +181,12 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
                         SharedWorldClient.LOGGER.warn("Failed to refresh Shared Worlds list", rootCause(error));
                     } else {
                         this.backendReachable = true;
-                        List<WorldSummaryDto> orderedWorlds = SharedWorldClient.orderFreshWorlds(result);
+                        List<WorldSummaryDto> orderedWorlds = SharedWorldClient.listState().orderFreshWorlds(result);
                         for (WorldSummaryDto world : orderedWorlds) {
                             SharedWorldClient.customIconStore().resolveCachedIcon(world);
                         }
-                        boolean worldsChanged = !SharedWorldClient.orderedWorldListsEqual(this.worlds, orderedWorlds);
-                        List<WorldSummaryDto> cachedWorlds = SharedWorldClient.applyFreshWorlds(orderedWorlds);
+                        boolean worldsChanged = !SharedWorldListComparison.orderedWorldsEqual(this.worlds, orderedWorlds);
+                        List<WorldSummaryDto> cachedWorlds = SharedWorldClient.listState().applyFreshWorlds(orderedWorlds);
                         if (worldsChanged) {
                             this.worlds.clear();
                             this.worlds.addAll(cachedWorlds);
@@ -199,10 +202,6 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
                 }));
     }
 
-    public void onChildOperationFinished(String message) {
-        this.onChildOperationFinished(message, null);
-    }
-
     /** A child screen aborted an operation on the player's request. */
     public void showTransientWarning(String message) {
         this.statusBanner.setTransient(SharedWorldStatusBanner.Kind.WARNING, Component.literal(message), SUCCESS_STATUS_TTL_MS);
@@ -214,9 +213,9 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
      * textual confirmation is shown; just land with the affected world
      * selected so the action buttons are live instead of greyed out.
      */
-    public void onChildOperationFinished(String message, String selectWorldId) {
+    public void onChildOperationFinished(String selectWorldId) {
         if (selectWorldId != null) {
-            SharedWorldClient.rememberSelectedWorld(selectWorldId);
+            SharedWorldClient.listState().rememberSelectedWorld(selectWorldId);
             if (this.serverList != null) {
                 this.serverList.setWorlds(this.worlds, selectWorldId);
             }
@@ -265,11 +264,6 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
     }
 
     @Override
-    public void removed() {
-        super.removed();
-    }
-
-    @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
         super.render(guiGraphics, mouseX, mouseY, partialTick);
         if (this.serverList != null && this.serverList.children().isEmpty() && !this.loading) {
@@ -286,12 +280,12 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
     }
 
     public void onEntrySelected(WorldSummaryDto world) {
-        SharedWorldClient.rememberSelectedWorld(world == null ? null : world.id());
+        SharedWorldClient.listState().rememberSelectedWorld(world == null ? null : world.id());
         this.updateButtons();
     }
 
     public boolean canMoveWorld(WorldSummaryDto world, int offset) {
-        return world != null && SharedWorldClient.canMoveCachedWorld(world.id(), offset);
+        return world != null && SharedWorldClient.listState().canMoveWorld(world.id(), offset);
     }
 
     public void moveWorld(WorldSummaryDto world, int offset) {
@@ -300,7 +294,7 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
         }
 
         this.worlds.clear();
-        this.worlds.addAll(SharedWorldClient.moveCachedWorld(world.id(), offset));
+        this.worlds.addAll(SharedWorldClient.listState().moveWorld(world.id(), offset));
         if (this.serverList != null) {
             this.serverList.setWorlds(this.worlds, world.id());
         }
@@ -350,7 +344,7 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
     }
 
     private void openVanillaServers() {
-        SharedWorldClient.rememberVanillaView();
+        SharedWorldClientConfigStore.shared().rememberVanilla();
         link.sharedworld.versioned.GuiCompat.clearFocus(this.parent);
         this.releaseWidgetFocus();
         link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, this.parent);
@@ -391,14 +385,6 @@ public final class SharedWorldScreen extends link.sharedworld.versioned.Versione
         if (this.settingsButton != null) {
             this.settingsButton.setFocused(false);
         }
-    }
-
-    private static Throwable rootCause(Throwable error) {
-        Throwable current = error;
-        while (current.getCause() != null && current.getCause() != current) {
-            current = current.getCause();
-        }
-        return current;
     }
 
     private long autoRefreshIntervalMs() {
