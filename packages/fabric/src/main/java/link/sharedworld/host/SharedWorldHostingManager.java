@@ -92,7 +92,6 @@ public final class SharedWorldHostingManager {
     private final AtomicBoolean cancelDisconnectIssued = new AtomicBoolean();
     private final AtomicLong heartbeatInFlight = new AtomicLong();
     private volatile Phase phase = Phase.IDLE;
-    private volatile String statusMessage = "";
     private volatile String errorMessage;
     private volatile WorldSummaryDto world;
     private volatile String hostPlayerUuid;
@@ -310,7 +309,7 @@ public final class SharedWorldHostingManager {
         this.startupAttemptId = startupAttemptId;
         this.events.onHostStartupBegan(world.id());
         E4mcDomainTracker.clear();
-        setPhase(Phase.PREPARING, SharedWorldText.string("screen.sharedworld.hosting_syncing_snapshot"));
+        setPhase(Phase.PREPARING);
 
         // Without e4mc or a valid custom join address this attempt can never
         // publish; fail while the launching screen is still up rather than
@@ -356,7 +355,7 @@ public final class SharedWorldHostingManager {
             return;
         }
         this.pendingLocalChangesPrompt = null;
-        setPhase(Phase.PREPARING, SharedWorldText.string("screen.sharedworld.hosting_syncing_snapshot"));
+        setPhase(Phase.PREPARING);
         launchPrepareAndOpen(prompt.startupAttemptId(), decision);
     }
 
@@ -438,7 +437,6 @@ public final class SharedWorldHostingManager {
             return false;
         }
         if (!isClientReadyForPublish(minecraft)) {
-            this.statusMessage = SharedWorldText.string("screen.sharedworld.hosting_joining_local");
             return true;
         }
         publishIfNeeded(minecraft.getSingleplayerServer());
@@ -454,7 +452,7 @@ public final class SharedWorldHostingManager {
             this.publishedJoinTarget = joinTarget;
             this.lastHeartbeatAt = 0L;
             this.lastHeartbeatAttemptAt = 0L;
-            setPhase(Phase.CONFIRMING_HOST, SharedWorldText.string("screen.sharedworld.hosting_confirming_host"));
+            setPhase(Phase.CONFIRMING_HOST);
             confirmHostSession(joinTarget);
             return true;
         }
@@ -548,7 +546,7 @@ public final class SharedWorldHostingManager {
             return;
         }
         if (now - this.lastAutosaveAt >= this.autosaveIntervalMs && this.saveInFlight.compareAndSet(0L, this.hostSessionGeneration)) {
-            uploadSnapshot(false);
+            uploadSnapshot();
         }
         // Gamerule detection runs on its own local cadence (0.3.0): reading
         // the integrated server is free, and only diffs are reported, so a
@@ -686,7 +684,7 @@ public final class SharedWorldHostingManager {
     public void markCoordinatedBackendFinalizationStarted() {
         this.coordinatedRelease = CoordinatedRelease.BACKEND_FINALIZING;
         if (this.phase != Phase.IDLE && this.phase != Phase.ERROR) {
-            setPhase(Phase.RELEASING, SharedWorldText.string("screen.sharedworld.progress.finishing_up"));
+            setPhase(Phase.RELEASING);
             return;
         }
         relayStartupProgressIfNeeded();
@@ -768,7 +766,7 @@ public final class SharedWorldHostingManager {
         this.pendingLocalChangesPrompt = null;
         this.startupAttemptId += 1L;
         invalidateAsyncOperations();
-        setPhase(Phase.CANCELLING, SharedWorldText.string("screen.sharedworld.hosting_canceling"));
+        setPhase(Phase.CANCELLING);
 
         // Exactly one lease release. The tick loop finishes the cancellation:
         // it forces the disconnect once that is safe and resets to IDLE only
@@ -789,10 +787,6 @@ public final class SharedWorldHostingManager {
     /** The current host authorization epoch; only meaningful while hosting. */
     public long currentRuntimeEpoch() {
         return this.runtimeEpoch;
-    }
-
-    public String statusMessage() {
-        return this.statusMessage;
     }
 
     private void prepareAndOpen(long startupAttemptId) {
@@ -821,7 +815,7 @@ public final class SharedWorldHostingManager {
                     publishLocalChangesFirst,
                     this::isActiveStartupAttempt,
                     progress -> applyStartupSyncProgress(startupAttemptId, progress),
-                    () -> setPhase(Phase.OPENING_WORLD, SharedWorldText.string("screen.sharedworld.hosting_opening_world"))
+                    () -> setPhase(Phase.OPENING_WORLD)
             );
         } catch (Exception exception) {
             throw new RuntimeException(exception);
@@ -877,7 +871,7 @@ public final class SharedWorldHostingManager {
         }
         LOGGER.info("SharedWorld unpublished local changes for {} conflict with the shared copy ({} → {}); asking the player", worldId, localSnapshotId, remoteSnapshotId);
         this.pendingLocalChangesPrompt = new LocalChangesPrompt(startupAttemptId, this.world.name(), marker.since(), localSnapshotId, remoteSnapshotId);
-        setPhase(Phase.PREPARING, SharedWorldText.string("screen.sharedworld.hosting_awaiting_local_changes"));
+        setPhase(Phase.PREPARING);
         return false;
     }
 
@@ -900,7 +894,7 @@ public final class SharedWorldHostingManager {
             }
         }
         if (!server.isPublished()) {
-            setPhase(Phase.PUBLISHING, SharedWorldText.string("screen.sharedworld.hosting_opening_to_friends"));
+            setPhase(Phase.PUBLISHING);
             // A custom join address publishes on its port so guests can dial it
             // directly (VPN-style setups); otherwise any free port works, since
             // guests will go through the e4mc tunnel.
@@ -918,9 +912,9 @@ public final class SharedWorldHostingManager {
             // Pin before entering the wait phase: driveJoinTargetAcquisition
             // picks it up on the next tick and e4mc can never overwrite it.
             E4mcDomainTracker.pinJoinTarget(customJoinAddress);
-            setPhase(Phase.WAITING_FOR_E4MC, SharedWorldText.string("screen.sharedworld.hosting_using_custom_address"));
+            setPhase(Phase.WAITING_FOR_E4MC);
         } else {
-            setPhase(Phase.WAITING_FOR_E4MC, SharedWorldText.string("screen.sharedworld.hosting_waiting_for_e4mc"));
+            setPhase(Phase.WAITING_FOR_E4MC);
         }
     }
 
@@ -1029,7 +1023,6 @@ public final class SharedWorldHostingManager {
         this.autosaveIntervalMs = link.sharedworld.util.ServerPacing.clampSuggestedInterval(
                 runtime.suggestedAutosaveIntervalMs(), AUTOSAVE_INTERVAL_MS, MAX_SUGGESTED_AUTOSAVE_INTERVAL_MS);
         if (this.consecutiveHeartbeatFailures > HEARTBEAT_FAILURES_BEFORE_WARNING && this.phase == Phase.RUNNING) {
-            this.statusMessage = HostLifecyclePolicy.runningStatusMessage(this.publishedJoinTarget);
         }
         this.consecutiveHeartbeatFailures = 0;
         String confirmedJoinTarget = runtime.joinTarget() == null || runtime.joinTarget().isBlank()
@@ -1045,7 +1038,7 @@ public final class SharedWorldHostingManager {
             this.gameRulesSync.rebaselineForNewLiveSession();
             SharedWorldDevSessionBridge.setHostingSharedWorld(true, this.world.ownerUuid());
             this.events.onHostSessionLive(this.world.id(), this.world.name());
-            setPhase(Phase.RUNNING, SharedWorldText.string("screen.sharedworld.hosting_live_at", confirmedJoinTarget));
+            setPhase(Phase.RUNNING);
         }
         applyHeartbeatMemberships(runtime.memberships());
         this.gameRulesSync.applyHeartbeatSettings(runtime.settings(), runtime.settingsRevision());
@@ -1096,12 +1089,6 @@ public final class SharedWorldHostingManager {
         }
         this.consecutiveHeartbeatFailures += 1;
         LOGGER.warn(duringSnapshotUpload ? "SharedWorld snapshot upload heartbeat failed" : "SharedWorld heartbeat failed", exception);
-        // The lease survives short gaps (90s vs 30s interval), but the host
-        // must see that the backend is unreachable instead of a stale
-        // "hosting live" message.
-        if (this.consecutiveHeartbeatFailures > HEARTBEAT_FAILURES_BEFORE_WARNING && this.phase == Phase.RUNNING) {
-            this.statusMessage = SharedWorldText.string("screen.sharedworld.hosting_backend_reconnecting");
-        }
     }
 
     private String heartbeatAuthorityLossMessage(Exception exception, boolean duringSnapshotUpload) {
@@ -1125,7 +1112,7 @@ public final class SharedWorldHostingManager {
         SharedWorldReleaseCoordinator.HostAuthorityLossStage stage = HostLifecyclePolicy.authorityLossStage(this.phase);
         this.errorMessage = message;
         invalidateAsyncOperations();
-        setPhase(Phase.ERROR, message);
+        setPhase(Phase.ERROR);
         this.events.onHostAuthorityLost(session, stage, message);
     }
 
@@ -1138,22 +1125,19 @@ public final class SharedWorldHostingManager {
      * HostAttemptContext is still current.
      * Authority source: Current HostAttemptContext plus backend upload authorization.
      */
-    private void uploadSnapshot(boolean initialSnapshot) {
+    private void uploadSnapshot() {
         HostAttemptContext context = currentAttemptContext();
         if (context == null) {
             this.saveInFlight.set(0L);
             return;
         }
-        setPhase(Phase.SAVING, SharedWorldText.string("screen.sharedworld.hosting_saving_snapshot"));
+        setPhase(Phase.SAVING);
         CompletableFuture.runAsync(() -> {
             Path stagingDirectory = null;
             try {
                 Minecraft minecraft = Minecraft.getInstance();
                 IntegratedServer server = minecraft.getSingleplayerServer();
-                WorldSnapshotCaptureCoordinator.CaptureMode captureMode = initialSnapshot
-                        ? WorldSnapshotCaptureCoordinator.CaptureMode.FINALIZATION_FLUSH
-                        : WorldSnapshotCaptureCoordinator.CaptureMode.AUTOSAVE_WINDOW;
-                stagingDirectory = this.snapshotCaptureCoordinator.capture(context.worldId(), server, captureMode);
+                stagingDirectory = this.snapshotCaptureCoordinator.capture(context.worldId(), server);
                 this.syncAccess.uploadSnapshot(
                         context.worldId(),
                         stagingDirectory,
@@ -1172,7 +1156,7 @@ public final class SharedWorldHostingManager {
                     // phase now; stomping RELEASING back to RUNNING would tear
                     // down the finalization progress guests are watching.
                     if (this.coordinatedRelease == CoordinatedRelease.NONE) {
-                        setPhase(Phase.RUNNING, HostLifecyclePolicy.runningStatusMessage(this.publishedJoinTarget));
+                        setPhase(Phase.RUNNING);
                     }
                 });
             } catch (Exception exception) {
@@ -1221,7 +1205,7 @@ public final class SharedWorldHostingManager {
                     }
                     recordAutosaveError(stickyMessage, failureKind);
                     if (this.coordinatedRelease == CoordinatedRelease.NONE) {
-                        setPhase(Phase.RUNNING, SharedWorldText.string("screen.sharedworld.hosting_autosave_failing"));
+                        setPhase(Phase.RUNNING);
                     }
                 });
             } finally {
@@ -1326,7 +1310,7 @@ public final class SharedWorldHostingManager {
         HostAttemptContext context = currentAttemptContext();
         this.errorMessage = throwable == null ? message : message + " " + throwable.getMessage();
         invalidateAsyncOperations();
-        setPhase(Phase.ERROR, this.errorMessage);
+        setPhase(Phase.ERROR);
         if (context != null) {
             releaseHostAsync(context.worldId(), context.runtimeEpoch(), context.hostToken(), "SharedWorld failed to release lease after startup error");
         }
@@ -1403,9 +1387,8 @@ public final class SharedWorldHostingManager {
         }
     }
 
-    private void setPhase(Phase phase, String statusMessage) {
+    private void setPhase(Phase phase) {
         this.phase = phase;
-        this.statusMessage = statusMessage;
         this.phaseStartedAt = System.currentTimeMillis();
         this.progressState = switch (phase) {
             case PREPARING -> HostProgressStateFactory.startupIndeterminate("preparing_world", this.progressState);
@@ -1496,7 +1479,6 @@ public final class SharedWorldHostingManager {
     private void resetState() {
         String clearedWorldId = this.world == null ? null : this.world.id();
         this.phase = Phase.IDLE;
-        this.statusMessage = "";
         this.world = null;
         this.hostPlayerUuid = null;
         this.cancelLeaseReleaseSettled = false;
@@ -1559,7 +1541,6 @@ public final class SharedWorldHostingManager {
             case WorldSyncCoordinator.STAGE_APPLYING_WORLD_UPDATE -> HostProgressStateFactory.startupIndeterminate("finishing_up", this.progressState);
             default -> HostProgressStateFactory.startupIndeterminate("preparing_world", this.progressState);
         };
-        this.statusMessage = this.progressState.label().getString();
         relayStartupProgressIfNeeded();
     }
 
@@ -1573,7 +1554,6 @@ public final class SharedWorldHostingManager {
             case WorldSyncCoordinator.STAGE_FINALIZING_SNAPSHOT -> HostProgressStateFactory.savingIndeterminate("finishing_up", this.progressState);
             default -> HostProgressStateFactory.savingIndeterminate("saving_world", this.progressState);
         };
-        this.statusMessage = this.progressState.label().getString();
         relayStartupProgressIfNeeded();
     }
 
@@ -1622,7 +1602,6 @@ public final class SharedWorldHostingManager {
             return;
         }
         this.progressState = progressState;
-        this.statusMessage = progressState.label().getString();
         relayStartupProgressIfNeeded();
     }
 

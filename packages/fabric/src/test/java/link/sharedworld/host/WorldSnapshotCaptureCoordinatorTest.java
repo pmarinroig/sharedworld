@@ -23,7 +23,7 @@ final class WorldSnapshotCaptureCoordinatorTest {
                 }
         );
 
-        Path result = coordinator.capture("world-1", null, WorldSnapshotCaptureCoordinator.CaptureMode.AUTOSAVE_WINDOW);
+        Path result = coordinator.capture("world-1", null);
 
         assertEquals(Path.of("/tmp", "world-1"), result);
         assertEquals(List.of("open:world-1", "drain", "copy:world-1", "close"), calls);
@@ -42,7 +42,7 @@ final class WorldSnapshotCaptureCoordinatorTest {
 
         IOException exception = assertThrows(
                 IOException.class,
-                () -> coordinator.capture("world-1", null, WorldSnapshotCaptureCoordinator.CaptureMode.AUTOSAVE_WINDOW)
+                () -> coordinator.capture("world-1", null)
         );
 
         assertEquals("boom", exception.getMessage());
@@ -73,7 +73,7 @@ final class WorldSnapshotCaptureCoordinatorTest {
 
         IOException exception = assertThrows(
                 IOException.class,
-                () -> coordinator.capture("world-1", null, WorldSnapshotCaptureCoordinator.CaptureMode.AUTOSAVE_WINDOW)
+                () -> coordinator.capture("world-1", null)
         );
 
         assertEquals("timed out", exception.getMessage());
@@ -105,70 +105,13 @@ final class WorldSnapshotCaptureCoordinatorTest {
 
         IOException exception = assertThrows(
                 IOException.class,
-                () -> coordinator.capture("world-1", null, WorldSnapshotCaptureCoordinator.CaptureMode.AUTOSAVE_WINDOW)
+                () -> coordinator.capture("world-1", null)
         );
 
         assertEquals("drain failed", exception.getMessage());
         assertEquals(1, exception.getSuppressed().length);
         assertEquals("restore failed", exception.getSuppressed()[0].getMessage());
         assertEquals(List.of("open:world-1", "drain", "close"), calls);
-    }
-
-    @Test
-    void finalizationFlushPathDoesNotOpenAutosaveWindow() throws Exception {
-        List<String> calls = new ArrayList<>();
-        WorldSnapshotCaptureCoordinator coordinator = new WorldSnapshotCaptureCoordinator(
-                new FakeHooks(calls),
-                worldId -> {
-                    calls.add("copy:" + worldId);
-                    return Path.of("/tmp", worldId);
-                }
-        );
-
-        Path result = coordinator.capture("world-1", null, WorldSnapshotCaptureCoordinator.CaptureMode.FINALIZATION_FLUSH);
-
-        assertEquals(Path.of("/tmp", "world-1"), result);
-        assertEquals(List.of("flush:world-1", "copy:world-1"), calls);
-    }
-
-    @Test
-    void finalizationFlushFailureSkipsCopy() {
-        List<String> calls = new ArrayList<>();
-        WorldSnapshotCaptureCoordinator coordinator = new WorldSnapshotCaptureCoordinator(
-                new WorldSnapshotCaptureCoordinator.SnapshotHooks() {
-                    @Override
-                    public WorldSnapshotCaptureCoordinator.AutoSaveWindow openAutosaveWindow(String worldId, IntegratedServer server) {
-                        calls.add("open:" + worldId);
-                        return new WorldSnapshotCaptureCoordinator.AutoSaveWindow() {
-                            @Override
-                            public void awaitDrains() {
-                            }
-
-                            @Override
-                            public void close() {
-                            }
-                        };
-                    }
-
-                    @Override
-                    public void flushForFinalization(String worldId, IntegratedServer server) throws IOException, InterruptedException {
-                        calls.add("flush:" + worldId);
-                        throw new IOException("flush failed");
-                    }
-                },
-                worldId -> {
-                    calls.add("copy:" + worldId);
-                    return Path.of("/tmp", worldId);
-                }
-        );
-
-        IOException exception = assertThrows(
-                IOException.class,
-                () -> coordinator.capture("world-1", null, WorldSnapshotCaptureCoordinator.CaptureMode.FINALIZATION_FLUSH)
-        );
-
-        assertEquals("flush failed", exception.getMessage());
-        assertEquals(List.of("flush:world-1"), calls);
     }
 
     private static final class FakeHooks implements WorldSnapshotCaptureCoordinator.SnapshotHooks {
@@ -203,9 +146,5 @@ final class WorldSnapshotCaptureCoordinatorTest {
             };
         }
 
-        @Override
-        public void flushForFinalization(String worldId, IntegratedServer server) {
-            this.calls.add("flush:" + worldId);
-        }
     }
 }

@@ -36,14 +36,8 @@ final class WorldSnapshotCaptureCoordinator {
         this.copyOperation = copyOperation;
     }
 
-    Path capture(String worldId, IntegratedServer server, CaptureMode mode) throws IOException, InterruptedException {
-        return switch (mode) {
-            case AUTOSAVE_WINDOW -> captureAutosaveWindow(worldId, server);
-            case FINALIZATION_FLUSH -> captureFinalizationFlush(worldId, server);
-        };
-    }
-
-    private Path captureAutosaveWindow(String worldId, IntegratedServer server) throws IOException, InterruptedException {
+    /** Drains pending world writes inside a paused-autosave window, then copies the world to staging. */
+    Path capture(String worldId, IntegratedServer server) throws IOException, InterruptedException {
         try (AutoSaveWindow window = this.hooks.openAutosaveWindow(worldId, server)) {
             long drainStartedAt = System.nanoTime();
             window.awaitDrains();
@@ -53,47 +47,20 @@ final class WorldSnapshotCaptureCoordinator {
                     (System.nanoTime() - drainStartedAt) / 1_000_000L
             );
 
-            return copyWithLogging(worldId, CaptureMode.AUTOSAVE_WINDOW);
-        }
-    }
-
-    private Path captureFinalizationFlush(String worldId, IntegratedServer server) throws IOException, InterruptedException {
-        this.hooks.flushForFinalization(worldId, server);
-        return copyWithLogging(worldId, CaptureMode.FINALIZATION_FLUSH);
-    }
-
-    private Path copyWithLogging(String worldId, CaptureMode mode) throws IOException {
-        long stagingStartedAt = System.nanoTime();
-        LOGGER.info("SharedWorld starting {} snapshot staging copy for {}", mode.logLabel(), worldId);
-        Path stagingDirectory = this.copyOperation.copy(worldId);
-        LOGGER.info(
-                "SharedWorld finished {} snapshot staging copy for {} in {} ms",
-                mode.logLabel(),
-                worldId,
-                (System.nanoTime() - stagingStartedAt) / 1_000_000L
-        );
-        return stagingDirectory;
-    }
-
-    enum CaptureMode {
-        AUTOSAVE_WINDOW("autosave"),
-        FINALIZATION_FLUSH("release-finalization");
-
-        private final String logLabel;
-
-        CaptureMode(String logLabel) {
-            this.logLabel = logLabel;
-        }
-
-        String logLabel() {
-            return this.logLabel;
+            long stagingStartedAt = System.nanoTime();
+            LOGGER.info("SharedWorld starting autosave snapshot staging copy for {}", worldId);
+            Path stagingDirectory = this.copyOperation.copy(worldId);
+            LOGGER.info(
+                    "SharedWorld finished autosave snapshot staging copy for {} in {} ms",
+                    worldId,
+                    (System.nanoTime() - stagingStartedAt) / 1_000_000L
+            );
+            return stagingDirectory;
         }
     }
 
     interface SnapshotHooks {
         AutoSaveWindow openAutosaveWindow(String worldId, IntegratedServer server) throws IOException, InterruptedException;
-
-        void flushForFinalization(String worldId, IntegratedServer server) throws IOException, InterruptedException;
     }
 
     interface AutoSaveWindow extends AutoCloseable {
@@ -131,31 +98,6 @@ final class WorldSnapshotCaptureCoordinator {
             }
         }
 
-        @Override
-        public void flushForFinalization(String worldId, IntegratedServer server) throws IOException, InterruptedException {
-            if (server == null) {
-                return;
-            }
-
-            long saveStartedAt = System.nanoTime();
-            LOGGER.info("SharedWorld starting release-finalization snapshot save flush for {}", worldId);
-            awaitServerTask(
-                    server,
-                    () -> {
-                        server.saveEverything(true, true, false);
-                        return null;
-                    },
-                    SERVER_TASK_TIMEOUT,
-                    worldId,
-                    "finalization-flush",
-                    "SharedWorld failed while flushing the final host-release save barrier."
-            );
-            LOGGER.info(
-                    "SharedWorld finished release-finalization snapshot save flush for {} in {} ms",
-                    worldId,
-                    (System.nanoTime() - saveStartedAt) / 1_000_000L
-            );
-        }
     }
 
     private static final class VanillaAutoSaveWindow implements AutoSaveWindow {

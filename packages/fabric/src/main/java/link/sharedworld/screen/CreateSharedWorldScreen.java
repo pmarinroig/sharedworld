@@ -38,10 +38,6 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
     private static final int HEADER_HEIGHT = 33;
     private static final int FOOTER_HEIGHT = 36;
     private static final int CONTENT_MARGIN = 12;
-    private static final String EDIT_ICON_SPRITE = "sharedworld:edit_icon";
-    private static final String EDIT_ICON_HIGHLIGHTED_SPRITE = "sharedworld:edit_icon_highlighted";
-    private static final String DELETE_ICON_HIGHLIGHTED_SPRITE = "sharedworld:delete_icon_highlighted";
-    private static final String PING_5_SPRITE = "minecraft:server_list/ping_5";
     private static final int FOOTER_BUTTON_WIDTH = 150;
     private static final int STORAGE_LEFT_PADDING = 36;
     private static final int STORAGE_COPY_TOP = 56;
@@ -467,21 +463,8 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
 
         guiGraphics.drawString(this.font, Component.translatable("screen.sharedworld.world_name"), left, top + 24, 0xFFA0A0A0);
         guiGraphics.drawString(this.font, Component.translatable("screen.sharedworld.motd"), left, top + 72, 0xFFA0A0A0);
-        GuiBlit.favicon(guiGraphics, this.previewTexture, iconX, iconY, 48);
-        // Always-visible pencil badge: the icon well is a button, say so silently.
-        // The dark chip keeps the pencil readable over any world screenshot.
-        guiGraphics.fill(iconX + 48 - 16, iconY + 48 - 16, iconX + 48, iconY + 48, 0xB0000000);
-        GuiBlit.sprite(guiGraphics, EDIT_ICON_SPRITE, iconX + 48 - 14, iconY + 48 - 14, 12, 12);
-
-        if (this.iconHovered) {
-            guiGraphics.fill(iconX, iconY, iconX + 48, iconY + 48, 0x80000000);
-            String actionSprite = this.selectedIcon != null
-                    ? DELETE_ICON_HIGHLIGHTED_SPRITE
-                    : EDIT_ICON_HIGHLIGHTED_SPRITE;
-            GuiBlit.sprite(guiGraphics, actionSprite, iconX + 12, iconY + 12, 24, 24);
-        }
-
-        this.renderServerCardPreview(guiGraphics);
+        WorldPreviewCard.renderIconWell(guiGraphics, this.previewTexture, iconX, iconY, true, this.iconHovered, this.selectedIcon != null);
+        WorldPreviewCard.renderCard(guiGraphics, this.font, this.previewTexture, WorldPreviewCard.cardX(this.contentArea), this.previewCardY(), this.previewWorldName(), this.previewMotd());
 
         if (!this.nameValid()) {
             guiGraphics.drawString(
@@ -504,25 +487,6 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         return email == null || email.isBlank()
                 ? Component.translatable("screen.sharedworld.storage_saving_to_drive")
                 : SharedWorldText.component("screen.sharedworld.storage_saving_to", email);
-    }
-
-    private void renderServerCardPreview(GuiGraphics guiGraphics) {
-        int rowX = this.previewCardX();
-        int rowY = this.previewCardY();
-        int contentX = rowX + SharedWorldServerList.CONTENT_PADDING;
-        int contentY = rowY + SharedWorldServerList.CONTENT_PADDING;
-        SharedWorldServerList.renderSelectedOutline(guiGraphics, rowX, rowY, true);
-        GuiBlit.favicon(guiGraphics, this.previewTexture, contentX, contentY, 32);
-        SharedWorldServerList.renderRowContents(
-                guiGraphics,
-                this.font,
-                rowX,
-                rowY,
-                this.previewWorldName(),
-                this.previewMotd(),
-                SharedWorldText.playerCount(0, 8),
-                PING_5_SPRITE
-        );
     }
 
     private void updateButtons() {
@@ -871,31 +835,15 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         if (this.contentArea == null || this.wizard.step() != CreateWizardModel.Step.DETAILS) {
             return false;
         }
-        int iconX = this.iconAreaX();
-        int iconY = this.iconAreaY();
-        return mouseX >= iconX && mouseX <= iconX + 48 && mouseY >= iconY && mouseY <= iconY + 48;
+        return WorldPreviewCard.iconHovered(this.iconAreaX(), this.iconAreaY(), mouseX, mouseY);
     }
 
     private int iconAreaX() {
-        if (this.contentArea == null) {
-            return 0;
-        }
-        int fieldsRight = this.contentArea.left() + 38 + Math.min(190, this.contentArea.width() - 140);
-        int previewRight = this.previewCardX() + SharedWorldServerList.ROW_WIDTH;
-        return fieldsRight + ((previewRight - fieldsRight) - 48) / 2;
+        return this.contentArea == null ? 0 : WorldPreviewCard.iconX(this.contentArea);
     }
 
     private int iconAreaY() {
-        if (this.contentArea == null) {
-            return 0;
-        }
-        int top = this.contentArea.top();
-        int previewTop = this.previewCardY();
-        return top + ((previewTop - top) - 48) / 2;
-    }
-
-    private int previewCardX() {
-        return this.contentArea.left() + (this.contentArea.width() - SharedWorldServerList.ROW_WIDTH) / 2;
+        return this.contentArea == null ? 0 : WorldPreviewCard.iconY(this.contentArea, this.previewCardY());
     }
 
     private int previewCardY() {

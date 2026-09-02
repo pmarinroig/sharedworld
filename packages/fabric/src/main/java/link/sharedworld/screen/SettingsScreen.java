@@ -42,14 +42,14 @@ public final class SettingsScreen extends link.sharedworld.versioned.VersionedSc
     private final StorageTab storageTab = new StorageTab();
     private final AdvancedTab advancedTab = new AdvancedTab();
 
-    private StorageAccountSummaryDto account;
-    private StorageAccountSummaryDto s3Account;
+    /** Google Drive: provider null on the wire; reconnecting a dead grant needs a forced-consent OAuth round. */
+    private final ProviderRow driveRow = new ProviderRow(null, true,
+            "screen.sharedworld.account_status_not_linked", "screen.sharedworld.account_status_linked", "screen.sharedworld.account_status_linked_unhealthy");
+    /** S3-compatible bucket: the link form, no consent step, no health distinction. */
+    private final ProviderRow s3Row = new ProviderRow("s3", false,
+            "screen.sharedworld.account_s3_status_not_linked", "screen.sharedworld.account_s3_status_linked", "screen.sharedworld.account_s3_status_linked");
     private boolean accountCheckStarted;
     private boolean accountCheckFinished;
-    private boolean unlinkArmed;
-    private boolean unlinkInFlight;
-    private boolean s3UnlinkArmed;
-    private boolean s3UnlinkInFlight;
     private boolean reconnectInFlight;
     /** Provider of the link flow in flight ("s3" or null = Google Drive), for the success banner. */
     private String activeLinkProvider;
@@ -59,10 +59,6 @@ public final class SettingsScreen extends link.sharedworld.versioned.VersionedSc
     private TabNavigationBar tabNavigationBar;
     private ScreenRectangle contentArea;
     private Tab lastTab;
-    private Button driveConnectButton;
-    private Button driveUnlinkButton;
-    private Button s3ConnectButton;
-    private Button s3UnlinkButton;
     private Button deleteAllButton;
     private Button backButton;
     private Button saveButton;
@@ -88,10 +84,8 @@ public final class SettingsScreen extends link.sharedworld.versioned.VersionedSc
                 .build());
         this.layout.visitWidgets(this::addRenderableWidget);
 
-        this.driveConnectButton = Button.builder(this.driveConnectLabel(), button -> this.onDriveConnectPressed()).width(98).build();
-        this.driveUnlinkButton = Button.builder(this.driveUnlinkLabel(), button -> this.onDriveUnlinkPressed()).width(98).build();
-        this.s3ConnectButton = Button.builder(this.s3ConnectLabel(), button -> this.beginLinkFlow("s3", false)).width(98).build();
-        this.s3UnlinkButton = Button.builder(this.s3UnlinkLabel(), button -> this.onS3UnlinkPressed()).width(98).build();
+        this.driveRow.buildButtons();
+        this.s3Row.buildButtons();
         this.deleteAllButton = Button.builder(Component.translatable("screen.sharedworld.account_delete_all"), button -> {
             link.sharedworld.versioned.ClientCompat.setScreen(this.minecraft, new DeleteAccountConfirmScreen(this));
         }).width(200).build();
@@ -182,8 +176,8 @@ public final class SettingsScreen extends link.sharedworld.versioned.VersionedSc
         }
         this.lastTab = currentTab;
         // A pending "Confirm?" should not survive a tab hop.
-        this.unlinkArmed = false;
-        this.s3UnlinkArmed = false;
+        this.driveRow.unlinkArmed = false;
+        this.s3Row.unlinkArmed = false;
         this.repositionElements();
         this.updateButtons();
     }
@@ -192,8 +186,8 @@ public final class SettingsScreen extends link.sharedworld.versioned.VersionedSc
         int centerX = this.width / 2;
         int top = this.contentArea.top();
         int maxWidth = Math.min(320, this.width - 24);
-        guiGraphics.drawCenteredString(this.font, this.clampToWidth(this.driveStatusLine(), maxWidth), centerX, top + 12, 0xFFB0B0B0);
-        guiGraphics.drawCenteredString(this.font, this.clampToWidth(this.s3StatusLine(), maxWidth), centerX, top + 62, 0xFFB0B0B0);
+        guiGraphics.drawCenteredString(this.font, this.clampToWidth(this.driveRow.statusLine(), maxWidth), centerX, top + 12, 0xFFB0B0B0);
+        guiGraphics.drawCenteredString(this.font, this.clampToWidth(this.s3Row.statusLine(), maxWidth), centerX, top + 62, 0xFFB0B0B0);
     }
 
     /**
@@ -223,57 +217,6 @@ public final class SettingsScreen extends link.sharedworld.versioned.VersionedSc
         WrappedText.draw(guiGraphics, this.font, Component.translatable("screen.sharedworld.custom_join_address_explain_3"), left, textTop, textWidth, 0xFFA0A0A0);
     }
 
-
-    private Component driveStatusLine() {
-        if (!this.accountCheckFinished) {
-            return Component.translatable("screen.sharedworld.account_status_loading");
-        }
-        if (this.account == null || !this.account.linked()) {
-            return Component.translatable("screen.sharedworld.account_status_not_linked");
-        }
-        String who = this.account.email() != null ? this.account.email() : "?";
-        return Component.translatable(this.account.healthy()
-                ? "screen.sharedworld.account_status_linked"
-                : "screen.sharedworld.account_status_linked_unhealthy", who);
-    }
-
-    private Component s3StatusLine() {
-        if (!this.accountCheckFinished) {
-            return Component.translatable("screen.sharedworld.account_status_loading");
-        }
-        if (this.s3Account == null || !this.s3Account.linked()) {
-            return Component.translatable("screen.sharedworld.account_s3_status_not_linked");
-        }
-        String which = this.s3Account.email() != null ? this.s3Account.email() : "?";
-        return Component.translatable("screen.sharedworld.account_s3_status_linked", which);
-    }
-
-    private Component driveConnectLabel() {
-        boolean linked = this.account != null && this.account.linked();
-        return Component.translatable(linked
-                ? "screen.sharedworld.storage_reconnect"
-                : "screen.sharedworld.storage_connect");
-    }
-
-    private Component driveUnlinkLabel() {
-        return Component.translatable(this.unlinkArmed
-                ? "screen.sharedworld.storage_disconnect_confirm"
-                : "screen.sharedworld.storage_disconnect");
-    }
-
-    private Component s3ConnectLabel() {
-        boolean linked = this.s3Account != null && this.s3Account.linked();
-        return Component.translatable(linked
-                ? "screen.sharedworld.storage_reconnect"
-                : "screen.sharedworld.storage_connect");
-    }
-
-    private Component s3UnlinkLabel() {
-        return Component.translatable(this.s3UnlinkArmed
-                ? "screen.sharedworld.storage_disconnect_confirm"
-                : "screen.sharedworld.storage_disconnect");
-    }
-
     private boolean isAdvancedDirty() {
         if (this.customJoinBox == null) {
             return false;
@@ -300,85 +243,6 @@ public final class SettingsScreen extends link.sharedworld.versioned.VersionedSc
         this.statusBanner.setTransient(SharedWorldStatusBanner.Kind.SUCCESS,
                 Component.translatable("screen.sharedworld.settings_saved"), SUCCESS_STATUS_TTL_MS);
         this.updateButtons();
-    }
-
-    /**
-     * The repair path for a dead Google grant (revoked, expired refresh
-     * token): a fresh forced-consent OAuth round in the browser, polled here
-     * until it lands on the same account row.
-     */
-    private void onDriveConnectPressed() {
-        this.beginLinkFlow(null, true);
-    }
-
-    private void onDriveUnlinkPressed() {
-        if (this.unlinkInFlight) {
-            return;
-        }
-        if (!this.unlinkArmed) {
-            this.unlinkArmed = true;
-            this.updateButtons();
-            return;
-        }
-        this.unlinkArmed = false;
-        this.unlinkInFlight = true;
-        this.updateButtons();
-        CompletableFuture
-                .runAsync(() -> {
-                    try {
-                        SharedWorldClient.apiClient().unlinkStorageAccount();
-                    } catch (Exception exception) {
-                        throw new RuntimeException(exception);
-                    }
-                }, SharedWorldClient.ioExecutor())
-                .whenComplete((ignored, error) -> ScreenGuards.runIfCurrent(this, () -> {
-                    this.unlinkInFlight = false;
-                    if (error != null) {
-                        // 409 storage_unlink_blocked arrives with the server's
-                        // actionable message ("delete your worlds first").
-                        this.statusBanner.set(SharedWorldStatusBanner.Kind.ERROR,
-                                Component.literal(SharedWorldText.errorMessageOrDefault(rootCause(error).getMessage())));
-                    } else {
-                        this.account = new StorageAccountSummaryDto(false, this.account == null ? null : this.account.provider(), null, false);
-                        this.statusBanner.setTransient(SharedWorldStatusBanner.Kind.SUCCESS,
-                                Component.translatable("screen.sharedworld.storage_disconnect_done"), SUCCESS_STATUS_TTL_MS);
-                    }
-                    this.updateButtons();
-                }));
-    }
-
-    private void onS3UnlinkPressed() {
-        if (this.s3UnlinkInFlight) {
-            return;
-        }
-        if (!this.s3UnlinkArmed) {
-            this.s3UnlinkArmed = true;
-            this.updateButtons();
-            return;
-        }
-        this.s3UnlinkArmed = false;
-        this.s3UnlinkInFlight = true;
-        this.updateButtons();
-        CompletableFuture
-                .runAsync(() -> {
-                    try {
-                        SharedWorldClient.apiClient().unlinkStorageAccount("s3");
-                    } catch (Exception exception) {
-                        throw new RuntimeException(exception);
-                    }
-                }, SharedWorldClient.ioExecutor())
-                .whenComplete((ignored, error) -> ScreenGuards.runIfCurrent(this, () -> {
-                    this.s3UnlinkInFlight = false;
-                    if (error != null) {
-                        this.statusBanner.set(SharedWorldStatusBanner.Kind.ERROR,
-                                Component.literal(SharedWorldText.errorMessageOrDefault(rootCause(error).getMessage())));
-                    } else {
-                        this.s3Account = new StorageAccountSummaryDto(false, "s3", null, false);
-                        this.statusBanner.setTransient(SharedWorldStatusBanner.Kind.SUCCESS,
-                                Component.translatable("screen.sharedworld.storage_disconnect_done"), SUCCESS_STATUS_TTL_MS);
-                    }
-                    this.updateButtons();
-                }));
     }
 
     /** provider null = Google Drive OAuth; "s3" = the bucket form. */
@@ -470,33 +334,17 @@ public final class SettingsScreen extends link.sharedworld.versioned.VersionedSc
                         this.statusBanner.set(SharedWorldStatusBanner.Kind.ERROR,
                                 Component.literal(SharedWorldText.errorMessageOrDefault(rootCause(error).getMessage())));
                     } else {
-                        this.account = result.drive();
-                        this.s3Account = result.s3();
+                        this.driveRow.account = result.drive();
+                        this.s3Row.account = result.s3();
                     }
                     this.updateButtons();
                 }));
     }
 
     private void updateButtons() {
-        boolean busy = this.unlinkInFlight || this.reconnectInFlight || this.s3UnlinkInFlight;
-        if (this.driveConnectButton != null) {
-            this.driveConnectButton.setMessage(this.driveConnectLabel());
-            this.driveConnectButton.active = this.accountCheckFinished && !busy;
-        }
-        if (this.driveUnlinkButton != null) {
-            this.driveUnlinkButton.setMessage(this.driveUnlinkLabel());
-            this.driveUnlinkButton.active = this.accountCheckFinished
-                    && this.account != null && this.account.linked() && !busy;
-        }
-        if (this.s3ConnectButton != null) {
-            this.s3ConnectButton.setMessage(this.s3ConnectLabel());
-            this.s3ConnectButton.active = this.accountCheckFinished && !busy;
-        }
-        if (this.s3UnlinkButton != null) {
-            this.s3UnlinkButton.setMessage(this.s3UnlinkLabel());
-            this.s3UnlinkButton.active = this.accountCheckFinished
-                    && this.s3Account != null && this.s3Account.linked() && !busy;
-        }
+        boolean busy = this.driveRow.unlinkInFlight || this.s3Row.unlinkInFlight || this.reconnectInFlight;
+        this.driveRow.updateButtons(busy);
+        this.s3Row.updateButtons(busy);
         if (this.deleteAllButton != null) {
             this.deleteAllButton.active = !busy;
         }
@@ -507,6 +355,122 @@ public final class SettingsScreen extends link.sharedworld.versioned.VersionedSc
         }
     }
 
+    /**
+     * One storage provider on the Storage tab: its account summary, a Connect
+     * (or Reconnect) button and a two-press Disconnect button. Drive and S3
+     * differ only in the wire provider id, whether linking needs a forced
+     * OAuth consent, and the status-line translations.
+     */
+    private final class ProviderRow {
+        private final String provider;
+        private final boolean forceConsentOnLink;
+        private final String notLinkedKey;
+        private final String linkedKey;
+        private final String linkedUnhealthyKey;
+        private StorageAccountSummaryDto account;
+        private boolean unlinkArmed;
+        private boolean unlinkInFlight;
+        private Button connectButton;
+        private Button unlinkButton;
+
+        private ProviderRow(String provider, boolean forceConsentOnLink, String notLinkedKey, String linkedKey, String linkedUnhealthyKey) {
+            this.provider = provider;
+            this.forceConsentOnLink = forceConsentOnLink;
+            this.notLinkedKey = notLinkedKey;
+            this.linkedKey = linkedKey;
+            this.linkedUnhealthyKey = linkedUnhealthyKey;
+        }
+
+        private boolean linked() {
+            return this.account != null && this.account.linked();
+        }
+
+        private void buildButtons() {
+            this.connectButton = Button.builder(this.connectLabel(), button -> SettingsScreen.this.beginLinkFlow(this.provider, this.forceConsentOnLink)).width(98).build();
+            this.unlinkButton = Button.builder(this.unlinkLabel(), button -> this.onUnlinkPressed()).width(98).build();
+        }
+
+        private void visitButtons(Consumer<AbstractWidget> consumer) {
+            consumer.accept(this.connectButton);
+            consumer.accept(this.unlinkButton);
+        }
+
+        private void layout(int centerX, int y) {
+            this.connectButton.setPosition(centerX - 100, y);
+            this.unlinkButton.setPosition(centerX + 2, y);
+        }
+
+        private Component statusLine() {
+            if (!SettingsScreen.this.accountCheckFinished) {
+                return Component.translatable("screen.sharedworld.account_status_loading");
+            }
+            if (!this.linked()) {
+                return Component.translatable(this.notLinkedKey);
+            }
+            String who = this.account.email() != null ? this.account.email() : "?";
+            return Component.translatable(this.account.healthy() ? this.linkedKey : this.linkedUnhealthyKey, who);
+        }
+
+        private Component connectLabel() {
+            return Component.translatable(this.linked()
+                    ? "screen.sharedworld.storage_reconnect"
+                    : "screen.sharedworld.storage_connect");
+        }
+
+        private Component unlinkLabel() {
+            return Component.translatable(this.unlinkArmed
+                    ? "screen.sharedworld.storage_disconnect_confirm"
+                    : "screen.sharedworld.storage_disconnect");
+        }
+
+        private void updateButtons(boolean busy) {
+            if (this.connectButton == null) {
+                return;
+            }
+            this.connectButton.setMessage(this.connectLabel());
+            this.connectButton.active = SettingsScreen.this.accountCheckFinished && !busy;
+            this.unlinkButton.setMessage(this.unlinkLabel());
+            this.unlinkButton.active = SettingsScreen.this.accountCheckFinished && this.linked() && !busy;
+        }
+
+        /** First press arms ("Confirm?"), second press disconnects. */
+        private void onUnlinkPressed() {
+            if (this.unlinkInFlight) {
+                return;
+            }
+            if (!this.unlinkArmed) {
+                this.unlinkArmed = true;
+                SettingsScreen.this.updateButtons();
+                return;
+            }
+            this.unlinkArmed = false;
+            this.unlinkInFlight = true;
+            SettingsScreen.this.updateButtons();
+            CompletableFuture
+                    .runAsync(() -> {
+                        try {
+                            SharedWorldClient.apiClient().unlinkStorageAccount(this.provider);
+                        } catch (Exception exception) {
+                            throw new RuntimeException(exception);
+                        }
+                    }, SharedWorldClient.ioExecutor())
+                    .whenComplete((ignored, error) -> ScreenGuards.runIfCurrent(SettingsScreen.this, () -> {
+                        this.unlinkInFlight = false;
+                        if (error != null) {
+                            // 409 storage_unlink_blocked arrives with the server's
+                            // actionable message ("delete your worlds first").
+                            SettingsScreen.this.statusBanner.set(SharedWorldStatusBanner.Kind.ERROR,
+                                    Component.literal(SharedWorldText.errorMessageOrDefault(rootCause(error).getMessage())));
+                        } else {
+                            String keptProvider = this.provider != null ? this.provider : this.account == null ? null : this.account.provider();
+                            this.account = new StorageAccountSummaryDto(false, keptProvider, null, false);
+                            SettingsScreen.this.statusBanner.setTransient(SharedWorldStatusBanner.Kind.SUCCESS,
+                                    Component.translatable("screen.sharedworld.storage_disconnect_done"), SUCCESS_STATUS_TTL_MS);
+                        }
+                        SettingsScreen.this.updateButtons();
+                    }));
+        }
+    }
 
     private final class StorageTab extends link.sharedworld.versioned.VersionedTab {
         @Override
@@ -521,10 +485,8 @@ public final class SettingsScreen extends link.sharedworld.versioned.VersionedSc
 
         @Override
         public void visitChildren(Consumer<AbstractWidget> consumer) {
-            consumer.accept(SettingsScreen.this.driveConnectButton);
-            consumer.accept(SettingsScreen.this.driveUnlinkButton);
-            consumer.accept(SettingsScreen.this.s3ConnectButton);
-            consumer.accept(SettingsScreen.this.s3UnlinkButton);
+            SettingsScreen.this.driveRow.visitButtons(consumer);
+            SettingsScreen.this.s3Row.visitButtons(consumer);
             consumer.accept(SettingsScreen.this.deleteAllButton);
         }
 
@@ -532,10 +494,8 @@ public final class SettingsScreen extends link.sharedworld.versioned.VersionedSc
         public void doLayout(ScreenRectangle area) {
             int centerX = SettingsScreen.this.width / 2;
             int top = area.top();
-            SettingsScreen.this.driveConnectButton.setPosition(centerX - 100, top + 24);
-            SettingsScreen.this.driveUnlinkButton.setPosition(centerX + 2, top + 24);
-            SettingsScreen.this.s3ConnectButton.setPosition(centerX - 100, top + 74);
-            SettingsScreen.this.s3UnlinkButton.setPosition(centerX + 2, top + 74);
+            SettingsScreen.this.driveRow.layout(centerX, top + 24);
+            SettingsScreen.this.s3Row.layout(centerX, top + 74);
             SettingsScreen.this.deleteAllButton.setPosition(centerX - 100, top + 108);
         }
     }

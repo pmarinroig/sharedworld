@@ -32,10 +32,4 @@ final class HostLifecyclePolicy {
                 ? SharedWorldReleaseCoordinator.HostAuthorityLossStage.SNAPSHOT_UPLOAD
                 : SharedWorldReleaseCoordinator.HostAuthorityLossStage.LIVE;
     }
-
-    static String runningStatusMessage(String publishedJoinTarget) {
-        return publishedJoinTarget == null
-                ? SharedWorldText.string("screen.sharedworld.hosting_running")
-                : SharedWorldText.string("screen.sharedworld.hosting_live_at", publishedJoinTarget);
-    }
 }

@@ -21,7 +21,6 @@ import net.minecraft.client.gui.layouts.HeaderAndFooterLayout;
 import net.minecraft.client.gui.layouts.LinearLayout;
 import net.minecraft.client.gui.navigation.ScreenRectangle;
 import net.minecraft.client.gui.screens.FaviconTexture;
-import link.sharedworld.versioned.GuiBlit;
 import link.sharedworld.versioned.VersionedScreen;
 import net.minecraft.network.chat.Component;
 
@@ -43,10 +42,6 @@ import java.util.function.Consumer;
 public final class EditSharedWorldScreen extends VersionedScreen {
     private static final int FOOTER_HEIGHT = 36;
     private static final int CONTENT_MARGIN = 12;
-    private static final String EDIT_ICON_SPRITE = "sharedworld:edit_icon";
-    private static final String EDIT_ICON_HIGHLIGHTED_SPRITE = "sharedworld:edit_icon_highlighted";
-    private static final String DELETE_ICON_HIGHLIGHTED_SPRITE = "sharedworld:delete_icon_highlighted";
-    private static final String PING_5_SPRITE = "minecraft:server_list/ping_5";
     private static final long SUCCESS_STATUS_TTL_MS = 7_000;
 
     private final SharedWorldScreen parent;
@@ -339,21 +334,8 @@ public final class EditSharedWorldScreen extends VersionedScreen {
 
         guiGraphics.drawString(this.font, Component.translatable("screen.sharedworld.world_name"), left, top + 10, 0xFFA0A0A0);
         guiGraphics.drawString(this.font, Component.translatable("screen.sharedworld.motd"), left, top + 58, 0xFFA0A0A0);
-        GuiBlit.favicon(guiGraphics, this.previewTexture, iconX, iconY, 48);
-        if (this.isOwner()) {
-            // Always-visible pencil badge: the icon well is a button, say so silently.
-            // The dark chip keeps the pencil readable over any world screenshot.
-            guiGraphics.fill(iconX + 48 - 16, iconY + 48 - 16, iconX + 48, iconY + 48, 0xB0000000);
-            GuiBlit.sprite(guiGraphics, EDIT_ICON_SPRITE, iconX + 48 - 14, iconY + 48 - 14, 12, 12);
-        }
-
-        if (this.iconHovered && this.isOwner()) {
-            guiGraphics.fill(iconX, iconY, iconX + 48, iconY + 48, 0x80000000);
-            String sprite = this.selectedIcon != null || this.hasCurrentCustomIcon() ? DELETE_ICON_HIGHLIGHTED_SPRITE : EDIT_ICON_HIGHLIGHTED_SPRITE;
-            GuiBlit.sprite(guiGraphics, sprite, iconX + 12, iconY + 12, 24, 24);
-        }
-
-        this.renderServerCardPreview(guiGraphics);
+        WorldPreviewCard.renderIconWell(guiGraphics, this.previewTexture, iconX, iconY, this.isOwner(), this.iconHovered, this.selectedIcon != null || this.hasCurrentCustomIcon());
+        WorldPreviewCard.renderCard(guiGraphics, this.font, this.previewTexture, WorldPreviewCard.cardX(this.contentArea), this.previewCardY(), this.previewWorldName(), this.previewMotd());
         if (this.shouldShowDetailsValidation()) {
             guiGraphics.drawString(
                     this.font,
@@ -997,26 +979,15 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         if (this.contentArea == null || this.tabManager.getCurrentTab() != this.detailsTab) {
             return false;
         }
-        int iconX = this.iconAreaX();
-        int iconY = this.iconAreaY();
-        return mouseX >= iconX && mouseX <= iconX + 48 && mouseY >= iconY && mouseY <= iconY + 48;
+        return WorldPreviewCard.iconHovered(this.iconAreaX(), this.iconAreaY(), mouseX, mouseY);
     }
 
     private int iconAreaX() {
-        int left = this.contentArea.left() + 38;
-        int fieldsRight = left + Math.min(190, this.contentArea.width() - 140);
-        int previewRight = this.previewCardX() + SharedWorldServerList.ROW_WIDTH;
-        return fieldsRight + ((previewRight - fieldsRight) - 48) / 2;
+        return WorldPreviewCard.iconX(this.contentArea);
     }
 
     private int iconAreaY() {
-        int top = this.contentArea.top();
-        int previewTop = this.previewCardY();
-        return top + ((previewTop - top) - 48) / 2;
-    }
-
-    private int previewCardX() {
-        return this.contentArea.left() + (this.contentArea.width() - SharedWorldServerList.ROW_WIDTH) / 2;
+        return WorldPreviewCard.iconY(this.contentArea, this.previewCardY());
     }
 
     private int previewCardY() {
@@ -1036,25 +1007,6 @@ public final class EditSharedWorldScreen extends VersionedScreen {
         int footerTop = this.height - FOOTER_HEIGHT;
         int centered = replaceBottom + ((footerTop - replaceBottom) - SharedWorldServerList.ROW_HEIGHT) / 2;
         return Math.max(replaceBottom + 6, centered);
-    }
-
-    private void renderServerCardPreview(GuiGraphics guiGraphics) {
-        int rowX = this.previewCardX();
-        int rowY = this.previewCardY();
-        int contentX = rowX + SharedWorldServerList.CONTENT_PADDING;
-        int contentY = rowY + SharedWorldServerList.CONTENT_PADDING;
-        SharedWorldServerList.renderSelectedOutline(guiGraphics, rowX, rowY, true);
-        GuiBlit.favicon(guiGraphics, this.previewTexture, contentX, contentY, 32);
-        SharedWorldServerList.renderRowContents(
-                guiGraphics,
-                this.font,
-                rowX,
-                rowY,
-                this.previewWorldName(),
-                this.previewMotd(),
-                SharedWorldText.playerCount(0, 8),
-                PING_5_SPRITE
-        );
     }
 
     private String previewWorldName() {
