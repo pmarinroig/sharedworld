@@ -691,9 +691,12 @@ public final class SharedWorldCoordinatorHarness {
                     : this.runtimeAfterComplete;
         }
 
+        public Boolean lastReleaseGraceful;
+
         @Override
         public void releaseHost(String worldId, long runtimeEpoch, String hostToken, boolean graceful) throws Exception {
             this.releaseCalls += 1;
+            this.lastReleaseGraceful = graceful;
             this.failures.throwIfNeeded("releaseHost");
             this.runtime = new WorldRuntimeStatusDto(worldId, "idle", runtimeEpoch + 1L, null, null, null, null, null, null, null, null, null);
         }

@@ -501,6 +501,51 @@ public final class SharedWorldReleaseCoordinator {
         return true;
     }
 
+    /**
+     * The host gives up on a parked release (a recoverable upload failure such as
+     * a full Drive) instead of retrying: the runtime is released without the
+     * graceful flag so the backend records an unclean-shutdown warning and the
+     * next player is asked before starting from the last backup; the local
+     * release record is dropped and onDone runs. The local-changes marker
+     * deliberately stays: the working copy still holds the unpublished progress
+     * and the next host start from this machine offers to publish it. The wire
+     * call is best effort: an unreachable backend expires the runtime on its
+     * own with the same warning, so local state is cleared either way.
+     */
+    public void abandonParkedRelease(Runnable onDone) {
+        ReleaseState current = this.state;
+        if (this.terminalState != null
+                || current == null
+                || current.record.phase != SharedWorldReleasePhase.ERROR_RECOVERABLE
+                || current.abandonInFlight
+                || !canDiscardLocalReleaseState()) {
+            return;
+        }
+        current.abandonInFlight = true;
+        SharedWorldReleaseStore.ReleaseRecord record = current.record.copy();
+        long attemptId = record.releaseAttemptId;
+        this.asyncBridge.run(() -> {
+            if (record.runtimeEpoch > 0L && record.hostToken != null && !record.hostToken.isBlank()) {
+                this.backend.releaseHost(record.worldId, record.runtimeEpoch, record.hostToken, false);
+            }
+        }, error -> {
+            ReleaseState latest = this.state;
+            if (latest == null || latest.record.releaseAttemptId != attemptId) {
+                return;
+            }
+            latest.abandonInFlight = false;
+            if (error != null && !isSafePendingReleaseDiscardError(error)) {
+                LOGGER.warn("SharedWorld could not release the parked host runtime for {}; the backend expires it on its own", record.worldId, error);
+            }
+            if (discardLocalReleaseState()) {
+                if (this.hostControl.activeHostSession() != null) {
+                    this.hostControl.clearHostedSessionAfterTerminalExit();
+                }
+                onDone.run();
+            }
+        });
+    }
+
     public boolean discardPendingReleaseIfMatches(String worldId) {
         if (worldId == null || worldId.isBlank()) {
             return false;
@@ -1466,6 +1511,7 @@ public final class SharedWorldReleaseCoordinator {
     private static final class ReleaseState {
         private SharedWorldReleaseStore.ReleaseRecord record;
         private SharedWorldProgressState progressState;
+        private boolean abandonInFlight;
         private String errorMessage;
         private SharedWorldTerminalReasonKind errorKind;
         /**

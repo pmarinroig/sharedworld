@@ -701,9 +701,14 @@ impl WorldCoordinator {
         }
         let runtime = runtime.unwrap();
         self.store.delete_waiter(&actor.player_uuid);
-        self.retire_runtime(&runtime, now).await?;
         if graceful {
+            self.retire_runtime(&runtime, now).await?;
             self.store.clear_warning();
+        } else {
+            // A host giving up mid-session or mid-finalization (a parked upload
+            // it chose to abandon) leaves progress behind exactly like a blown
+            // lease does, so the next entrant gets the same warning.
+            self.expire_runtime(&runtime, now, false).await?;
         }
         let after = self.resolve(now).await?;
         self.release_result(graceful, &after, now).await

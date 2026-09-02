@@ -297,6 +297,38 @@ async fn expired_live_lease_records_warning_and_reentry_warns() {
 }
 
 #[tokio::test]
+async fn abandoning_a_finalizing_release_warns_the_next_entrant() {
+    let mut h = make();
+    seed_members(&h);
+    let auth = become_live_host(&mut h, &owner(), t0()).await;
+    h.coordinator.begin_finalization(&owner(), &auth, at(5)).await.unwrap();
+    // The host parks on a failed final upload and chooses to keep the changes
+    // locally: a non-graceful release records the same warning a blown lease would.
+    let released = h.coordinator.release_host(&owner(), &auth, false, at(10)).await.unwrap();
+    assert!(!released.graceful);
+    assert!(runtime(&h).is_none());
+    let warning = h.coordinator.store().get_warning().unwrap();
+    assert_eq!(warning.phase, UncleanShutdownPhase::HostFinalizing);
+    assert_eq!(warning.host_uuid, "owner-uuid");
+    let entry = h.coordinator.enter_session(&guest(), None, false, at(11)).await.unwrap();
+    assert_eq!(entry.action, EnterSessionAction::WarnHost);
+    let ack = h.coordinator.enter_session(&guest(), None, true, at(12)).await.unwrap();
+    assert_eq!(ack.action, EnterSessionAction::Host);
+}
+
+#[tokio::test]
+async fn graceful_release_from_finalizing_leaves_no_warning() {
+    let mut h = make();
+    seed_members(&h);
+    let auth = become_live_host(&mut h, &owner(), t0()).await;
+    h.coordinator.begin_finalization(&owner(), &auth, at(5)).await.unwrap();
+    h.coordinator.release_host(&owner(), &auth, true, at(10)).await.unwrap();
+    assert!(h.coordinator.store().get_warning().is_none());
+    let entry = h.coordinator.enter_session(&guest(), None, false, at(11)).await.unwrap();
+    assert_eq!(entry.action, EnterSessionAction::Host);
+}
+
+#[tokio::test]
 async fn release_replay_succeeds_without_minting_authority() {
     let mut h = make();
     seed_members(&h);

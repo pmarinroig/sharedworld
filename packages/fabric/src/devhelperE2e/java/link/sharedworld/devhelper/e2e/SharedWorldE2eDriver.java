@@ -66,6 +66,9 @@ public final class SharedWorldE2eDriver {
         DRIVE_FAILURE_SESSION,
         DRIVE_FAILURE_AWAIT_RECONNECT_SCREEN,
         DRIVE_FAILURE_RECONNECT_INTERACT,
+        DRIVE_FAILURE_AWAIT_HUB,
+        DRIVE_FAILURE_AWAIT_REHOST_GO,
+        DRIVE_FAILURE_REHOST_AWAIT_LIVE,
         AWAIT_RELEASE_COMPLETE,
         AWAIT_EXIT
     }
@@ -174,6 +177,8 @@ public final class SharedWorldE2eDriver {
     private int tourEditTabIndex;
     private final AtomicBoolean asyncInFlight = new AtomicBoolean(false);
     private final AtomicReference<WorldSummaryDto> targetWorld = new AtomicReference<>();
+    /** The world this host driver created, for the drive-failure re-host leg. */
+    private volatile String hostedWorldId;
     private boolean driveLinkPressed;
     private boolean driveLinkFetched;
     private boolean joinTargetInjected;
@@ -429,7 +434,10 @@ public final class SharedWorldE2eDriver {
                     return;
                 }
                 if (minecraft.screen instanceof SharedWorldScreen) {
-                    this.lookUpWorldByName(world -> this.markers.emit("world-created", world.id()));
+                    this.lookUpWorldByName(world -> {
+                        this.hostedWorldId = world.id();
+                        this.markers.emit("world-created", world.id());
+                    });
                     WorldSummaryDto created = this.targetWorld.get();
                     if (created != null) {
                         this.configureCustomJoinAddress();
@@ -715,6 +723,57 @@ public final class SharedWorldE2eDriver {
                     // reportErrorScreens already emitted drive-reconnect-screen.
                     this.screenshot(minecraft, "drive-reconnect-screen");
                     this.hostStep = HostStep.DRIVE_FAILURE_RECONNECT_INTERACT;
+                } else if (minecraft.screen instanceof SharedWorldErrorScreen) {
+                    // A storage-full release parks on the plain error screen
+                    // (Retry Saving plus the keep-changes escape hatch).
+                    this.screenshot(minecraft, "release-error-screen");
+                    this.hostStep = HostStep.DRIVE_FAILURE_RECONNECT_INTERACT;
+                }
+            }
+            case DRIVE_FAILURE_AWAIT_HUB -> {
+                // The escape hatch must land on the SharedWorld hub with no
+                // release state left and the hosting manager back at idle.
+                if (minecraft.screen instanceof SharedWorldScreen
+                        && SharedWorldClient.releaseCoordinator().view() == null
+                        && SharedWorldClient.hostingManager().phase() == SharedWorldHostingManager.Phase.IDLE) {
+                    this.markers.emit("left-to-hub", null);
+                    this.hostStep = HostStep.DRIVE_FAILURE_AWAIT_REHOST_GO;
+                }
+            }
+            case DRIVE_FAILURE_AWAIT_REHOST_GO -> {
+                if (!"rehost-go".equals(this.commands.poll())) {
+                    return;
+                }
+                this.markers.emit("rehost-go-received", null);
+                String worldId = this.hostedWorldId;
+                WorldSummaryDto world = SharedWorldClient.listState().cachedWorlds().stream()
+                        .filter(candidate -> candidate.id().equals(worldId))
+                        .findFirst()
+                        .orElse(null);
+                if (minecraft.screen instanceof SharedWorldScreen screen && world != null) {
+                    SharedWorldClient.sessionCoordinator().beginJoin(screen, world);
+                    this.markers.emit("rehost-requested", world.id());
+                    this.hostStep = HostStep.DRIVE_FAILURE_REHOST_AWAIT_LIVE;
+                } else {
+                    this.markers.emit("driver-exception", "rehost-go: hub not showing world " + worldId);
+                }
+            }
+            case DRIVE_FAILURE_REHOST_AWAIT_LIVE -> {
+                // The abandoned upload left an unclean-shutdown warning, so even
+                // the same account is asked first; acknowledge it like a player
+                // (own shutdown: a single Launch press, no second confirmation).
+                if (minecraft.screen instanceof link.sharedworld.screen.UncleanShutdownWarningScreen screen) {
+                    if (WidgetAutomation.pressButton(screen, "screen.sharedworld.unclean_shutdown_launch")
+                            || WidgetAutomation.pressButton(screen, "screen.sharedworld.unclean_shutdown_confirm_launch")) {
+                        this.markers.emit("unclean-warning-acknowledged", null);
+                    }
+                    return;
+                }
+                // Custom join address is configured for this run, so nothing
+                // to inject; the startup publishes the kept local changes first.
+                if (SharedWorldClient.hostingManager().phase() == SharedWorldHostingManager.Phase.RUNNING) {
+                    this.markers.emit("rehost-live", null);
+                    this.hostStep = HostStep.DRIVE_FAILURE_SESSION;
                 }
             }
             case DRIVE_FAILURE_RECONNECT_INTERACT -> {
@@ -747,6 +806,18 @@ public final class SharedWorldE2eDriver {
                         }
                         this.escBouncePending = true;
                         this.escBounceAt = System.currentTimeMillis();
+                    }
+                    case "keep-and-leave" -> {
+                        Screen screen = minecraft.screen;
+                        if (screen != null
+                                && WidgetAutomation.pressButton(screen, "screen.sharedworld.release_keep_changes_and_leave")) {
+                            this.markers.emit("keep-and-leave-pressed", null);
+                            this.hostStep = HostStep.DRIVE_FAILURE_AWAIT_HUB;
+                        } else {
+                            this.markers.emit("driver-exception",
+                                    "keep-and-leave: button not found on "
+                                            + (screen == null ? "none" : screen.getClass().getSimpleName()));
+                        }
                     }
                     case "drive-reconnect" -> {
                         Screen screen = minecraft.screen;

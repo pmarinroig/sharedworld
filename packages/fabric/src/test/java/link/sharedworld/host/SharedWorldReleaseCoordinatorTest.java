@@ -816,6 +816,67 @@ final class SharedWorldReleaseCoordinatorTest {
     }
 
     /**
+     * A host parked on a failed final upload (full Drive) can give up instead of
+     * retrying: the runtime is released non-gracefully so the backend warns the
+     * next player, the local release record is dropped, and the host session is
+     * cleared. The local-changes marker is the hosting manager's business and
+     * survives (see clearHostedSessionAfterTerminalExit).
+     */
+    @Test
+    void abandoningAParkedUploadFailureReleasesNonGracefullyAndClearsLocalState() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            harness.hostControl.setActiveHostSession("world-1", "World", 7L, "token-7", "join.example");
+            harness.releaseBackend.setRuntime(SharedWorldCoordinatorHarness.runtime("world-1", "host-live", 7L, null, "join.example"));
+            harness.hostControl.failures().add("upload", new IOException("drive full"));
+
+            beginGracefulVanillaDisconnect(harness);
+            driveRelease(harness);
+            SharedWorldReleaseCoordinator.ReleaseView parked = harness.releaseCoordinator.view();
+            assertEquals(SharedWorldReleasePhase.ERROR_RECOVERABLE, parked.phase());
+            assertTrue(parked.canRetry());
+            assertTrue(parked.canDiscardLocalState());
+
+            boolean[] done = {false};
+            harness.releaseCoordinator.abandonParkedRelease(() -> done[0] = true);
+            harness.runUntilIdle();
+
+            assertTrue(done[0], "the caller's continuation runs once local state is gone");
+            assertEquals(1, harness.releaseBackend.releaseCalls());
+            assertEquals(Boolean.FALSE, harness.releaseBackend.lastReleaseGraceful, "non-graceful so the backend records the warning");
+            assertNull(harness.releaseCoordinator.view());
+            assertNull(harness.releaseStore.load());
+        } finally {
+            harness.close();
+        }
+    }
+
+    /** An unreachable backend must not trap the host either: the runtime expires server-side. */
+    @Test
+    void abandoningAParkedUploadFailureClearsLocalStateEvenWhenTheReleaseCallFails() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            harness.hostControl.setActiveHostSession("world-1", "World", 7L, "token-7", "join.example");
+            harness.releaseBackend.setRuntime(SharedWorldCoordinatorHarness.runtime("world-1", "host-live", 7L, null, "join.example"));
+            harness.hostControl.failures().add("upload", new IOException("drive full"));
+            beginGracefulVanillaDisconnect(harness);
+            driveRelease(harness);
+            assertEquals(SharedWorldReleasePhase.ERROR_RECOVERABLE, harness.releaseCoordinator.view().phase());
+
+            harness.releaseBackend.failures().add("releaseHost", new IOException("backend unreachable"));
+            boolean[] done = {false};
+            harness.releaseCoordinator.abandonParkedRelease(() -> done[0] = true);
+            harness.runUntilIdle();
+
+            assertTrue(done[0]);
+            assertNull(harness.releaseCoordinator.view());
+            assertNull(harness.releaseStore.load());
+        } finally {
+            harness.close();
+        }
+    }
+
+    /**
      * Field crash loop (0.4.2): alt-F4 while parked on the upload-failed retry
      * screen persists an ERROR_RECOVERABLE record, but errorKind lives only in
      * memory. On the next launch the restored view surfaced a null errorKind,

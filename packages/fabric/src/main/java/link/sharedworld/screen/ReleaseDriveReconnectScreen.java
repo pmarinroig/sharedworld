@@ -34,6 +34,7 @@ public final class ReleaseDriveReconnectScreen extends link.sharedworld.versione
     private volatile int reconnectGeneration;
     private Button reconnectButton;
     private Button retryButton;
+    private Button leaveButton;
 
     public ReleaseDriveReconnectScreen(Screen parent, Component title, Component body) {
         super(title);
@@ -53,6 +54,11 @@ public final class ReleaseDriveReconnectScreen extends link.sharedworld.versione
                         Component.translatable("screen.sharedworld.retry_finalization"),
                         button -> this.retryUpload())
                 .bounds(centerX - 100, this.height - 28, 200, 20)
+                .build());
+        this.leaveButton = this.addRenderableWidget(Button.builder(
+                        Component.translatable("screen.sharedworld.release_keep_changes_and_leave"),
+                        button -> SharedWorldClientLifecycleRouter.abandonParkedRelease(SharedWorldClient.releaseCoordinator(), this.parent))
+                .bounds(centerX - 100, this.height - 80, 200, 20)
                 .build());
         this.updateButtons();
     }
@@ -133,21 +139,25 @@ public final class ReleaseDriveReconnectScreen extends link.sharedworld.versione
         if (this.retryButton != null) {
             this.retryButton.active = !this.reconnectInFlight;
         }
+        if (this.leaveButton != null) {
+            this.leaveButton.active = !this.reconnectInFlight;
+        }
     }
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
         super.render(guiGraphics, mouseX, mouseY, partialTick);
         int centerX = this.width / 2;
-        int top = this.height / 2 - 60;
-        guiGraphics.drawCenteredString(this.font, this.title, centerX, top, 0xFFFFFFFF);
         List<FormattedCharSequence> lines = this.font.split(this.body, Math.min(this.width - 60, 320));
+        // Slide up at small window heights so the body clears the button stack.
+        int top = Math.max(8, Math.min(this.height / 2 - 60, this.height - 80 - 8 - (24 + lines.size() * 12)));
+        guiGraphics.drawCenteredString(this.font, this.title, centerX, top, 0xFFFFFFFF);
         int y = top + 24;
         for (FormattedCharSequence line : lines) {
             guiGraphics.drawCenteredString(this.font, line, centerX, y, 0xFFFF8080);
             y += 12;
         }
-        this.statusBanner.renderBottomCentered(guiGraphics, this.font, centerX, this.height - 60, Math.min(this.width - 40, 420));
+        this.statusBanner.renderBottomCentered(guiGraphics, this.font, centerX, this.height - 86, Math.min(this.width - 40, 420));
     }
 
     @Override

@@ -87,13 +87,23 @@ public final class SharedWorldClientLifecycleRouter {
             // player reach, so the flow lives on the screen itself.
             return new link.sharedworld.screen.ReleaseDriveReconnectScreen(parent, titleFor(view), Component.literal(detailFor(view)));
         }
+        // A parked recoverable failure (full Drive, dead link) must not trap the
+        // host: next to Retry they can keep the changes on this machine and leave.
+        boolean canAbandon = view.canRetry() && view.canDiscardLocalState();
         return new SharedWorldErrorScreen(
                 parent,
                 titleFor(view),
                 Component.literal(detailFor(view)),
                 actionLabelFor(view),
-                () -> handleTerminalAction(releaseCoordinator, view, parent)
+                () -> handleTerminalAction(releaseCoordinator, view, parent),
+                null,
+                canAbandon ? Component.translatable("screen.sharedworld.release_keep_changes_and_leave") : null,
+                canAbandon ? () -> abandonParkedRelease(releaseCoordinator, parent) : null
         );
+    }
+
+    public static void abandonParkedRelease(SharedWorldReleaseCoordinator releaseCoordinator, Screen parent) {
+        releaseCoordinator.abandonParkedRelease(() -> SharedWorldClient.openMainScreen(parent));
     }
 
     public static Screen defaultSavingScreen(String worldName) {
