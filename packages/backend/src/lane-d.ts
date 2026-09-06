@@ -266,10 +266,6 @@ export function createLaneDApp(env: LaneDEnv) {
         }
       }
       return forwardToBox(env, request);
-    },
-    /** No cron work in lane D (the box runs its own jobs). */
-    async scheduled(): Promise<number> {
-      return 0;
     }
   };
 }

@@ -3,7 +3,6 @@ import { createLaneDApp, isLaneD, type LaneDEnv } from "./lane-d.ts";
 
 export interface SharedWorldApp {
   fetch(request: Request, executionContext?: { waitUntil(task: Promise<unknown>): void }): Promise<Response>;
-  scheduled(now?: Date): Promise<number>;
 }
 
 /**
@@ -17,7 +16,7 @@ export function createApp(env: Env): SharedWorldApp {
     throw new Error("SharedWorld worker requires MODE=lane-d; the D1/DO backend was retired.");
   }
   const laneD = createLaneDApp(env as LaneDEnv);
-  return { fetch: (request) => laneD.fetch(request), scheduled: () => laneD.scheduled() };
+  return { fetch: (request) => laneD.fetch(request) };
 }
 
 export default {

@@ -17,6 +17,13 @@ enabled = true
 MODE = "lane-d"
 BOX_URL = "https://api.763616.xyz"
 
+# The box runs every job now. The empty list is load-bearing: without it
+# wrangler leaves whatever cron the script last had, and the minute cron
+# from the DO era kept firing into a handler with no scheduled() export
+# (1,440 errored invocations a day until it was cleared in 2026-09).
+[triggers]
+crons = []
+
 # The 0.3.0 Durable Object era, retired with the 2026-08-19 cutover to the
 # box. Migration tags are append-only history: v1 created the classes, v2
 # deleted them (and their storage) after the state was imported into the box.
