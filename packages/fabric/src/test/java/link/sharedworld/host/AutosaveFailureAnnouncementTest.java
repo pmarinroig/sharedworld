@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 
+import static link.sharedworld.host.SharedWorldHostingManager.autosaveRetryDelayMs;
 import static link.sharedworld.host.SharedWorldHostingManager.classifyAutosaveFailure;
 import static link.sharedworld.host.SharedWorldHostingManager.shouldAnnounceAutosaveFailure;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -45,6 +46,29 @@ final class AutosaveFailureAnnouncementTest {
         // behind the reminder interval.
         assertTrue(shouldAnnounceAutosaveFailure(
                 AutosaveFailureKind.DRIVE_FULL, 4, NOW, AutosaveFailureKind.GENERIC, NOW + 1));
+    }
+
+    @Test
+    void aRejectedBucketIsAnnouncedOnFirstFailure() {
+        assertTrue(shouldAnnounceAutosaveFailure(AutosaveFailureKind.S3_UNAUTHORIZED, 1, 0L, null, NOW));
+        assertEquals(AutosaveFailureKind.S3_UNAUTHORIZED,
+                classifyAutosaveFailure(new SharedWorldApiException("s3_unauthorized", "Bucket rejected the credentials.", 502)));
+    }
+
+    /**
+     * A failed autosave used to be retried on the very next tick; one bucket
+     * rejecting its credentials drew about seventy upload-prepare calls a
+     * minute. Transient failures wait a minute, host-fixable ones a full interval.
+     */
+    @Test
+    void failedAutosavesWaitBeforeRetrying() {
+        long interval = 5 * 60_000L;
+        assertEquals(60_000L, autosaveRetryDelayMs(AutosaveFailureKind.GENERIC, interval));
+        assertEquals(interval, autosaveRetryDelayMs(AutosaveFailureKind.S3_UNAUTHORIZED, interval));
+        assertEquals(interval, autosaveRetryDelayMs(AutosaveFailureKind.DRIVE_FULL, interval));
+        assertEquals(interval, autosaveRetryDelayMs(AutosaveFailureKind.DRIVE_REAUTH, interval));
+        // A dev-shortened interval never waits longer than the interval itself.
+        assertEquals(10_000L, autosaveRetryDelayMs(AutosaveFailureKind.GENERIC, 10_000L));
     }
 
     @Test

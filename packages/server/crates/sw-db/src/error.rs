@@ -12,6 +12,11 @@ pub enum DbError {
     /// `snapshot_manifest_unavailable` in the HTTP layer).
     #[error("snapshot manifest unavailable: {0}")]
     ManifestUnavailable(String),
+    /// A storage provider failed while the repository read through it
+    /// (manifest documents); carries the provider's own error so the HTTP
+    /// layer can answer with its status and code instead of a 500.
+    #[error("{0}")]
+    Upstream(Box<dyn std::error::Error + Send + Sync>),
     #[error("{0}")]
     Other(String),
 }

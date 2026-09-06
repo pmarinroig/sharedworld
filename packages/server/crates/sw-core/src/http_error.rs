@@ -52,6 +52,13 @@ impl From<sw_db::DbError> for HttpError {
             sw_db::DbError::ManifestUnavailable(msg) => {
                 HttpError::new(502, "snapshot_manifest_unavailable", msg)
             }
+            sw_db::DbError::Upstream(upstream) => match upstream.downcast::<HttpError>() {
+                Ok(http) => *http,
+                Err(other) => {
+                    tracing::error!(error = %other, "SharedWorld storage error");
+                    HttpError::internal("Internal server error.")
+                }
+            },
             other => {
                 tracing::error!(error = %other, "SharedWorld database error");
                 HttpError::internal("Internal server error.")

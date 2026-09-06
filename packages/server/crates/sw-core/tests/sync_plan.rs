@@ -1503,3 +1503,42 @@ async fn drive_bound_worlds_resolve_existence_from_storage_object_rows() {
     assert_eq!(plan.full_storage_key.as_deref(), Some("packs/full/ab/abc.pack"));
     assert!(plan.full_upload.is_none(), "the object row is the authoritative index");
 }
+
+/// A grant that dies after the snapshots were written used to surface on the
+/// download plan as a 500 internal_error: the manifest document read wrapped
+/// the provider's error into a generic database failure. Guests and the
+/// returning host need the provider's own verdict.
+#[tokio::test]
+async fn a_dead_storage_grant_keeps_its_own_code_on_the_download_plan() {
+    let f = Fixture::drive().await;
+    f.seed_blob("packs/full/pa/pack-a.pack", "pack-a").await;
+    let request = FinalizeSnapshotRequest {
+        runtime_epoch: Some(f.epoch),
+        host_token: Some(f.token.clone()),
+        files: Vec::new(),
+        packs: Some(vec![pack(
+            NON_REGION_PACK_ID,
+            "pack-a",
+            100,
+            "packs/full/pa/pack-a.pack",
+            FileTransferMode::PackFull,
+            &[("level.dat", "a")],
+        )]),
+        ..Default::default()
+    };
+    sw_core::service::snapshots::finalize_snapshot(&f.env.svc, &owner(), &f.world_id, &request, time::now())
+        .await
+        .expect("finalize through the service so the manifest document lane is used");
+    let account = f
+        .env
+        .repo
+        .get_world_storage_binding(&f.world_id)
+        .await
+        .unwrap()
+        .and_then(|b| b.storage_account_id)
+        .expect("linked account");
+    f.env.drive().set_reads_auth_dead(&account);
+
+    let err = f.download(&owner(), &UploadPlanRequest::default()).await.unwrap_err();
+    assert_eq!((err.status, err.code), (401, "drive_reauth_required"), "{err}");
+}

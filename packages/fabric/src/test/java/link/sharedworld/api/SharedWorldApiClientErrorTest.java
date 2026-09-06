@@ -16,6 +16,7 @@ import java.nio.file.Path;
 import java.util.concurrent.CompletionException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -85,6 +86,22 @@ final class SharedWorldApiClientErrorTest {
             assertEquals(404, error.status());
             assertTrue(SharedWorldApiClient.isDeletedWorldError(error));
         });
+    }
+
+    /**
+     * S3 verdicts travel as 502 so shipped clients never read them as session
+     * expiry; the transport retry must still not replay them three times.
+     */
+    @Test
+    void s3VerdictsAreNotRetriedAsTransportBlips() {
+        assertFalse(SharedWorldApiClient.isRetryableTransportError(
+                new SharedWorldApiException("s3_unauthorized", "Bucket rejected the credentials.", 502)));
+        assertFalse(SharedWorldApiClient.isRetryableTransportError(
+                new SharedWorldApiException("s3_account_misconfigured", "No bucket configured.", 502)));
+        assertTrue(SharedWorldApiClient.isRetryableTransportError(
+                new SharedWorldApiException("s3_request_failed", "S3 get failed (HTTP 503).", 502)));
+        assertTrue(SharedWorldApiClient.isS3UnauthorizedError(new IOException("wrapped",
+                new SharedWorldApiException("s3_unauthorized", "Bucket rejected the credentials.", 502))));
     }
 
     @Test

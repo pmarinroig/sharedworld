@@ -60,6 +60,7 @@ pub struct FakeDriveProvider {
     app_files: Mutex<HashMap<String, Vec<String>>>,
     revoked_accounts: Mutex<Vec<String>>,
     auth_dead_accounts: Mutex<Vec<String>>,
+    read_auth_dead_accounts: Mutex<Vec<String>>,
     counters: Mutex<Counters>,
     quota: Mutex<StorageQuota>,
     next_id: AtomicU64,
@@ -75,6 +76,7 @@ impl FakeDriveProvider {
             app_files: Mutex::new(HashMap::new()),
             revoked_accounts: Mutex::new(Vec::new()),
             auth_dead_accounts: Mutex::new(Vec::new()),
+            read_auth_dead_accounts: Mutex::new(Vec::new()),
             counters: Mutex::new(Counters::default()),
             quota: Mutex::new(StorageQuota::default()),
             next_id: AtomicU64::new(0),
@@ -197,6 +199,12 @@ impl FakeDriveProvider {
         self.auth_dead_accounts.lock().push(account_id.to_string());
     }
 
+    /// Simulates a grant that died after the world's data was written:
+    /// every blob read for this account fails with drive_reauth_required.
+    pub fn set_reads_auth_dead(&self, account_id: &str) {
+        self.read_auth_dead_accounts.lock().push(account_id.to_string());
+    }
+
     pub fn upload_count(&self, storage_key: &str) -> u32 {
         self.counters.lock().uploads.get(storage_key).copied().unwrap_or(0)
     }
@@ -255,6 +263,13 @@ impl StorageProvider for FakeDriveProvider {
         range: Option<&BlobRange>,
     ) -> HttpResult<Option<StoredBlob>> {
         let account = Self::account_of(binding)?;
+        if self.read_auth_dead_accounts.lock().contains(&account) {
+            return Err(HttpError::new(
+                401,
+                "drive_reauth_required",
+                "Google Drive authorization needs to be refreshed.",
+            ));
+        }
         if self
             .repo
             .get_storage_object(StorageProviderType::GoogleDrive, &account, storage_key)

@@ -1240,6 +1240,10 @@ public final class SharedWorldReleaseCoordinator {
                             failRecoverable(SharedWorldText.string("screen.sharedworld.release_upload_failed_reauth"), SharedWorldTerminalReasonKind.RECOVERABLE_REMOTE_FAILURE, true);
                             return;
                         }
+                        if (SharedWorldApiClient.isS3UnauthorizedError(error)) {
+                            failRecoverable(SharedWorldText.string("screen.sharedworld.release_upload_failed_s3_unauthorized"), SharedWorldTerminalReasonKind.RECOVERABLE_REMOTE_FAILURE);
+                            return;
+                        }
                         failReleaseTask(error, null, "screen.sharedworld.release_upload_snapshot_failed");
                         return;
                     }

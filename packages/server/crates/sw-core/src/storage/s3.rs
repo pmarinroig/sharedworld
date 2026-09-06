@@ -70,7 +70,7 @@ fn unexpected(op: &str, status: u16) -> HttpError {
         return HttpError::new(
             502,
             "s3_unauthorized",
-            "The bucket rejected SharedWorld's credentials. Re-link the S3 bucket from the account screen.",
+            "This world's S3 bucket rejected SharedWorld's credentials. The bucket's owner needs to reconnect it from Settings in SharedWorld.",
         );
     }
     HttpError::new(502, "s3_request_failed", format!("S3 {op} failed (HTTP {status})."))

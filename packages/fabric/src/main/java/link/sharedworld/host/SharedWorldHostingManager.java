@@ -55,6 +55,8 @@ public final class SharedWorldHostingManager {
     private static final long MAX_SUGGESTED_HEARTBEAT_INTERVAL_MS = 60_000L;
     private static final long MAX_SUGGESTED_AUTOSAVE_INTERVAL_MS = 60 * 60_000L;
     /** Transient blips stay quiet; a save loop this many failures deep is announced in chat. */
+    /** A failed autosave gets its next try after this long, never on the next tick. */
+    static final long AUTOSAVE_FAILURE_RETRY_MS = 60_000L;
     private static final int GENERIC_AUTOSAVE_ANNOUNCE_THRESHOLD = 3;
     /** While a failure episode lasts, remind the host in chat this often so one scrolled-away line can't cost hours of play. */
     private static final long AUTOSAVE_REANNOUNCE_INTERVAL_MS = 30 * 60_000L;
@@ -104,6 +106,8 @@ public final class SharedWorldHostingManager {
     private volatile long lastHeartbeatAttemptAt;
     private volatile int consecutiveHeartbeatFailures;
     private volatile long lastAutosaveAt;
+    /** Earliest time the next autosave may start after a failure; 0 while saves succeed. */
+    private volatile long autosaveNotBefore;
     /** C2 sticky autosave error: non-null while saves are failing; cleared by the next SUCCESSFUL save. */
     private volatile String autosaveErrorMessage;
     private int consecutiveAutosaveFailures;
@@ -545,7 +549,9 @@ public final class SharedWorldHostingManager {
         if (this.phase != Phase.RUNNING || this.coordinatedRelease != CoordinatedRelease.NONE) {
             return;
         }
-        if (now - this.lastAutosaveAt >= this.autosaveIntervalMs && this.saveInFlight.compareAndSet(0L, this.hostSessionGeneration)) {
+        if (now >= this.autosaveNotBefore
+                && now - this.lastAutosaveAt >= this.autosaveIntervalMs
+                && this.saveInFlight.compareAndSet(0L, this.hostSessionGeneration)) {
             uploadSnapshot();
         }
         // Gamerule detection runs on its own local cadence (0.3.0): reading
@@ -1034,6 +1040,7 @@ public final class SharedWorldHostingManager {
                 && confirmedJoinTarget != null
                 && confirmedJoinTarget.equals(this.publishedJoinTarget)) {
             this.lastAutosaveAt = this.lastHeartbeatAt;
+            this.autosaveNotBefore = 0L;
             saveHostRecoveryMarker();
             this.gameRulesSync.rebaselineForNewLiveSession();
             SharedWorldDevSessionBridge.setHostingSharedWorld(true, this.world.ownerUuid());
@@ -1197,6 +1204,7 @@ public final class SharedWorldHostingManager {
                 String stickyMessage = switch (failureKind) {
                     case DRIVE_FULL -> SharedWorldText.string("sharedworld.autosave_failed_storage_full");
                     case DRIVE_REAUTH -> SharedWorldText.string("sharedworld.autosave_failed_reauth");
+                    case S3_UNAUTHORIZED -> SharedWorldText.string("sharedworld.autosave_failed_s3_unauthorized");
                     case GENERIC -> SharedWorldText.string("sharedworld.autosave_failed_generic", SharedWorldApiClient.friendlyErrorMessage(exception));
                 };
                 dispatchToMainThread(() -> {
@@ -1204,6 +1212,7 @@ public final class SharedWorldHostingManager {
                         return;
                     }
                     recordAutosaveError(stickyMessage, failureKind);
+                    this.autosaveNotBefore = System.currentTimeMillis() + autosaveRetryDelayMs(failureKind, this.autosaveIntervalMs);
                     if (this.coordinatedRelease == CoordinatedRelease.NONE) {
                         setPhase(Phase.RUNNING);
                     }
@@ -1222,14 +1231,16 @@ public final class SharedWorldHostingManager {
     }
 
     /**
-     * A full Drive and a dead Drive authorization never heal on their own;
-     * both stay broken until the host acts, so both are announced immediately
-     * and with their own instructions. Everything else may be a transient blip.
+     * A full Drive, a dead Drive authorization and a bucket rejecting its
+     * credentials never heal on their own; they stay broken until the host
+     * acts, so they are announced immediately and with their own
+     * instructions. Everything else may be a transient blip.
      */
     enum AutosaveFailureKind {
         GENERIC,
         DRIVE_FULL,
-        DRIVE_REAUTH
+        DRIVE_REAUTH,
+        S3_UNAUTHORIZED
     }
 
     static AutosaveFailureKind classifyAutosaveFailure(Throwable exception) {
@@ -1239,7 +1250,25 @@ public final class SharedWorldHostingManager {
         if (SharedWorldApiClient.isDriveReauthRequiredError(exception)) {
             return AutosaveFailureKind.DRIVE_REAUTH;
         }
+        if (SharedWorldApiClient.isS3UnauthorizedError(exception)) {
+            return AutosaveFailureKind.S3_UNAUTHORIZED;
+        }
         return AutosaveFailureKind.GENERIC;
+    }
+
+    /**
+     * How long a failed autosave waits before the next try. Before 0.5.3 the
+     * retry came on the very next tick (lastAutosaveAt only moved on success):
+     * one bucket rejecting its credentials drew about seventy upload-prepare
+     * calls a minute for as long as the world stayed open. A transient failure
+     * gets its next try after a minute; one only the host can fix waits out a
+     * full autosave interval.
+     */
+    static long autosaveRetryDelayMs(AutosaveFailureKind kind, long autosaveIntervalMs) {
+        if (kind == AutosaveFailureKind.GENERIC) {
+            return Math.min(AUTOSAVE_FAILURE_RETRY_MS, autosaveIntervalMs);
+        }
+        return autosaveIntervalMs;
     }
 
     /**
@@ -1507,6 +1536,7 @@ public final class SharedWorldHostingManager {
         this.lastGameRulesLocalPollAt = 0L;
         this.consecutiveHeartbeatFailures = 0;
         this.lastAutosaveAt = 0L;
+        this.autosaveNotBefore = 0L;
         // Without this, a failure episode announced in a previous session
         // would fake a "backups are working again" chat line in this one.
         resetAutosaveFailureTracking();

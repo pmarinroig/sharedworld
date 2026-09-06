@@ -1181,6 +1181,12 @@ public final class SharedWorldApiClient {
         return apiError != null && "drive_reauth_required".equals(apiError.error());
     }
 
+    /** The world's S3 bucket rejects SharedWorld's credentials; only re-linking the bucket fixes it. */
+    public static boolean isS3UnauthorizedError(Throwable error) {
+        SharedWorldApiException apiError = findApiError(error);
+        return apiError != null && "s3_unauthorized".equals(apiError.error());
+    }
+
     public static boolean isHostNotActiveError(Throwable error) {
         SharedWorldApiException apiError = findApiError(error);
         return apiError != null
@@ -1428,6 +1434,12 @@ public final class SharedWorldApiClient {
         SharedWorldApiException apiError = findApiError(error);
         if (apiError != null) {
             if ("identity_verification_unavailable".equals(apiError.error())) {
+                return false;
+            }
+            // S3 verdicts wear a 502 so shipped clients never read them as
+            // session expiry; rejected credentials and a misconfigured bucket
+            // do not heal between attempts.
+            if ("s3_unauthorized".equals(apiError.error()) || "s3_account_misconfigured".equals(apiError.error())) {
                 return false;
             }
             return apiError.status() >= 500;

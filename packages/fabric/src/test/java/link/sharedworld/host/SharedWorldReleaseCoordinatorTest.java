@@ -851,6 +851,33 @@ final class SharedWorldReleaseCoordinatorTest {
         }
     }
 
+    /**
+     * A bucket rejecting its credentials parks the release like a full Drive:
+     * its own copy, retry allowed, changes kept locally on request, and no
+     * Google Drive reconnect button since Drive is not involved.
+     */
+    @Test
+    void aRejectedBucketParksTheReleaseWithItsOwnCopy() throws Exception {
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            harness.hostControl.setActiveHostSession("world-1", "World", 7L, "token-7", "join.example");
+            harness.releaseBackend.setRuntime(SharedWorldCoordinatorHarness.runtime("world-1", "host-live", 7L, null, "join.example"));
+            harness.hostControl.failures().add("upload", new SharedWorldApiClient.SharedWorldApiException(
+                    "s3_unauthorized", "This world's S3 bucket rejected SharedWorld's credentials.", 502));
+
+            beginGracefulVanillaDisconnect(harness);
+            driveRelease(harness);
+            SharedWorldReleaseCoordinator.ReleaseView parked = harness.releaseCoordinator.view();
+            assertEquals(SharedWorldReleasePhase.ERROR_RECOVERABLE, parked.phase());
+            assertEquals("screen.sharedworld.release_upload_failed_s3_unauthorized", parked.errorMessage());
+            assertTrue(parked.canRetry());
+            assertTrue(parked.canDiscardLocalState());
+            assertFalse(parked.needsDriveReconnect());
+        } finally {
+            harness.close();
+        }
+    }
+
     /** An unreachable backend must not trap the host either: the runtime expires server-side. */
     @Test
     void abandoningAParkedUploadFailureClearsLocalStateEvenWhenTheReleaseCallFails() throws Exception {

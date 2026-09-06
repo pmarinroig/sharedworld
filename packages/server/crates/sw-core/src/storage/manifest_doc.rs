@@ -130,7 +130,10 @@ fn db_error(error: HttpError) -> DbError {
     if error.code == "snapshot_manifest_unavailable" {
         DbError::ManifestUnavailable(error.message)
     } else {
-        DbError::other(error.to_string())
+        // A dead grant or rejected bucket credentials must reach the client
+        // as the provider's own code (drive_reauth_required, s3_unauthorized),
+        // never as a 500 internal_error.
+        DbError::Upstream(Box::new(error))
     }
 }
 
