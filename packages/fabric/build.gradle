@@ -75,6 +75,9 @@ def e2eWorldName = providers.gradleProperty("sharedworldE2eWorldName").orNull
 // for the multi-GB upload/delta choreography; bigFile is the giant file's
 // world-relative path.
 def e2eScenario = providers.gradleProperty("sharedworldE2eScenario").orNull
+// Lets the host run config boot as a guest (same game dir, same player), so a
+// suite can swap roles for one player without losing their client-side mod data.
+def e2eRoleOverride = providers.gradleProperty("sharedworldE2eRole").orNull
 def e2eCustomJoinPort = providers.gradleProperty("sharedworldE2eCustomJoinPort").orNull
 def e2eAutosaveIntervalMs = providers.gradleProperty("sharedworldE2eAutosaveIntervalMs").orNull
 def e2eBigFile = providers.gradleProperty("sharedworldE2eBigFile").orNull
@@ -297,7 +300,7 @@ loom {
             if (fakeRunDevAuthSecret != null) {
                 vmArgs "-Dsharedworld.devAuthSecret=${fakeRunDevAuthSecret}"
             }
-            vmArgs "-Dsharedworld.e2e.role=host"
+            vmArgs "-Dsharedworld.e2e.role=${e2eRoleOverride ?: 'host'}"
             vmArgs "-Dsharedworld.e2e.insecureLoopback=true"
             if (e2eSuperpackShardMaxBytes != null) {
                 vmArgs "-Dsharedworld.dev.superpackShardMaxBytes=${e2eSuperpackShardMaxBytes}"
@@ -364,6 +367,12 @@ loom {
                 vmArgs "-Dsharedworld.devAuthSecret=${fakeRunDevAuthSecret}"
             }
             vmArgs "-Dsharedworld.e2e.role=guest"
+            // A guest that re-hosts after a handoff runs the integrated server;
+            // the loopback login bypass lets the other e2e player rejoin it.
+            vmArgs "-Dsharedworld.e2e.insecureLoopback=true"
+            if (e2eAutosaveIntervalMs != null) {
+                vmArgs "-Dsharedworld.dev.autosaveIntervalMs=${e2eAutosaveIntervalMs}"
+            }
             if (e2eMarkerFile != null) {
                 vmArgs "-Dsharedworld.e2e.markerFile=${e2eMarkerFile}"
             }

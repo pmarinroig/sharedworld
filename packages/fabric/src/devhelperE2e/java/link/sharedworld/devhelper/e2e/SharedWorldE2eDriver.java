@@ -69,6 +69,7 @@ public final class SharedWorldE2eDriver {
         DRIVE_FAILURE_AWAIT_HUB,
         DRIVE_FAILURE_AWAIT_REHOST_GO,
         DRIVE_FAILURE_REHOST_AWAIT_LIVE,
+        MODCOMPAT_SESSION,
         AWAIT_RELEASE_COMPLETE,
         AWAIT_EXIT
     }
@@ -91,6 +92,8 @@ public final class SharedWorldE2eDriver {
         BIGWORLD_AWAIT_RELEASE_COMPLETE,
         EXTENDED_INGAME,
         EXTENDED_VERIFY_BLOCK,
+        MODCOMPAT_INGAME,
+        MODCOMPAT_SESSION,
         AWAIT_EXIT
     }
 
@@ -152,6 +155,14 @@ public final class SharedWorldE2eDriver {
     private boolean driveFailure;
     /** Two-client S3 + custom-address + handoff + block-persistence scenario (extended-e2e.ts). */
     private boolean extended;
+    /**
+     * Mod-compat playtest (mod-compat-playtest.ts): both roles park in a
+     * generic session that runs server commands, chats, adds Xaero's
+     * waypoints and screenshots on request, and the guest re-hosts after the
+     * handoff; the host run config may boot as a guest for the role swap.
+     */
+    private boolean modCompat;
+    private String pendingXaeroWaypoint;
     private boolean s3LinkPressed;
     private boolean s3LinkUrlEmitted;
     /** Async block-drill result slot: null = pending, TRUE/FALSE = read outcome. */
@@ -221,12 +232,13 @@ public final class SharedWorldE2eDriver {
         this.bigWorld = "bigworld".equals(scenario);
         this.driveFailure = "drive-failure".equals(scenario);
         this.extended = "extended".equals(scenario);
+        this.modCompat = "modcompat".equals(scenario);
         this.customJoinPort = System.getProperty("sharedworld.e2e.customJoinPort");
         if (this.customJoinPort != null && this.customJoinPort.isBlank()) {
             this.customJoinPort = null;
         }
         this.bigFileRelative = System.getProperty("sharedworld.e2e.bigFile", "");
-        if (this.bigWorld || this.driveFailure || this.extended) {
+        if (this.bigWorld || this.driveFailure || this.extended || this.modCompat) {
             // No cancel drill in these scenarios: bigworld's interesting
             // startup is the multi-GB upload, and the custom-join port must
             // not be re-bound straight out of TIME_WAIT after a cancel.
@@ -506,6 +518,7 @@ public final class SharedWorldE2eDriver {
                     this.hostStep = this.bigWorld ? HostStep.BIGWORLD_SESSION
                             : this.driveFailure ? HostStep.DRIVE_FAILURE_SESSION
                             : this.extended ? HostStep.EXTENDED_SESSION
+                            : this.modCompat ? HostStep.MODCOMPAT_SESSION
                             : HostStep.OP_DRILL_AWAIT_COMMAND;
                 }
             }
@@ -842,6 +855,11 @@ public final class SharedWorldE2eDriver {
                     default -> this.markers.emit("driver-exception", "unknown drive-failure command " + command);
                 }
             }
+            case MODCOMPAT_SESSION -> {
+                if (this.modCompatSessionTick(minecraft)) {
+                    this.hostStep = HostStep.AWAIT_RELEASE_COMPLETE;
+                }
+            }
             case AWAIT_RELEASE_COMPLETE -> {
                 if (minecraft.screen instanceof PauseScreen pauseScreen) {
                     WidgetAutomation.pressButton(pauseScreen, "menu.returnToMenu");
@@ -1058,6 +1076,7 @@ public final class SharedWorldE2eDriver {
                     this.markers.emit("guest-ingame", session.worldId());
                     this.guestStep = this.bigWorld ? GuestStep.AWAIT_HOST_DEPARTURE
                             : this.extended ? GuestStep.EXTENDED_INGAME
+                            : this.modCompat ? GuestStep.MODCOMPAT_INGAME
                             : GuestStep.AWAIT_COMMAND_DRILL;
                 }
             }
@@ -1096,9 +1115,13 @@ public final class SharedWorldE2eDriver {
                 }
             }
             case BIGWORLD_AWAIT_REHOST_GO -> {
-                if ("rehost-go".equals(this.commands.poll())) {
+                String command = this.commands.poll();
+                if ("rehost-go".equals(command)) {
                     this.markers.emit("rehost-go-received", null);
                     this.guestStep = GuestStep.BIGWORLD_REHOST_BEGIN;
+                } else if ("exit".equals(command)) {
+                    this.markers.emit("exiting", null);
+                    minecraft.stop();
                 }
             }
             case BIGWORLD_REHOST_BEGIN -> {
@@ -1140,7 +1163,9 @@ public final class SharedWorldE2eDriver {
             case BIGWORLD_REHOST_AWAIT_LIVE -> {
                 if (SharedWorldClient.hostingManager().phase() == SharedWorldHostingManager.Phase.RUNNING) {
                     this.markers.emit("rehost-live", null);
-                    this.guestStep = this.extended ? GuestStep.EXTENDED_VERIFY_BLOCK : GuestStep.BIGWORLD_SESSION;
+                    this.guestStep = this.extended ? GuestStep.EXTENDED_VERIFY_BLOCK
+                            : this.modCompat ? GuestStep.MODCOMPAT_SESSION
+                            : GuestStep.BIGWORLD_SESSION;
                 }
             }
             case EXTENDED_INGAME -> {
@@ -1185,6 +1210,22 @@ public final class SharedWorldE2eDriver {
                     this.guestStep = GuestStep.BIGWORLD_AWAIT_RELEASE_COMPLETE;
                 }
             }
+            case MODCOMPAT_INGAME -> {
+                // Generic session as a guest; the host leaving ends it and the
+                // orchestrator decides between re-hosting and exiting.
+                if (minecraft.level == null || SharedWorldClient.playSessionTracker().currentSession() == null) {
+                    String screenName = minecraft.screen == null ? "none" : minecraft.screen.getClass().getSimpleName();
+                    this.markers.emit("guest-observed-host-departure", screenName);
+                    this.guestStep = GuestStep.BIGWORLD_AWAIT_REHOST_GO;
+                    return;
+                }
+                this.modCompatSessionTick(minecraft);
+            }
+            case MODCOMPAT_SESSION -> {
+                if (this.modCompatSessionTick(minecraft)) {
+                    this.guestStep = GuestStep.BIGWORLD_AWAIT_RELEASE_COMPLETE;
+                }
+            }
             case BIGWORLD_SESSION -> {
                 if (this.bigWorldSessionTick(minecraft)) {
                     if (minecraft.screen == null) {
@@ -1222,6 +1263,64 @@ public final class SharedWorldE2eDriver {
      * orchestrator asked for shutdown. Commands are never polled while an op
      * is in flight, so ops observe a quiescent file.
      */
+    /**
+     * Mod-compat session loop for either role. Commands: {@code server-cmd:<cmd>}
+     * (sent as this player's chat command; the host is op on its own server),
+     * {@code chat:<text>}, {@code xaero-waypoint:<name>:<initials>:<x>:<y>:<z>}
+     * (Xaero's own add flow, confirmed on the next ticks), {@code screenshot:<label>},
+     * and {@code shutdown}, which opens the pause menu and returns true so the
+     * caller moves to the release wait.
+     */
+    private boolean modCompatSessionTick(Minecraft minecraft) {
+        if (this.pendingXaeroWaypoint != null) {
+            if (XaeroE2eOps.confirmAddWaypoint(minecraft)) {
+                this.markers.emit("xaero-waypoint-added", this.pendingXaeroWaypoint);
+                this.pendingXaeroWaypoint = null;
+            }
+            return false;
+        }
+        if (minecraft.player == null) {
+            return false;
+        }
+        String command = this.commands.poll();
+        if (command == null) {
+            return false;
+        }
+        if (command.startsWith("server-cmd:")) {
+            String serverCommand = command.substring("server-cmd:".length());
+            minecraft.player.connection.sendCommand(serverCommand);
+            this.markers.emit("server-cmd-sent", serverCommand);
+        } else if (command.startsWith("chat:")) {
+            String text = command.substring("chat:".length());
+            minecraft.player.connection.sendChat(text);
+            this.markers.emit("chat-sent", text);
+        } else if (command.startsWith("xaero-waypoint:")) {
+            String[] parts = command.substring("xaero-waypoint:".length()).split(":");
+            try {
+                if (parts.length != 5 || !XaeroE2eOps.isInstalled()) {
+                    this.markers.emit("xaero-waypoint-failed", "unusable: " + command);
+                } else if (XaeroE2eOps.beginAddWaypoint(parts[0], parts[1], Integer.parseInt(parts[2]), Integer.parseInt(parts[3]), Integer.parseInt(parts[4]))) {
+                    this.pendingXaeroWaypoint = parts[0];
+                } else {
+                    this.markers.emit("xaero-waypoint-failed", "refused: " + command);
+                }
+            } catch (ReflectiveOperationException | RuntimeException exception) {
+                this.markers.emit("xaero-waypoint-failed", exception.toString());
+            }
+        } else if (command.startsWith("screenshot:")) {
+            this.screenshot(minecraft, command.substring("screenshot:".length()));
+        } else if ("shutdown".equals(command)) {
+            this.markers.emit("shutdown-received", null);
+            if (minecraft.screen == null) {
+                minecraft.setScreen(new PauseScreen(true));
+            }
+            return true;
+        } else {
+            this.markers.emit("driver-exception", "modcompat: unknown command " + command);
+        }
+        return false;
+    }
+
     private boolean bigWorldSessionTick(Minecraft minecraft) {
         if (this.bigWorldOpInFlight.get()) {
             return false;
