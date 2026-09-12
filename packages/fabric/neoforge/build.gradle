@@ -154,6 +154,8 @@ def e2eCommandFile = providers.gradleProperty("sharedworldE2eCommandFile").orNul
 def e2eWorldName = providers.gradleProperty("sharedworldE2eWorldName").orNull
 def e2eScenario = providers.gradleProperty("sharedworldE2eScenario").orNull
 def e2eCustomJoinPort = providers.gradleProperty("sharedworldE2eCustomJoinPort").orNull
+def e2eAutosaveIntervalMs = providers.gradleProperty("sharedworldE2eAutosaveIntervalMs").orNull
+def e2eRoleOverride = providers.gradleProperty("sharedworldE2eRole").orNull
 def e2eDevAuthSecret = providers.gradleProperty("sharedworldDevAuthSecret").orNull
 
 neoForge {
@@ -175,6 +177,47 @@ neoForge {
                 systemProperty "sharedworld.devAuthSecret", e2eDevAuthSecret
             }
             systemProperty "sharedworld.e2e.role", "guest"
+            // A guest that re-hosts after a handoff runs the integrated server;
+            // the loopback login bypass lets the other e2e player rejoin it.
+            systemProperty "sharedworld.e2e.insecureLoopback", "true"
+            if (e2eAutosaveIntervalMs != null) {
+                systemProperty "sharedworld.dev.autosaveIntervalMs", e2eAutosaveIntervalMs
+            }
+            if (e2eMarkerFile != null) {
+                systemProperty "sharedworld.e2e.markerFile", e2eMarkerFile
+            }
+            if (e2eCommandFile != null) {
+                systemProperty "sharedworld.e2e.commandFile", e2eCommandFile
+            }
+            if (e2eWorldName != null) {
+                systemProperty "sharedworld.e2e.worldName", e2eWorldName
+            }
+            if (e2eScenario != null) {
+                systemProperty "sharedworld.e2e.scenario", e2eScenario
+            }
+            if (e2eCustomJoinPort != null) {
+                systemProperty "sharedworld.e2e.customJoinPort", e2eCustomJoinPort
+            }
+            programArguments.addAll("--username=${guestName}", "--uuid=${guestUuid}")
+        }
+        e2eHost {
+            client()
+            gameDirectory = file("run-e2e-host")
+            def guestName = "HostA"
+            def guestUuid = "11111111-1111-1111-1111-111111111111"
+            systemProperty "sharedworld.backendUrl", e2eBackendUrl
+            systemProperty "sharedworld.devPlayerName", guestName
+            systemProperty "sharedworld.devPlayerUuid", guestUuid
+            if (e2eDevAuthSecret != null) {
+                systemProperty "sharedworld.devAuthSecret", e2eDevAuthSecret
+            }
+            systemProperty "sharedworld.e2e.role", e2eRoleOverride ?: "host"
+            // NeoForge host for the mod-compat playtest (both players on NeoForge);
+            // may boot as a guest for the role swap via -PsharedworldE2eRole=guest.
+            systemProperty "sharedworld.e2e.insecureLoopback", "true"
+            if (e2eAutosaveIntervalMs != null) {
+                systemProperty "sharedworld.dev.autosaveIntervalMs", e2eAutosaveIntervalMs
+            }
             if (e2eMarkerFile != null) {
                 systemProperty "sharedworld.e2e.markerFile", e2eMarkerFile
             }

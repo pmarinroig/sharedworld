@@ -1,0 +1,30 @@
+{
+  "cachedWorlds": [
+    {
+      "id": "world_3a38086a59284faf860be2c20eb1400f",
+      "slug": "e2e-fixture1-0eb1400f",
+      "name": "E2E-Fixture1",
+      "ownerUuid": "11111111111111111111111111111111",
+      "motd": "HostA\u0027s Shared World",
+      "memberCount": 2,
+      "status": "finalizing",
+      "lastSnapshotId": "snapshot_1c50ad6a895f438ab39ea34208e1054f",
+      "lastSnapshotAt": "2026-09-12T23:02:59.629Z",
+      "activeHostUuid": "22222222222222222222222222222222",
+      "activeHostPlayerName": "GuestB",
+      "onlinePlayerCount": 2,
+      "onlinePlayerNames": [
+        "HostA",
+        "GuestB"
+      ],
+      "storageProvider": "google-drive",
+      "storageLinked": true,
+      "storageAccountEmail": "integration-drive@example.com",
+      "lastSnapshotDataVersion": 4671,
+      "lastSnapshotMinecraftVersion": "1.21.11"
+    }
+  ],
+  "orderedWorldIds": [
+    "world_3a38086a59284faf860be2c20eb1400f"
+  ]
+}

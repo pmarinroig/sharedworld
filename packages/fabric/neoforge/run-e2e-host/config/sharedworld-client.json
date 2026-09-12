@@ -1,0 +1,9 @@
+{
+  "backend": {},
+  "ui": {
+    "lastMultiplayerView": "SHAREDWORLD"
+  },
+  "hosting": {
+    "customJoinAddress": "127.0.0.1:37365"
+  }
+}
