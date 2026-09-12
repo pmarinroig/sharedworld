@@ -15,7 +15,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * between the dev and the shipped runtime.
  */
 @Pseudo
-@Mixin(targets = XaeroMapCompat.MINIMAP_NODE_TARGET)
+@Mixin(targets = XaeroHookTargets.MINIMAP_NODE_TARGET)
 abstract class XaeroMinimapWorldNodeMixin {
     @Inject(method = "getPotentialWorldNode", at = @At("HEAD"), cancellable = true, remap = false)
     private void sharedworld$hostWorldNode(CallbackInfoReturnable<String> cir) {

@@ -2,7 +2,6 @@ package link.sharedworld.integration;
 
 import link.sharedworld.host.SharedWorldServerIdentity;
 import link.sharedworld.platform.SharedWorldPlatform;
-import link.sharedworld.util.ClassProbe;
 import net.minecraft.client.Minecraft;
 import net.minecraft.server.MinecraftServer;
 import org.slf4j.Logger;
@@ -25,7 +24,7 @@ import java.util.Random;
  * in a {@code mw$<id>} instance, {@code <id>} being what Xaero's server side reads
  * from {@code <world>/xaeromap.txt} and sends on login. SharedWorld syncs that file,
  * so every member already shares the instance id. The mixins in
- * {@code link.sharedworld.mixin.Xaero*} route the host through the multiplayer
+ * {@code link.sharedworld.mixin.Xaero*} (gated by {@code XaeroHookTargets}) route the host through the multiplayer
  * naming: the root becomes the same {@link SharedWorldJoinIdentity} folder the
  * guest gets, and the waypoint node the same {@code mw$<id>}. Anything that is
  * not a managed SharedWorld working copy is left exactly as Xaero's had it.
@@ -33,15 +32,6 @@ import java.util.Random;
 public final class XaeroMapCompat {
     private static final Logger LOGGER = LoggerFactory.getLogger(XaeroMapCompat.class);
     public static final String WORLD_ID_FILE = "xaeromap.txt";
-
-    public static final String WORLD_MAP_ROOT_TARGET = "xaero.map.world.MapWorld";
-    public static final String WORLD_MAP_ROOT_METHOD = "convertWorldFolderToRootId";
-    public static final String WORLD_MAP_ROOT_DESCRIPTOR = "(ILjava/lang/String;)Ljava/lang/String;";
-    public static final String MINIMAP_CONTAINER_TARGET = "xaero.hud.minimap.world.container.MinimapWorldContainerUtil";
-    public static final String MINIMAP_CONTAINER_METHOD = "convertWorldFolderToContainerNode";
-    public static final String MINIMAP_CONTAINER_DESCRIPTOR = "(Ljava/lang/String;I)Ljava/lang/String;";
-    public static final String MINIMAP_NODE_TARGET = "xaero.hud.minimap.world.state.MinimapWorldStateUpdater";
-    public static final String MINIMAP_NODE_METHOD = "getPotentialWorldNode";
 
     private XaeroMapCompat() {
     }
@@ -53,13 +43,6 @@ public final class XaeroMapCompat {
         } catch (RuntimeException | LinkageError exception) {
             return false;
         }
-    }
-
-    /** Mixin gate: the target class must exist and still define the hooked method. */
-    public static boolean hookTargetPresent(String targetClassName, String methodName, String descriptorOrNull) {
-        boolean present = ClassProbe.definesMethod(targetClassName, XaeroMapCompat.class.getClassLoader(), methodName, descriptorOrNull);
-        LOGGER.info("SharedWorld Xaero's diagnostics [mixin-gate]: target={}#{} present={}", targetClassName, methodName, present);
-        return present;
     }
 
     /**
