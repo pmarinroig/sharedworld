@@ -10,7 +10,7 @@ import java.nio.file.Path;
 
 /**
  * The one authoritative answer to "is this integrated server running a SharedWorld-managed world?".
- * Managed worlds are only ever opened from {@code <gameDir>/sharedworld/worlds/<worldId>/current};
+ * Managed worlds are only ever opened from {@code <gameDir>/sharedworld/worlds/<worldId>/<worldId>};
  * anything else (vanilla saves, remote sessions) must stay completely untouched by SharedWorld's
  * publish, settings, and lifecycle machinery.
  */
@@ -39,10 +39,14 @@ public final class SharedWorldServerIdentity {
         return matchesWorkingCopy(serverRoot(server), expectedWorkingCopy);
     }
 
+    /** {@code <worldsRoot>/<worldId>/<worldId>}: the level id repeats the container name. */
     static boolean isManagedRoot(Path serverRoot, Path worldsRoot) {
-        return serverRoot.startsWith(worldsRoot)
+        Path container = serverRoot.getParent();
+        return container != null
+                && worldsRoot.equals(container.getParent())
                 && serverRoot.getFileName() != null
-                && ManagedWorldStore.LEVEL_ID.equals(serverRoot.getFileName().toString());
+                && container.getFileName() != null
+                && serverRoot.getFileName().toString().equals(container.getFileName().toString());
     }
 
     static boolean matchesWorkingCopy(Path serverRoot, Path expectedWorkingCopy) {

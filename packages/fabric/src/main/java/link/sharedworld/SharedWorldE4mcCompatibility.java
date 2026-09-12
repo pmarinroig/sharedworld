@@ -2,15 +2,10 @@ package link.sharedworld;
 
 import link.sharedworld.host.SharedWorldHostPermissionPolicy;
 import link.sharedworld.platform.SharedWorldPlatform;
-import org.objectweb.asm.ClassReader;
-import org.objectweb.asm.ClassVisitor;
-import org.objectweb.asm.MethodVisitor;
-import org.objectweb.asm.Opcodes;
+import link.sharedworld.util.ClassProbe;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
-import java.io.InputStream;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -197,39 +192,7 @@ public final class SharedWorldE4mcCompatibility {
             String methodName,
             String methodDescriptor
     ) {
-        String resourcePath = targetClassName.replace('.', '/') + ".class";
-        try (InputStream inputStream = classLoader.getResourceAsStream(resourcePath)) {
-            if (inputStream == null) {
-                return false;
-            }
-            return classBytesDefineMethod(inputStream.readAllBytes(), methodName, methodDescriptor);
-        } catch (IOException | RuntimeException exception) {
-            LOGGER.warn("SharedWorld could not inspect e4mc class {}", targetClassName, exception);
-            return false;
-        }
+        return ClassProbe.definesMethod(targetClassName, classLoader, methodName, methodDescriptor);
     }
 
-    private static boolean classBytesDefineMethod(byte[] classBytes, String methodName, String methodDescriptor) {
-        if (classBytes == null || classBytes.length == 0) {
-            return false;
-        }
-
-        boolean[] found = {false};
-        new ClassReader(classBytes).accept(new ClassVisitor(Opcodes.ASM9) {
-            @Override
-            public MethodVisitor visitMethod(
-                    int access,
-                    String currentMethodName,
-                    String currentMethodDescriptor,
-                    String signature,
-                    String[] exceptions
-            ) {
-                if (methodName.equals(currentMethodName) && methodDescriptor.equals(currentMethodDescriptor)) {
-                    found[0] = true;
-                }
-                return null;
-            }
-        }, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
-        return found[0];
-    }
 }

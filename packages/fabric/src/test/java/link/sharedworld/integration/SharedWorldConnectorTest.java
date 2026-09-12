@@ -35,7 +35,7 @@ final class SharedWorldConnectorTest {
                 "World Name",
                 0L,
                 null,
-                (parent, minecraft, target, worldName) -> {
+                (parent, minecraft, target, worldId, worldName) -> {
                     invoked.set(true);
                     startedTarget.set(target);
                     startedWorldName.set(worldName);
@@ -61,7 +61,7 @@ final class SharedWorldConnectorTest {
                 "World Name",
                 0L,
                 null,
-                (parent, minecraft, target, worldName) -> {
+                (parent, minecraft, target, worldId, worldName) -> {
                     throw new IllegalStateException("boom");
                 },
                 (parent, error) -> failureHandlerInvoked.set(true)

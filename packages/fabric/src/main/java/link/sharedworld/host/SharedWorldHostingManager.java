@@ -1816,7 +1816,7 @@ public final class SharedWorldHostingManager {
         @Override
         public void openExistingWorld(ManagedWorldStore worldStore, WorldSummaryDto world, Path worldDirectory) {
             Minecraft.getInstance().execute(() -> link.sharedworld.versioned.WorldOpenCompat.openExistingWorld(
-                    Minecraft.getInstance(), worldStore.levelSource(world.id()), ManagedWorldStore.LEVEL_ID));
+                    Minecraft.getInstance(), worldStore.levelSource(world.id()), worldStore.levelId(world.id())));
         }
     }
 

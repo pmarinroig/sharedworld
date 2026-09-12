@@ -49,7 +49,7 @@ public final class WorldCanonicalizer {
 
         try (Stream<Path> stream = Files.walk(worldDirectory)) {
             for (Path path : stream.filter(Files::isRegularFile)
-                    .filter(WorldCanonicalizer::shouldSyncPath)
+                    .filter(path -> !LocalOnlyPaths.isLocalOnly(worldDirectory, path))
                     .sorted(Comparator.naturalOrder())
                     .toList()) {
                 String relativePath = worldDirectory.relativize(path).toString().replace('\\', '/');
@@ -224,16 +224,9 @@ public final class WorldCanonicalizer {
         }
     }
 
-    private static boolean shouldSyncPath(Path path) {
-        return !isLocalOnlyFileName(path.getFileName().toString());
-    }
-
-    /**
-     * Files that never leave the machine: excluded from sync uploads and from
-     * exports to the vanilla saves folder alike.
-     */
+    /** Filename-only local files, shared with the vanilla-save import and export copies; see {@link LocalOnlyPaths}. */
     public static boolean isLocalOnlyFileName(String fileName) {
-        return "session.lock".equals(fileName) || fileName.endsWith(".dat_old");
+        return LocalOnlyPaths.isLocalOnlyFileName(fileName);
     }
 
     private record CanonicalLevelResult(byte[] levelBytes, byte[] hostPlayerBytes) {

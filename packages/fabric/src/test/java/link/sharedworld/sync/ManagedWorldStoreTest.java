@@ -41,6 +41,40 @@ final class ManagedWorldStoreTest {
     }
 
     @Test
+    void theLevelIdIsTheWorldIdAndLegacyCopiesAreRenamedOnce() throws IOException {
+        ManagedWorldStore store = new ManagedWorldStore(this.tempDir.resolve("level-id-root"));
+        assertEquals("world_abc", store.levelId("world_abc"));
+        assertEquals(store.worldContainer("world_abc").resolve("world_abc"), store.workingCopy("world_abc"));
+
+        Path legacy = Files.createDirectories(store.worldContainer("world_abc").resolve(ManagedWorldStore.LEGACY_LEVEL_ID));
+        Files.writeString(legacy.resolve("level.dat"), "old copy");
+        store.ensureWorldContainer("world_abc");
+        assertFalse(Files.exists(legacy));
+        assertEquals("old copy", Files.readString(store.workingCopy("world_abc").resolve("level.dat")));
+
+        // A second legacy folder appearing later never clobbers the live copy.
+        Files.createDirectories(legacy);
+        store.ensureWorldContainer("world_abc");
+        assertTrue(Files.exists(legacy));
+        assertEquals("old copy", Files.readString(store.workingCopy("world_abc").resolve("level.dat")));
+    }
+
+    @Test
+    void captureMirrorLeavesLocalOnlyFilesOut() throws IOException {
+        ManagedWorldStore store = new ManagedWorldStore(this.tempDir.resolve("mirror-local-only"));
+        Path workingCopy = Files.createDirectories(store.workingCopy("world-1").resolve("data")).getParent();
+        Files.writeString(workingCopy.resolve("level.dat"), "level");
+        Files.writeString(workingCopy.resolve("data").resolve("DistantHorizons.sqlite"), "lods");
+        Files.writeString(workingCopy.resolve("data").resolve("raids.dat"), "raids");
+        Files.writeString(workingCopy.resolve("xaeromap.txt"), "id:1");
+
+        Path mirror = store.createSnapshotStagingCopy("world-1");
+        assertFalse(Files.exists(mirror.resolve("data").resolve("DistantHorizons.sqlite")), "the LOD database never enters the mirror");
+        assertEquals("raids", Files.readString(mirror.resolve("data").resolve("raids.dat")));
+        assertEquals("id:1", Files.readString(mirror.resolve("xaeromap.txt")));
+    }
+
+    @Test
     void captureMirrorSkipsFilesWhoseSizeAndMtimeMatch() throws IOException {
         ManagedWorldStore store = new ManagedWorldStore(this.tempDir.resolve("mirror-skip-root"));
         Path workingCopy = Files.createDirectories(store.workingCopy("world-1"));

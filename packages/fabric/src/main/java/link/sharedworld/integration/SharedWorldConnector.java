@@ -37,7 +37,7 @@ public final class SharedWorldConnector {
         }
 
         try {
-            connectStarter.start(parent, minecraft, target, worldName);
+            connectStarter.start(parent, minecraft, target, worldId, worldName);
         } catch (RuntimeException exception) {
             LOGGER.error("Failed to open the Minecraft connect screen for SharedWorld target {}", target, exception);
             if (worldId != null) {
@@ -49,7 +49,7 @@ public final class SharedWorldConnector {
 
     @FunctionalInterface
     interface ConnectStarter {
-        void start(Screen parent, Minecraft minecraft, String target, String worldName);
+        void start(Screen parent, Minecraft minecraft, String target, String worldId, String worldName);
     }
 
     @FunctionalInterface

@@ -316,6 +316,61 @@ final class WorldSyncCoordinatorDownloadTest {
         }
     }
 
+    /**
+     * A Distant Horizons database is this machine's cache: an older host's
+     * snapshot may still carry one, but the apply must neither overwrite the
+     * local copy with it nor prune the dimensions the manifest lacks.
+     */
+    @Test
+    void localOnlyFilesAreNeitherOverwrittenNorPruned() throws Exception {
+        ManagedWorldStore worldStore = new ManagedWorldStore(this.tempDir.resolve("managed-local-only"));
+        Path workingCopy = worldStore.workingCopy(WORLD_ID);
+        writeFile(workingCopy, "data/DistantHorizons.sqlite", "my-lods".getBytes());
+        writeFile(workingCopy, "DIM-1/data/DistantHorizons.sqlite", "my-nether-lods".getBytes());
+        writeFile(workingCopy, "data/stale.txt", "old".getBytes());
+
+        BuiltPack pack = buildPackArtifact(null, Map.of(
+                "data/new.txt", "fresh-pack".getBytes(),
+                "data/DistantHorizons.sqlite", "hosts-lods".getBytes()
+        ));
+
+        try (SyncTestHttpServer server = new SyncTestHttpServer()) {
+            server.seedBlob("pack-full-local-only", Files.readAllBytes(pack.packFile()));
+            server.setDownloadPlan(new DownloadPlanDto(
+                    WORLD_ID,
+                    "snapshot-local-only",
+                    new DownloadPlanEntryDto[0],
+                    new DownloadPackPlanDto(
+                            pack.descriptor().packId(),
+                            pack.descriptor().hash(),
+                            pack.descriptor().size(),
+                            pack.descriptor().files(),
+                            new DownloadPlanStepDto[] {
+                                    new DownloadPlanStepDto(
+                                            "pack-full",
+                                            "packs/full-local-only.pack",
+                                            Files.size(pack.packFile()),
+                                            null,
+                                            null,
+                                            server.downloadUrl("pack-full-local-only")
+                                    )
+                            }
+                    ),
+                    new DownloadPackPlanDto[0],
+                    new String[0],
+                    SyncTestHttpServer.syncPolicy()
+            ));
+
+            WorldSyncCoordinator coordinator = new WorldSyncCoordinator(server.apiClient(), worldStore);
+            coordinator.ensureSynchronizedWorkingCopy(WORLD_ID, HOST_UUID);
+
+            assertArrayEquals("fresh-pack".getBytes(), Files.readAllBytes(workingCopy.resolve("data").resolve("new.txt")));
+            assertArrayEquals("my-lods".getBytes(), Files.readAllBytes(workingCopy.resolve("data").resolve("DistantHorizons.sqlite")));
+            assertArrayEquals("my-nether-lods".getBytes(), Files.readAllBytes(workingCopy.resolve("DIM-1").resolve("data").resolve("DistantHorizons.sqlite")));
+            assertFalse(Files.exists(workingCopy.resolve("data").resolve("stale.txt")), "ordinary stale files are still pruned");
+        }
+    }
+
     @Test
     void shardedSnapshotWithNonRegionFilesInBundlePacksAppliesLikeAnyBundle() throws Exception {
         // A sharded snapshot carries its non-region files in

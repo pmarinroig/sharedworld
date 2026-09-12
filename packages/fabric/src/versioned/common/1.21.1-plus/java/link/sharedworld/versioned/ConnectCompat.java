@@ -1,5 +1,6 @@
 package link.sharedworld.versioned;
 
+import link.sharedworld.integration.SharedWorldJoinIdentity;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.ConnectScreen;
 import net.minecraft.client.gui.screens.Screen;
@@ -11,9 +12,13 @@ public final class ConnectCompat {
     private ConnectCompat() {
     }
 
-    public static void startConnecting(Screen parent, Minecraft minecraft, String target, String worldName) {
+    public static void startConnecting(Screen parent, Minecraft minecraft, String target, String worldId, String worldName) {
         ServerAddress address = ServerAddress.parseString(target);
-        ServerData serverData = new ServerData(worldName, target, ServerData.Type.OTHER);
+        // The address resolves and connects; ServerData only names the session
+        // for Minecraft and for mods keying per-server data, so it gets the
+        // stable per-world identity instead of the changing join target.
+        String identity = SharedWorldJoinIdentity.serverAddress(worldId);
+        ServerData serverData = new ServerData(identity, identity, ServerData.Type.OTHER);
         ConnectScreen.startConnecting(parent, minecraft, address, serverData, false, null);
     }
 }

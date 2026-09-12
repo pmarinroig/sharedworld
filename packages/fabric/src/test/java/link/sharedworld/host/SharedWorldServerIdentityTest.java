@@ -17,9 +17,9 @@ final class SharedWorldServerIdentityTest {
         // Path.startsWith is component-wise, so /game/sharedworld/worlds-evil
         // must not count as being inside /game/sharedworld/worlds.
         assertFalse(SharedWorldServerIdentity.isManagedRoot(
-                Path.of("/game/sharedworld/worlds-evil/world-1/current").toAbsolutePath().normalize(), WORLDS_ROOT));
+                Path.of("/game/sharedworld/worlds-evil/world-1/world-1").toAbsolutePath().normalize(), WORLDS_ROOT));
         assertFalse(SharedWorldServerIdentity.isManagedRoot(
-                Path.of("/game/sharedworld/worldsfoo/current").toAbsolutePath().normalize(), WORLDS_ROOT));
+                Path.of("/game/sharedworld/worldsfoo/world-1").toAbsolutePath().normalize(), WORLDS_ROOT));
     }
 
     @Test
@@ -31,7 +31,17 @@ final class SharedWorldServerIdentityTest {
     @Test
     void managedWorkingCopyIsRecognized() {
         assertTrue(SharedWorldServerIdentity.isManagedRoot(
+                WORLDS_ROOT.resolve("world-1").resolve("world-1"), WORLDS_ROOT));
+    }
+
+    @Test
+    void aLegacyCurrentWorkingCopyIsNoLongerOpenedAsManaged() {
+        // 0.5.3 renames "current" to the world id before hosting; a leftover
+        // "current" must not be mistaken for the live working copy.
+        assertFalse(SharedWorldServerIdentity.isManagedRoot(
                 WORLDS_ROOT.resolve("world-1").resolve("current"), WORLDS_ROOT));
+        assertFalse(SharedWorldServerIdentity.isManagedRoot(
+                WORLDS_ROOT.resolve("world-1").resolve("world-2"), WORLDS_ROOT));
     }
 
     @Test
@@ -42,24 +52,24 @@ final class SharedWorldServerIdentityTest {
 
     @Test
     void otherDirectoriesInsideAWorldContainerAreNotManaged() {
-        // Only the working copy ("current") is ever opened as a world; staging or
-        // baseline directories under the container must not count.
+        // Only the working copy is ever opened as a world; staging or baseline
+        // directories under the container must not count.
         assertFalse(SharedWorldServerIdentity.isManagedRoot(
                 WORLDS_ROOT.resolve("world-1").resolve("staging"), WORLDS_ROOT));
     }
 
     @Test
-    void aSaveNamedCurrentOutsideTheRootIsNotManaged() {
+    void aSaveNamedLikeAWorldIdOutsideTheRootIsNotManaged() {
         assertFalse(SharedWorldServerIdentity.isManagedRoot(
-                Path.of("/game/saves/current").toAbsolutePath().normalize(), WORLDS_ROOT));
+                Path.of("/game/saves/world-1/world-1").toAbsolutePath().normalize(), WORLDS_ROOT));
     }
 
     @Test
     void matchesWorkingCopyComparesNormalizedPaths() {
-        Path workingCopy = WORLDS_ROOT.resolve("world-1").resolve("current");
+        Path workingCopy = WORLDS_ROOT.resolve("world-1").resolve("world-1");
         assertTrue(SharedWorldServerIdentity.matchesWorkingCopy(
-                workingCopy, WORLDS_ROOT.resolve("world-1").resolve("x").resolve("..").resolve("current")));
+                workingCopy, WORLDS_ROOT.resolve("world-1").resolve("x").resolve("..").resolve("world-1")));
         assertFalse(SharedWorldServerIdentity.matchesWorkingCopy(
-                workingCopy, WORLDS_ROOT.resolve("world-2").resolve("current")));
+                workingCopy, WORLDS_ROOT.resolve("world-2").resolve("world-2")));
     }
 }

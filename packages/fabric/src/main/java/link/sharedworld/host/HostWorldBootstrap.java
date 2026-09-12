@@ -1,6 +1,7 @@
 package link.sharedworld.host;
 
 import link.sharedworld.api.SharedWorldModels.WorldSummaryDto;
+import link.sharedworld.integration.XaeroMapCompat;
 import link.sharedworld.sync.ManagedWorldStore;
 import link.sharedworld.sync.WorldSyncProgress;
 
@@ -44,6 +45,8 @@ final class HostWorldBootstrap {
         }
 
         String resolvedHostPlayerUuid = hostPlayerUuid.get();
+        // Also renames a pre-0.5.3 "current" working copy to the per-world level id.
+        this.worldStore.ensureWorldContainer(world.id());
         Path worldDirectory;
         if (recoverLocalCrashState) {
             worldDirectory = this.worldStore.workingCopy(world.id());
@@ -93,6 +96,8 @@ final class HostWorldBootstrap {
         // holding possibly-unpublished progress until the release lane's final
         // upload clears the marker.
         this.worldStore.markLocalChanges(world.id(), resolvedHostPlayerUuid, Instant.now().toString());
+        // Xaero's world id before the map opens, so host and guests share one map instance.
+        XaeroMapCompat.ensureWorldIdFile(worldDirectory);
         onOpeningWorld.run();
         this.worldOpenController.openExistingWorld(this.worldStore, world, worldDirectory);
     }

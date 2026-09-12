@@ -11,7 +11,10 @@
     "IntegratedServerForcedGameTypeMixin",
     "ServerboundKeyPacketCompatMixin",
     "VanillaBanCommandInterceptMixin",
-    "VanillaWhitelistCommandInterceptMixin"
+    "VanillaWhitelistCommandInterceptMixin",
+    "XaeroMinimapContainerMixin",
+    "XaeroMinimapWorldNodeMixin",
+    "XaeroWorldMapRootIdMixin"
   ],
   "injectors": {
     "defaultRequire": 1

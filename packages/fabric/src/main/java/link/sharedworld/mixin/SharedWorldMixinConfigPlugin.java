@@ -1,6 +1,7 @@
 package link.sharedworld.mixin;
 
 import link.sharedworld.SharedWorldE4mcCompatibility;
+import link.sharedworld.integration.XaeroMapCompat;
 import org.objectweb.asm.tree.ClassNode;
 import org.spongepowered.asm.mixin.extensibility.IMixinConfigPlugin;
 import org.spongepowered.asm.mixin.extensibility.IMixinInfo;
@@ -14,6 +15,9 @@ public final class SharedWorldMixinConfigPlugin implements IMixinConfigPlugin {
             "link.sharedworld.mixin.E4mcSingleplayerOwnerCompatIntermediaryMixin";
     private static final String SINGLEPLAYER_OWNER_NAMED_COMPAT_MIXIN =
             "link.sharedworld.mixin.E4mcSingleplayerOwnerCompatNamedMixin";
+    private static final String XAERO_WORLD_MAP_ROOT_MIXIN = "link.sharedworld.mixin.XaeroWorldMapRootIdMixin";
+    private static final String XAERO_MINIMAP_CONTAINER_MIXIN = "link.sharedworld.mixin.XaeroMinimapContainerMixin";
+    private static final String XAERO_MINIMAP_NODE_MIXIN = "link.sharedworld.mixin.XaeroMinimapWorldNodeMixin";
 
     @Override
     public void onLoad(String mixinPackage) {
@@ -44,6 +48,18 @@ public final class SharedWorldMixinConfigPlugin implements IMixinConfigPlugin {
             boolean shouldApply = shouldApplySingleplayerOwnerCompatMixin(mixinClassName, detectedTarget);
             SharedWorldE4mcCompatibility.logSingleplayerOwnerCompatDecision(detectedTarget, mixinClassName, shouldApply);
             return shouldApply;
+        }
+
+        if (XAERO_WORLD_MAP_ROOT_MIXIN.equals(mixinClassName)) {
+            return XaeroMapCompat.hookTargetPresent(
+                    XaeroMapCompat.WORLD_MAP_ROOT_TARGET, XaeroMapCompat.WORLD_MAP_ROOT_METHOD, XaeroMapCompat.WORLD_MAP_ROOT_DESCRIPTOR);
+        }
+        if (XAERO_MINIMAP_CONTAINER_MIXIN.equals(mixinClassName)) {
+            return XaeroMapCompat.hookTargetPresent(
+                    XaeroMapCompat.MINIMAP_CONTAINER_TARGET, XaeroMapCompat.MINIMAP_CONTAINER_METHOD, XaeroMapCompat.MINIMAP_CONTAINER_DESCRIPTOR);
+        }
+        if (XAERO_MINIMAP_NODE_MIXIN.equals(mixinClassName)) {
+            return XaeroMapCompat.hookTargetPresent(XaeroMapCompat.MINIMAP_NODE_TARGET, XaeroMapCompat.MINIMAP_NODE_METHOD, null);
         }
 
         return true;

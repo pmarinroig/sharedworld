@@ -21,7 +21,13 @@ import java.util.Set;
 import java.util.stream.Stream;
 
 public final class ManagedWorldStore {
-    public static final String LEVEL_ID = "current";
+    /**
+     * Level id every working copy used before 0.5.3. Mods that key per-world
+     * client data by the save folder name (Xaero's, JourneyMap, VoxelMap,
+     * Distant Horizons' level keys) saw one world called "current" and mixed
+     * every shared world together; the level id is the world id now.
+     */
+    public static final String LEGACY_LEVEL_ID = "current";
     private static final Gson BASELINE_GSON = new Gson();
     private static final TypeToken<Map<String, String>> BASELINE_HASHES_TYPE = new TypeToken<>() {
     };
@@ -43,8 +49,13 @@ public final class ManagedWorldStore {
         return this.sharedWorldRoot.resolve(worldId);
     }
 
+    /** The level id the integrated server opens: the world id, unique per world on every machine. */
+    public String levelId(String worldId) {
+        return worldId;
+    }
+
     public Path workingCopy(String worldId) {
-        return this.worldContainer(worldId).resolve(LEVEL_ID);
+        return this.worldContainer(worldId).resolve(this.levelId(worldId));
     }
 
     public Path stagingRoot(String worldId) {
@@ -81,6 +92,20 @@ public final class ManagedWorldStore {
 
     public void ensureWorldContainer(String worldId) throws IOException {
         Files.createDirectories(this.worldContainer(worldId));
+        migrateLegacyWorkingCopy(this.worldContainer(worldId), this.levelId(worldId));
+    }
+
+    /**
+     * One-time rename of a pre-0.5.3 working copy to the per-world level id.
+     * Sibling state (baselines, capture mirror, scan cache, local-changes
+     * marker) is keyed by world id and stays where it is.
+     */
+    static void migrateLegacyWorkingCopy(Path worldContainer, String levelId) throws IOException {
+        Path legacy = worldContainer.resolve(LEGACY_LEVEL_ID);
+        Path current = worldContainer.resolve(levelId);
+        if (Files.isDirectory(legacy) && !Files.exists(current)) {
+            Files.move(legacy, current);
+        }
     }
 
     /**
@@ -94,6 +119,11 @@ public final class ManagedWorldStore {
         }
         try (Stream<Path> worlds = Files.list(this.sharedWorldRoot)) {
             for (Path worldContainer : worlds.filter(Files::isDirectory).toList()) {
+                try {
+                    migrateLegacyWorkingCopy(worldContainer, this.levelId(worldContainer.getFileName().toString()));
+                } catch (IOException exception) {
+                    // The next host or join of that world retries through ensureWorldContainer.
+                }
                 pruneWorldTransientArtifacts(worldContainer);
             }
         } catch (IOException exception) {
@@ -119,7 +149,7 @@ public final class ManagedWorldStore {
         } catch (IOException exception) {
             // Best effort.
         }
-        Path workingCopy = worldContainer.resolve(LEVEL_ID);
+        Path workingCopy = worldContainer.resolve(worldContainer.getFileName().toString());
         if (Files.isDirectory(workingCopy)) {
             try (Stream<Path> stream = Files.walk(workingCopy)) {
                 for (Path path : stream.filter(Files::isRegularFile).toList()) {
@@ -236,7 +266,7 @@ public final class ManagedWorldStore {
         try (Stream<Path> stream = Files.walk(workingCopy)) {
             for (Path source : stream.sorted(Comparator.naturalOrder()).toList()) {
                 Path relative = workingCopy.relativize(source);
-                if (relative.toString().isBlank() || "session.lock".equals(source.getFileName().toString())) {
+                if (relative.toString().isBlank() || LocalOnlyPaths.isLocalOnly(relative.toString().replace('\\', '/'))) {
                     continue;
                 }
                 Path target = mirror.resolve(relative.toString());

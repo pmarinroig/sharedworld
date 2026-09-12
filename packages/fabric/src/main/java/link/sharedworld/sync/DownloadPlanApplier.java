@@ -206,6 +206,13 @@ final class DownloadPlanApplier {
         WorldSyncSupport.logTiming(LOGGER, "download changed files", this.worldDirectory.getFileName().toString(), downloadStartedAt);
 
         WorldSyncSupport.report(this.progressListener, WorldSyncCoordinator.STAGE_APPLYING_WORLD_UPDATE, 0.72D, null, null, "Applying world update");
+        // Snapshots made by older clients still carry local-only files (a
+        // Distant Horizons database, say); this machine's copy wins over them.
+        List<DownloadedFile> localOnly = downloadedFiles.stream().filter(file -> LocalOnlyPaths.isLocalOnly(file.relativePath())).toList();
+        for (DownloadedFile skipped : localOnly) {
+            Files.deleteIfExists(skipped.tempPath());
+        }
+        downloadedFiles.removeAll(localOnly);
         for (DownloadedFile downloadedFile : downloadedFiles) {
             WorldSyncSupport.moveAtomically(downloadedFile.tempPath(), downloadedFile.targetPath());
         }
@@ -231,7 +238,7 @@ final class DownloadPlanApplier {
             try (Stream<Path> stream = Files.walk(this.worldDirectory)) {
                 for (Path path : stream.filter(Files::isRegularFile).sorted(Comparator.reverseOrder()).toList()) {
                     String relativePath = this.worldDirectory.relativize(path).toString().replace('\\', '/');
-                    if (!desiredPaths.contains(relativePath) && !"session.lock".equals(path.getFileName().toString())) {
+                    if (!desiredPaths.contains(relativePath) && !LocalOnlyPaths.isLocalOnly(relativePath)) {
                         Files.deleteIfExists(path);
                     }
                 }
