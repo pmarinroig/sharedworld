@@ -265,6 +265,7 @@ fn timing_constants_agree_with_the_mod() {
         "host/SharedWorldHostingManager.java#MAX_SUGGESTED_HEARTBEAT_INTERVAL_MS",
         "host/SharedWorldHostingManager.java#MAX_SUGGESTED_AUTOSAVE_INTERVAL_MS",
         "host/SharedWorldHostingManager.java#AUTOSAVE_REANNOUNCE_INTERVAL_MS",
+        "host/SharedWorldHostingManager.java#AUTOSAVE_FAILURE_RETRY_MS",
         "SharedWorldPresenceManager.java#MAX_SUGGESTED_HEARTBEAT_INTERVAL_MS",
         "host/SharedWorldHostingManager.java#PUSH_CONNECTED_HEARTBEAT_INTERVAL_MS",
         "host/SharedWorldHostingManager.java#GAMERULES_LOCAL_POLL_INTERVAL_MS",
