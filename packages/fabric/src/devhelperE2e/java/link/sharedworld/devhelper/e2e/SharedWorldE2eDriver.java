@@ -1309,6 +1309,26 @@ public final class SharedWorldE2eDriver {
             }
         } else if (command.startsWith("screenshot:")) {
             this.screenshot(minecraft, command.substring("screenshot:".length()));
+        } else if (command.startsWith("press-key:")) {
+            // Simulates one press of a key binding by name (e.g. Xaero's
+            // "gui.xaero_open_map"); the owning mod consumes the click on its
+            // next tick exactly as for a real key press.
+            String name = command.substring("press-key:".length());
+            this.markers.emit(pressKeyMapping(minecraft, name) ? "key-pressed" : "key-missing", name);
+        } else if (command.startsWith("scroll:")) {
+            // Mouse wheel at the screen centre (Xaero's map zooms on scroll).
+            double amount = Double.parseDouble(command.substring("scroll:".length()));
+            if (minecraft.screen != null) {
+                minecraft.screen.mouseScrolled(minecraft.getWindow().getGuiScaledWidth() / 2.0, minecraft.getWindow().getGuiScaledHeight() / 2.0, 0.0, amount);
+            }
+            this.markers.emit("scrolled", Double.toString(amount));
+        } else if (command.startsWith("gui-scale:")) {
+            minecraft.options.guiScale().set(Integer.parseInt(command.substring("gui-scale:".length())));
+            minecraft.resizeDisplay();
+            this.markers.emit("gui-scaled", command.substring("gui-scale:".length()));
+        } else if ("close-screen".equals(command)) {
+            minecraft.setScreen(null);
+            this.markers.emit("screen-closed", null);
         } else if ("shutdown".equals(command)) {
             this.markers.emit("shutdown-received", null);
             if (minecraft.screen == null) {
@@ -1317,6 +1337,24 @@ public final class SharedWorldE2eDriver {
             return true;
         } else {
             this.markers.emit("driver-exception", "modcompat: unknown command " + command);
+        }
+        return false;
+    }
+
+    private static boolean pressKeyMapping(Minecraft minecraft, String name) {
+        for (net.minecraft.client.KeyMapping mapping : minecraft.options.keyMappings) {
+            if (!name.equals(mapping.getName())) {
+                continue;
+            }
+            try {
+                // Dev-only driver on the default bucket: Mojang names apply.
+                java.lang.reflect.Field keyField = net.minecraft.client.KeyMapping.class.getDeclaredField("key");
+                keyField.setAccessible(true);
+                net.minecraft.client.KeyMapping.click((com.mojang.blaze3d.platform.InputConstants.Key) keyField.get(mapping));
+                return true;
+            } catch (ReflectiveOperationException | RuntimeException exception) {
+                return false;
+            }
         }
         return false;
     }
