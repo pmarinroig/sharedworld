@@ -16,6 +16,7 @@ import java.nio.file.StandardCopyOption;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
@@ -109,6 +110,20 @@ public final class ManagedWorldStore {
     }
 
     /**
+     * The rename alone, for callers that only decide on the working copy's
+     * presence (crash recovery, unpublished local changes) and must not wait
+     * for the startup pass to reach this world. Creates nothing; a failed
+     * rename is retried by the next {@link #ensureWorldContainer}.
+     */
+    public void adoptLegacyWorkingCopy(String worldId) {
+        try {
+            migrateLegacyWorkingCopy(this.worldContainer(worldId), this.levelId(worldId));
+        } catch (IOException exception) {
+            // Best effort here; ensureWorldContainer surfaces a persistent failure.
+        }
+    }
+
+    /**
      * Deletes transient sync artifacts a crashed or killed client left behind:
      * staging copies, extract directories, and partial download temps. Working
      * copies, baselines, and baseline markers are never touched.
@@ -118,12 +133,18 @@ public final class ManagedWorldStore {
             return;
         }
         try (Stream<Path> worlds = Files.list(this.sharedWorldRoot)) {
-            for (Path worldContainer : worlds.filter(Files::isDirectory).toList()) {
+            List<Path> containers = worlds.filter(Files::isDirectory).toList();
+            // Every rename before any deletion: a large staging leftover in one
+            // world must not delay another world's working copy appearing under
+            // its new name while the player is already heading for the host button.
+            for (Path worldContainer : containers) {
                 try {
                     migrateLegacyWorkingCopy(worldContainer, this.levelId(worldContainer.getFileName().toString()));
                 } catch (IOException exception) {
                     // The next host or join of that world retries through ensureWorldContainer.
                 }
+            }
+            for (Path worldContainer : containers) {
                 pruneWorldTransientArtifacts(worldContainer);
             }
         } catch (IOException exception) {

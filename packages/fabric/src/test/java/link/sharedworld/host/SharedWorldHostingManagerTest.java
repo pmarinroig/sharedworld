@@ -337,6 +337,34 @@ final class SharedWorldHostingManagerTest {
     }
 
     @Test
+    void unreleasedChangesInACopyTheStartupPassHasNotRenamedYetArePublishedFirst() throws Exception {
+        ManagedWorldStore worldStore = new ManagedWorldStore(this.tempDir.resolve("managed-publish-legacy"));
+        Files.createDirectories(worldStore.worldContainer("world-1").resolve(ManagedWorldStore.LEGACY_LEVEL_ID));
+        Files.writeString(worldStore.packBaselineSnapshotFile("world-1"), "snapshot-1");
+        worldStore.markLocalChanges("world-1", HOST_UUID, "2026-08-17T10:00:00Z");
+        RecordingSyncAccess syncAccess = new RecordingSyncAccess(this.tempDir.resolve("prepared-world"));
+        SharedWorldHostingManager manager = manager(worldStore, syncAccess, new RecordingWorldOpenController(), new InMemoryHostRecoveryStore(), worldId -> false);
+
+        primeStartup(manager, world("world-1", "Handoff World"), 7L, SharedWorldHostingManager.StartupMode.NORMAL);
+        invokePrepareAndOpen(manager, 7L);
+
+        assertEquals(java.util.List.of("upload", "ensure"), syncAccess.callOrder);
+        assertEquals(worldStore.workingCopy("world-1"), syncAccess.uploadedWorldDirectory);
+    }
+
+    @Test
+    void warningAvailabilitySeesAWorkingCopyTheStartupPassHasNotRenamedYet() throws Exception {
+        ManagedWorldStore worldStore = new ManagedWorldStore(this.tempDir.resolve("managed-warning-legacy"));
+        Files.createDirectories(worldStore.worldContainer("world-1").resolve(ManagedWorldStore.LEGACY_LEVEL_ID));
+        InMemoryHostRecoveryStore recoveryStore = new InMemoryHostRecoveryStore();
+        recoveryStore.record = new SharedWorldHostingManager.HostRecoveryRecord("world-1", "Handoff World", HOST_UUID, 6L, Instant.EPOCH.toString());
+        SharedWorldHostingManager manager = manager(worldStore, new RecordingSyncAccess(this.tempDir.resolve("prepared-world")), new RecordingWorldOpenController(), recoveryStore, worldId -> false);
+
+        assertTrue(manager.hasRecoverableLocalCrashState("world-1", HOST_UUID, 6L));
+        assertTrue(Files.isDirectory(worldStore.workingCopy("world-1")));
+    }
+
+    @Test
     void warningAvailabilityIsBlockedByPendingReleaseRecovery() throws Exception {
         ManagedWorldStore worldStore = new ManagedWorldStore(this.tempDir.resolve("managed-warning-pending"));
         Files.createDirectories(worldStore.workingCopy("world-1"));

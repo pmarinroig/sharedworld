@@ -6,6 +6,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -57,6 +58,30 @@ final class ManagedWorldStoreTest {
         store.ensureWorldContainer("world_abc");
         assertTrue(Files.exists(legacy));
         assertEquals("old copy", Files.readString(store.workingCopy("world_abc").resolve("level.dat")));
+    }
+
+    @Test
+    void theStartupPassRenamesEveryLegacyCopyBeforeDeletingAnything() throws IOException {
+        ManagedWorldStore store = new ManagedWorldStore(this.tempDir.resolve("startup-rename-root"));
+        for (String worldId : List.of("world_a", "world_b")) {
+            Path legacy = Files.createDirectories(store.worldContainer(worldId).resolve(ManagedWorldStore.LEGACY_LEVEL_ID));
+            Files.writeString(legacy.resolve("level.dat"), worldId);
+            Files.createDirectories(store.stagingRoot(worldId).resolve("snapshot-1"));
+        }
+
+        store.pruneTransientArtifacts();
+
+        for (String worldId : List.of("world_a", "world_b")) {
+            assertEquals(worldId, Files.readString(store.workingCopy(worldId).resolve("level.dat")));
+            assertFalse(Files.exists(store.worldContainer(worldId).resolve(ManagedWorldStore.LEGACY_LEVEL_ID)));
+            assertFalse(Files.exists(store.stagingRoot(worldId)));
+        }
+
+        // The rename alone, for decisions taken before the startup pass gets there.
+        Path late = Files.createDirectories(store.worldContainer("world_c").resolve(ManagedWorldStore.LEGACY_LEVEL_ID));
+        Files.writeString(late.resolve("level.dat"), "late");
+        store.adoptLegacyWorkingCopy("world_c");
+        assertEquals("late", Files.readString(store.workingCopy("world_c").resolve("level.dat")));
     }
 
     @Test

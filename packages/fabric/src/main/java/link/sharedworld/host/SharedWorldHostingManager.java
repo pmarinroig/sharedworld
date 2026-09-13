@@ -847,6 +847,8 @@ public final class SharedWorldHostingManager {
         this.startupPublishingLocalChanges = false;
         String worldId = this.world.id();
         ManagedWorldStore.LocalChangesMarker marker = this.worldStore.localChanges(worldId);
+        // A pre-0.5.3 copy the startup pass has not renamed yet still holds the changes.
+        this.worldStore.adoptLegacyWorkingCopy(worldId);
         Path workingCopy = this.worldStore.workingCopy(worldId);
         if (marker == null || !Files.exists(workingCopy)) {
             return true;
@@ -1391,6 +1393,7 @@ public final class SharedWorldHostingManager {
         if (!hostPlayerUuid.equalsIgnoreCase(record.hostUuid())) {
             return new RecoveryEligibility(RecoveryEligibilityOutcome.FALLBACK_NO_MARKER, null);
         }
+        this.worldStore.adoptLegacyWorkingCopy(worldId);
         if (!Files.exists(this.worldStore.workingCopy(worldId))) {
             return new RecoveryEligibility(RecoveryEligibilityOutcome.FALLBACK_NO_WORKING_COPY, record);
         }
