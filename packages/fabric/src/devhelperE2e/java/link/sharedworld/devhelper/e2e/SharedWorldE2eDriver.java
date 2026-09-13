@@ -70,6 +70,7 @@ public final class SharedWorldE2eDriver {
         DRIVE_FAILURE_AWAIT_REHOST_GO,
         DRIVE_FAILURE_REHOST_AWAIT_LIVE,
         MODCOMPAT_SESSION,
+        PROMO_SESSION,
         AWAIT_RELEASE_COMPLETE,
         AWAIT_EXIT
     }
@@ -94,6 +95,7 @@ public final class SharedWorldE2eDriver {
         EXTENDED_VERIFY_BLOCK,
         MODCOMPAT_INGAME,
         MODCOMPAT_SESSION,
+        PROMO_SESSION,
         AWAIT_EXIT
     }
 
@@ -162,6 +164,11 @@ public final class SharedWorldE2eDriver {
      * handoff; the host run config may boot as a guest for the role swap.
      */
     private boolean modCompat;
+    /** Promo footage scenario: choreography commands instead of drills (see PromoOps). */
+    private boolean promo;
+    private final PromoOps promoOps = new PromoOps();
+    private boolean promoDepartureEmitted;
+    private boolean promoJoinReleased;
     private String pendingXaeroWaypoint;
     private boolean s3LinkPressed;
     private boolean s3LinkUrlEmitted;
@@ -233,12 +240,13 @@ public final class SharedWorldE2eDriver {
         this.driveFailure = "drive-failure".equals(scenario);
         this.extended = "extended".equals(scenario);
         this.modCompat = "modcompat".equals(scenario);
+        this.promo = "promo".equals(scenario);
         this.customJoinPort = System.getProperty("sharedworld.e2e.customJoinPort");
         if (this.customJoinPort != null && this.customJoinPort.isBlank()) {
             this.customJoinPort = null;
         }
         this.bigFileRelative = System.getProperty("sharedworld.e2e.bigFile", "");
-        if (this.bigWorld || this.driveFailure || this.extended || this.modCompat) {
+        if (this.bigWorld || this.driveFailure || this.extended || this.modCompat || this.promo) {
             // No cancel drill in these scenarios: bigworld's interesting
             // startup is the multi-GB upload, and the custom-join port must
             // not be re-bound straight out of TIME_WAIT after a cancel.
@@ -519,6 +527,7 @@ public final class SharedWorldE2eDriver {
                             : this.driveFailure ? HostStep.DRIVE_FAILURE_SESSION
                             : this.extended ? HostStep.EXTENDED_SESSION
                             : this.modCompat ? HostStep.MODCOMPAT_SESSION
+                            : this.promo ? HostStep.PROMO_SESSION
                             : HostStep.OP_DRILL_AWAIT_COMMAND;
                 }
             }
@@ -860,6 +869,14 @@ public final class SharedWorldE2eDriver {
                     this.hostStep = HostStep.AWAIT_RELEASE_COMPLETE;
                 }
             }
+            case PROMO_SESSION -> {
+                if (this.promoOps.tick(minecraft, this.commands, this.markers)) {
+                    if (minecraft.screen == null) {
+                        minecraft.setScreen(new PauseScreen(true));
+                    }
+                    this.hostStep = HostStep.AWAIT_RELEASE_COMPLETE;
+                }
+            }
             case AWAIT_RELEASE_COMPLETE -> {
                 if (minecraft.screen instanceof PauseScreen pauseScreen) {
                     WidgetAutomation.pressButton(pauseScreen, "menu.returnToMenu");
@@ -871,9 +888,13 @@ public final class SharedWorldE2eDriver {
                 }
             }
             case AWAIT_EXIT -> {
-                if ("exit".equals(this.commands.poll())) {
+                String exitCommand = this.commands.poll();
+                if ("exit".equals(exitCommand)) {
                     this.markers.emit("exiting", null);
                     minecraft.stop();
+                } else if (exitCommand != null && this.promo) {
+                    // Promo: recording stop and screenshots after a release.
+                    this.promoOps.handle(minecraft, exitCommand, this.markers);
                 }
             }
         }
@@ -1036,9 +1057,17 @@ public final class SharedWorldE2eDriver {
         GuestStep before = this.guestStep;
         switch (this.guestStep) {
             case WAIT_GO -> {
-                if ("guest-go".equals(this.commands.poll())) {
+                if (this.promo) {
+                    // Promo: the idle guest already shoots title-screen footage
+                    // (dead server entry on the multiplayer screen) before it joins.
+                    this.promoOps.tickEffects(minecraft, this.markers);
+                }
+                String goCommand = this.commands.poll();
+                if ("guest-go".equals(goCommand)) {
                     this.markers.emit("guest-go-received", null);
                     this.guestStep = GuestStep.WAIT_TITLE;
+                } else if (goCommand != null && this.promo) {
+                    this.promoOps.handle(minecraft, goCommand, this.markers);
                 }
             }
             case WAIT_TITLE -> {
@@ -1062,6 +1091,17 @@ public final class SharedWorldE2eDriver {
                 }
             }
             case BEGIN_JOIN -> {
+                if (this.promo && !this.promoJoinReleased) {
+                    // Promo: hold on the Shared Worlds screen (footage) until join-go.
+                    this.promoOps.tickEffects(minecraft, this.markers);
+                    String held = this.commands.poll();
+                    if ("join-go".equals(held)) {
+                        this.promoJoinReleased = true;
+                    } else if (held != null) {
+                        this.promoOps.handle(minecraft, held, this.markers);
+                    }
+                    return;
+                }
                 WorldSummaryDto world = this.targetWorld.get();
                 if (minecraft.screen instanceof SharedWorldScreen screen && world != null) {
                     SharedWorldClient.sessionCoordinator().beginJoin(screen, world);
@@ -1077,6 +1117,7 @@ public final class SharedWorldE2eDriver {
                     this.guestStep = this.bigWorld ? GuestStep.AWAIT_HOST_DEPARTURE
                             : this.extended ? GuestStep.EXTENDED_INGAME
                             : this.modCompat ? GuestStep.MODCOMPAT_INGAME
+                            : this.promo ? GuestStep.PROMO_SESSION
                             : GuestStep.AWAIT_COMMAND_DRILL;
                 }
             }
@@ -1168,6 +1209,22 @@ public final class SharedWorldE2eDriver {
                             : GuestStep.BIGWORLD_SESSION;
                 }
             }
+            case PROMO_SESSION -> {
+                // The guest stays in this step across the host's departure and
+                // its own takeover: the choreography drives every screen from
+                // the command file; the departure marker is informational.
+                if (!this.promoDepartureEmitted && minecraft.level == null
+                        && SharedWorldClient.playSessionTracker().currentSession() == null) {
+                    this.promoDepartureEmitted = true;
+                    this.markers.emit("guest-observed-host-departure", PromoOps.screenName(minecraft));
+                }
+                if (this.promoOps.tick(minecraft, this.commands, this.markers)) {
+                    if (minecraft.screen == null) {
+                        minecraft.setScreen(new PauseScreen(true));
+                    }
+                    this.guestStep = GuestStep.BIGWORLD_AWAIT_RELEASE_COMPLETE;
+                }
+            }
             case EXTENDED_INGAME -> {
                 // Pre-handoff: prove the placed block synced to this guest's
                 // CLIENT view of the live world (check-block:x,y,z), then wait
@@ -1245,9 +1302,13 @@ public final class SharedWorldE2eDriver {
                 }
             }
             case AWAIT_EXIT -> {
-                if ("exit".equals(this.commands.poll())) {
+                String exitCommand = this.commands.poll();
+                if ("exit".equals(exitCommand)) {
                     this.markers.emit("exiting", null);
                     minecraft.stop();
+                } else if (exitCommand != null && this.promo) {
+                    // Promo: recording stop and screenshots after a release.
+                    this.promoOps.handle(minecraft, exitCommand, this.markers);
                 }
             }
         }

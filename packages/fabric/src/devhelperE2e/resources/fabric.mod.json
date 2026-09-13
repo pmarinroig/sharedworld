@@ -13,6 +13,9 @@
       "link.sharedworld.devhelper.e2e.SharedWorldE2eDriverFabric"
     ]
   },
+  "mixins": [
+    "sharedworld-dev-e2e.mixins.json"
+  ],
   "depends": {
     "fabricloader": ">=0.18.2",
     "fabric-api": "*",
