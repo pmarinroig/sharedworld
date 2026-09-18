@@ -67,6 +67,7 @@ public final class SharedWorldApiClient {
     private SessionTokenDto cachedSession;
     private boolean cachedSessionIsDev;
     private boolean cachedAllowInsecureE4mc;
+    private CertificateRejection certificateRejection;
 
     public SharedWorldApiClient(String baseUrl) {
         this(
@@ -874,6 +875,10 @@ public final class SharedWorldApiClient {
         try {
             session = establishMojangSession(identity);
         } catch (SharedWorldApiException exception) {
+            if (this.certificateRejection != null && exception == this.certificateRejection.exception()) {
+                LOGGER.debug("SharedWorld sign-in still held after {}; not asking the backend again yet", exception.error());
+                throw exception;
+            }
             if (!"identity_verification_unavailable".equals(exception.error())) {
                 LOGGER.warn("SharedWorld authentication failed: {} (HTTP {}) - {}",
                         exception.error(), exception.status(), exception.getMessage());
@@ -927,23 +932,67 @@ public final class SharedWorldApiClient {
 
     private SessionTokenDto establishCertificateSession(SessionIdentity identity, ProfileCertificateData certificate)
             throws IOException, InterruptedException {
+        CertificateRejection held = this.certificateRejection;
+        if (held != null) {
+            if (held.stillApplies(certificate, System.currentTimeMillis())) {
+                throw held.exception();
+            }
+            this.certificateRejection = null;
+        }
         AuthChallengeDto challenge = request("POST", "/auth/challenge", Map.of(), AuthChallengeDto.class, false);
         java.util.Base64.Encoder base64 = java.util.Base64.getEncoder();
-        return request(
-                "POST",
-                "/auth/complete-cert",
-                Map.of(
-                        "serverId", challenge.serverId(),
-                        "playerUuid", identity.playerUuid().replace("-", "").toLowerCase(java.util.Locale.ROOT),
-                        "playerName", identity.playerName(),
-                        "publicKey", base64.encodeToString(certificate.publicKeyDer()),
-                        "publicKeyExpiresAtMs", certificate.expiresAtEpochMillis(),
-                        "keySignature", base64.encodeToString(certificate.keySignature()),
-                        "nonceSignature", base64.encodeToString(signNonce(certificate.privateKey(), challenge.serverId()))
-                ),
-                SessionTokenDto.class,
-                false
-        );
+        try {
+            return request(
+                    "POST",
+                    "/auth/complete-cert",
+                    Map.of(
+                            "serverId", challenge.serverId(),
+                            "playerUuid", identity.playerUuid().replace("-", "").toLowerCase(java.util.Locale.ROOT),
+                            "playerName", identity.playerName(),
+                            "publicKey", base64.encodeToString(certificate.publicKeyDer()),
+                            "publicKeyExpiresAtMs", certificate.expiresAtEpochMillis(),
+                            "keySignature", base64.encodeToString(certificate.keySignature()),
+                            "nonceSignature", base64.encodeToString(signNonce(certificate.privateKey(), challenge.serverId()))
+                    ),
+                    SessionTokenDto.class,
+                    false
+            );
+        } catch (SharedWorldApiException exception) {
+            if (CertificateRejection.isFinalForCertificate(exception)) {
+                this.certificateRejection = new CertificateRejection(
+                        exception,
+                        certificate.publicKeyDer().clone(),
+                        System.currentTimeMillis() + CERTIFICATE_REJECTION_HOLD_MILLIS
+                );
+            }
+            throw exception;
+        }
+    }
+
+    /**
+     * How long a rejected certificate is held before the backend is asked
+     * again. The backend's verdict on one certificate does not change on its
+     * own (an unsigned or expired keypair stays that way until the game is
+     * restarted with a real account), and the hub re-authenticates on every
+     * call, so without this a client with no valid keys asks the backend
+     * every couple of seconds for as long as the screen is open. The hold is
+     * bounded rather than permanent so a backend that briefly held stale
+     * Mojang signing keys recovers without a game restart.
+     */
+    static final long CERTIFICATE_REJECTION_HOLD_MILLIS = 10L * 60_000L;
+
+    /** A backend verdict on one certificate, remembered so it is not re-asked every call. */
+    record CertificateRejection(SharedWorldApiException exception, byte[] publicKeyDer, long heldUntilMillis) {
+        static boolean isFinalForCertificate(SharedWorldApiException exception) {
+            return switch (exception.error()) {
+                case "certificate_invalid", "certificate_expired", "signature_invalid" -> true;
+                default -> false;
+            };
+        }
+
+        boolean stillApplies(ProfileCertificateData certificate, long nowMillis) {
+            return nowMillis < this.heldUntilMillis && Arrays.equals(this.publicKeyDer, certificate.publicKeyDer());
+        }
     }
 
     private static byte[] signNonce(java.security.PrivateKey privateKey, String serverId) throws IOException {

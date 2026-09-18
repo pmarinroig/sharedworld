@@ -164,4 +164,55 @@ final class SharedWorldApiClientCertAuthTest {
         assertEquals("certificate_invalid", error.error());
         assertEquals("Minecraft profile certificate is not validly signed for this player.", error.getMessage());
     }
+
+    @Test
+    void aRejectedCertificateIsNotOfferedAgainUntilItChanges() throws Exception {
+        String baseUrl = startServer();
+        serveChallenge();
+        AtomicInteger completeCalls = new AtomicInteger();
+        this.server.createContext("/auth/complete-cert", exchange -> {
+            completeCalls.incrementAndGet();
+            writeJson(exchange, 403,
+                    "{\"error\":\"certificate_invalid\",\"message\":\"Minecraft profile certificate is not validly signed for this player.\",\"status\":403}");
+        });
+        AtomicReference<ProfileCertificateData> current = new AtomicReference<>(certificate(generateKeyPair()));
+        SharedWorldApiClient client = new SharedWorldApiClient(
+                baseUrl,
+                HttpClient.newHttpClient(),
+                () -> new SharedWorldApiClient.SessionIdentity(PLAYER_UUID, "HostA", "premium-access-token"),
+                () -> Optional.of(current.get())
+        );
+
+        for (int attempt = 0; attempt < 3; attempt++) {
+            SharedWorldApiClient.SharedWorldApiException error =
+                    assertThrows(SharedWorldApiClient.SharedWorldApiException.class, client::ensureSession);
+            assertEquals("certificate_invalid", error.error());
+        }
+        assertEquals(1, completeCalls.get(), "the same certificate is not offered to the backend again");
+
+        current.set(certificate(generateKeyPair()));
+        SharedWorldApiClient.SharedWorldApiException error =
+                assertThrows(SharedWorldApiClient.SharedWorldApiException.class, client::ensureSession);
+        assertEquals("certificate_invalid", error.error());
+        assertEquals(2, completeCalls.get(), "a fresh certificate gets a fresh verdict");
+    }
+
+    @Test
+    void aTransientAuthFailureIsRetriedNextCall() throws Exception {
+        String baseUrl = startServer();
+        serveChallenge();
+        AtomicInteger completeCalls = new AtomicInteger();
+        this.server.createContext("/auth/complete-cert", exchange -> {
+            if (completeCalls.incrementAndGet() == 1) {
+                writeJson(exchange, 502, "{\"error\":\"upstream_unavailable\",\"message\":\"try again\",\"status\":502}");
+            } else {
+                writeJson(exchange, 200, SESSION_JSON);
+            }
+        });
+        SharedWorldApiClient client = client(baseUrl, Optional.of(certificate(generateKeyPair())));
+
+        assertThrows(SharedWorldApiClient.SharedWorldApiException.class, client::ensureSession);
+        assertEquals("session-cert", client.ensureSession().token(), "only certificate verdicts are held");
+        assertEquals(2, completeCalls.get());
+    }
 }
