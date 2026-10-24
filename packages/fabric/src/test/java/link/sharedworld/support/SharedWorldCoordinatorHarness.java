@@ -52,6 +52,9 @@ public final class SharedWorldCoordinatorHarness {
     public int takeoverConfirmations;
     public Runnable lastTakeoverAccept;
     public Runnable lastTakeoverDecline;
+    public link.sharedworld.host.HostEnvironmentCheck.Changes lastEnvironmentChanges;
+    public Runnable lastEnvironmentAccept;
+    public Runnable lastEnvironmentDecline;
     public final SharedWorldSessionCoordinator sessionCoordinator;
     public final SharedWorldReleaseCoordinator releaseCoordinator;
 
@@ -138,6 +141,15 @@ public final class SharedWorldCoordinatorHarness {
                         if (autoAcceptTakeover) {
                             accept.run();
                         }
+                        return null;
+                    }
+
+                    @Override
+                    public Screen hostEnvironmentWarning(Screen parent, String worldName, link.sharedworld.host.HostEnvironmentCheck.Changes changes, Runnable accept, Runnable decline) {
+                        clientShell.markNextScreen("host-environment-warning");
+                        lastEnvironmentChanges = changes;
+                        lastEnvironmentAccept = accept;
+                        lastEnvironmentDecline = decline;
                         return null;
                     }
                 }
@@ -227,12 +239,13 @@ public final class SharedWorldCoordinatorHarness {
                 null,
                 new WorldRuntimeStatusDto(world.id(), "host-live", runtimeEpoch, "player-host", "Host", null, null, joinTarget, null, null, null, null),
                 null,
+                null,
                 null
         );
     }
 
     public static EnterSessionResponseDto waitResponse(WorldSummaryDto world) {
-        return new EnterSessionResponseDto("wait", world, null, null, null, "wait-test");
+        return new EnterSessionResponseDto("wait", world, null, null, null, "wait-test", null);
     }
 
     public static ObserveWaitingResponseDto observeWait(String worldId, String waiterSessionId, WorldRuntimeStatusDto runtime) {
@@ -252,6 +265,12 @@ public final class SharedWorldCoordinatorHarness {
         return new ObserveWaitingResponseDto("restart", runtime, null, null);
     }
 
+    /** A host assignment whose latest snapshot was written with the given gameplay mods. */
+    public static EnterSessionResponseDto hostResponseWithSnapshotMods(WorldSummaryDto world, long epoch, String token, SharedWorldModels.HostModDto... mods) {
+        EnterSessionResponseDto base = hostResponse(world, epoch, token);
+        return new EnterSessionResponseDto(base.action(), base.world(), null, null, base.assignment(), null, mods);
+    }
+
     public static EnterSessionResponseDto hostResponse(WorldSummaryDto world, long epoch, String token) {
         return new EnterSessionResponseDto(
                 "host",
@@ -259,6 +278,7 @@ public final class SharedWorldCoordinatorHarness {
                 null,
                 null,
                 new SharedWorldModels.HostAssignmentDto(world.id(), "player-host", "Host", epoch, token, Instant.EPOCH.toString()),
+                null,
                 null
         );
     }

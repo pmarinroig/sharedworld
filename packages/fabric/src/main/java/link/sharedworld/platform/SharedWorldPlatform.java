@@ -1,6 +1,9 @@
 package link.sharedworld.platform;
 
+import link.sharedworld.api.SharedWorldModels.HostModDto;
+
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -17,6 +20,14 @@ public interface SharedWorldPlatform {
     boolean isModLoaded(String modId);
 
     Optional<String> modVersion(String modId);
+
+    /**
+     * The installed mods that shape world content, recorded with each snapshot for the
+     * next host's environment check: top-level mods only (no bundled libraries), without
+     * the game, the loader and SharedWorld itself; on Fabric also without mods marked
+     * client-only (minimaps, shaders, HUDs). Sorted by id.
+     */
+    List<HostModDto> gameplayMods();
 
     static SharedWorldPlatform get() {
         return Holder.instance();

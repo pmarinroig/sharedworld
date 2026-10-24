@@ -764,8 +764,14 @@ public final class SharedWorldModels {
             SnapshotManifestDto latestManifest,
             WorldRuntimeStatusDto runtime,
             HostAssignmentDto assignment,
-            String waiterSessionId
+            String waiterSessionId,
+            /* Gameplay mods recorded with the latest snapshot; null when unknown (pre-0.5.4 host or backend). */
+            HostModDto[] lastSnapshotHostMods
     ) {
+    }
+
+    /** One gameplay mod a host had installed; name is the display name when the loader has one. */
+    public record HostModDto(String id, String name) {
     }
 
     public record ObserveWaitingResponseDto(

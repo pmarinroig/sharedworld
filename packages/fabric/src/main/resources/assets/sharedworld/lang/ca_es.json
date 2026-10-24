@@ -277,7 +277,6 @@
   "screen.sharedworld.waiting_error_unknown_action": "SharedWorld ha enviat una resposta confusa durant l'espera. Prova d'unir-te de nou.",
   "screen.sharedworld.waiting_error_invalid_response": "SharedWorld ha enviat una resposta confusa durant l'espera. Prova d'unir-te de nou.",
   "screen.sharedworld.error_host_version_mismatch": "L'amfitrió actual juga a Minecraft %s, però tu ets a %s. Fes servir la mateixa versió de Minecraft que l'amfitrió per unir-t'hi.",
-  "screen.sharedworld.error_snapshot_newer_client": "Aquest món es va desar per última vegada a Minecraft %s, que és més recent que el teu %s. Actualitza Minecraft per hostatjar-lo. Obrir-lo aquí podria fer malbé el món.",
   "sharedworld.command.owner_only": "Només el propietari del món pot usar aquesta ordre, i només mentre hostatja el seu propi món compartit.",
   "sharedworld.command.unknown_member": "Cap membre d'aquest món compartit es diu %s.",
   "sharedworld.command.cannot_target_owner": "El propietari sempre té permisos d'ordres.",
@@ -371,5 +370,16 @@
   "screen.sharedworld.account_reconnect": "Reconnectar Google Drive",
   "screen.sharedworld.account_reconnect_waiting": "Acaba de connectar al teu navegador (enllac tambe copiat al porta-retalls)...",
   "screen.sharedworld.account_reconnect_done": "Google Drive reconnectat.",
-  "screen.sharedworld.account_s3_link_done": "Bucket S3 connectat."
+  "screen.sharedworld.account_s3_link_done": "Bucket S3 connectat.",
+  "screen.sharedworld.env_title": "Abans d'allotjar",
+  "screen.sharedworld.env_intro": "El teu joc no està igual que l'última vegada que es va jugar a '%s'. Si l'allotges així, el món canvia per sempre:",
+  "screen.sharedworld.env_version_header": "Minecraft %s → %s",
+  "screen.sharedworld.env_upgrade_note": "El món s'actualitza a %s en obrir-se. Després, els amics que encara siguin a %s no el podran allotjar fins que actualitzin.",
+  "screen.sharedworld.env_downgrade_note": "Aquest món es va jugar per última vegada en una versió més recent. Obrir-lo a %s en pot trencar parts per sempre.",
+  "screen.sharedworld.env_missing_header": "Mods que no tens (%s)",
+  "screen.sharedworld.env_missing_note": "Els blocs, objectes i tot el que afegien aquests mods desapareixen del món en obrir-se.",
+  "screen.sharedworld.env_backup_note": "Si alguna cosa va malament, pots restaurar una còpia de seguretat anterior des de la configuració del món.",
+  "screen.sharedworld.env_host": "Allotjar igualment",
+  "screen.sharedworld.env_cancel": "Cancel·la",
+  "screen.sharedworld.env_countdown": "Cancel·lant en %ss..."
 }

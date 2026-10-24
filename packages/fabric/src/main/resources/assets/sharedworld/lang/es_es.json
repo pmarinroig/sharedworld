@@ -277,7 +277,6 @@
   "screen.sharedworld.waiting_error_unknown_action": "SharedWorld envió una respuesta confusa durante la espera. Intenta unirte de nuevo.",
   "screen.sharedworld.waiting_error_invalid_response": "SharedWorld envió una respuesta confusa durante la espera. Intenta unirte de nuevo.",
   "screen.sharedworld.error_host_version_mismatch": "El anfitrión actual juega en Minecraft %s, pero tú estás en %s. Usa la misma versión de Minecraft que el anfitrión para unirte.",
-  "screen.sharedworld.error_snapshot_newer_client": "Este mundo se guardó por última vez en Minecraft %s, que es más reciente que tu %s. Actualiza Minecraft para hospedarlo. Abrirlo aquí podría dañar el mundo.",
   "sharedworld.command.owner_only": "Solo el propietario del mundo puede usar este comando, y solo mientras hospeda su propio mundo compartido.",
   "sharedworld.command.unknown_member": "Ningún miembro de este mundo compartido se llama %s.",
   "sharedworld.command.cannot_target_owner": "El propietario siempre tiene permisos de comandos.",
@@ -371,5 +370,16 @@
   "screen.sharedworld.account_reconnect": "Reconectar Google Drive",
   "screen.sharedworld.account_reconnect_waiting": "Termina de conectar en tu navegador (enlace tambien copiado al portapapeles)...",
   "screen.sharedworld.account_reconnect_done": "Google Drive reconectado.",
-  "screen.sharedworld.account_s3_link_done": "Bucket S3 conectado."
+  "screen.sharedworld.account_s3_link_done": "Bucket S3 conectado.",
+  "screen.sharedworld.env_title": "Antes de hospedar",
+  "screen.sharedworld.env_intro": "Tu juego no está igual que la última vez que se jugó a '%s'. Si lo hospedas así, el mundo cambia para siempre:",
+  "screen.sharedworld.env_version_header": "Minecraft %s → %s",
+  "screen.sharedworld.env_upgrade_note": "El mundo se actualiza a %s al abrirse. Después, los amigos que sigan en %s no podrán hospedarlo hasta que actualicen.",
+  "screen.sharedworld.env_downgrade_note": "Este mundo se jugó por última vez en una versión más reciente. Abrirlo en %s puede romper partes de él para siempre.",
+  "screen.sharedworld.env_missing_header": "Mods que no tienes (%s)",
+  "screen.sharedworld.env_missing_note": "Los bloques, objetos y todo lo que añadían estos mods desaparecen del mundo al abrirse.",
+  "screen.sharedworld.env_backup_note": "Si algo sale mal, puedes restaurar una copia de seguridad anterior desde los ajustes del mundo.",
+  "screen.sharedworld.env_host": "Hospedar igualmente",
+  "screen.sharedworld.env_cancel": "Cancelar",
+  "screen.sharedworld.env_countdown": "Cancelando en %ss..."
 }

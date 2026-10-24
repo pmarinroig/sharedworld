@@ -435,6 +435,7 @@ public final class SharedWorldApiClient {
             body.put("dataVersion", link.sharedworld.versioned.ClientCompat.currentDataVersion());
             body.put("minecraftVersion", minecraftVersion);
         }
+        body.put("hostMods", link.sharedworld.platform.SharedWorldPlatform.get().gameplayMods());
         body.put("files", files);
         body.put("packs", packs);
         return request(

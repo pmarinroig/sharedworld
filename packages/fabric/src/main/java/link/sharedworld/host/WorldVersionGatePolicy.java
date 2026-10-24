@@ -1,9 +1,9 @@
 package link.sharedworld.host;
 
 /**
- * Cross-version world guardrail decisions (pure, headless-testable). A world whose latest
- * snapshot was written by a NEWER Minecraft must not be opened by an older client (vanilla
- * would downgrade-corrupt it); older snapshots are fine because vanilla upgrades them.
+ * Cross-version world guardrail decisions (pure, headless-testable). {@link #decideHost}
+ * refuses importing a save folder written by a NEWER Minecraft as a new shared world; hosting
+ * an existing world across versions only warns (see {@link HostEnvironmentCheck}).
  * Guests joining a live host on a different Minecraft version cannot connect anyway
  * (protocol mismatch); the gate exists to say so clearly before vanilla's cryptic error.
  */

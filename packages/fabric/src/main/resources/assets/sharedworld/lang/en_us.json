@@ -277,7 +277,6 @@
   "screen.sharedworld.waiting_error_unknown_action": "SharedWorld sent a confusing answer while waiting. Try joining again.",
   "screen.sharedworld.waiting_error_invalid_response": "SharedWorld sent a confusing answer while waiting. Try joining again.",
   "screen.sharedworld.error_host_version_mismatch": "The current host is playing on Minecraft %s, but you are on %s. Match the host's Minecraft version to join.",
-  "screen.sharedworld.error_snapshot_newer_client": "This world was last saved on Minecraft %s, which is newer than your %s. Update Minecraft to host it. Opening it here could damage the world.",
   "sharedworld.command.owner_only": "Only the world owner can use this command, and only while hosting their own shared world.",
   "sharedworld.command.unknown_member": "No member of this shared world is named %s.",
   "sharedworld.command.cannot_target_owner": "The owner always has command permissions.",
@@ -371,5 +370,16 @@
   "screen.sharedworld.account_reconnect": "Reconnect Google Drive",
   "screen.sharedworld.account_reconnect_waiting": "Finish connecting in your browser (link also copied to clipboard)...",
   "screen.sharedworld.account_reconnect_done": "Google Drive reconnected.",
-  "screen.sharedworld.account_s3_link_done": "S3 bucket connected."
+  "screen.sharedworld.account_s3_link_done": "S3 bucket connected.",
+  "screen.sharedworld.env_title": "Before you host",
+  "screen.sharedworld.env_intro": "Your game isn't set up the same as the last time '%s' was played. Hosting it like this changes the world for good:",
+  "screen.sharedworld.env_version_header": "Minecraft %s → %s",
+  "screen.sharedworld.env_upgrade_note": "The world gets updated to %s when it opens. After that, friends still on %s can't host it until they update too.",
+  "screen.sharedworld.env_downgrade_note": "This world was last played on a newer version. Opening it on %s can break parts of it for good.",
+  "screen.sharedworld.env_missing_header": "Mods you don't have (%s)",
+  "screen.sharedworld.env_missing_note": "Blocks, items and anything else these mods added disappear from the world when it opens.",
+  "screen.sharedworld.env_backup_note": "If something goes wrong, you can restore an older backup from the world's settings.",
+  "screen.sharedworld.env_host": "Host anyway",
+  "screen.sharedworld.env_cancel": "Cancel",
+  "screen.sharedworld.env_countdown": "Cancelling in %ss..."
 }

@@ -517,20 +517,6 @@ public final class SharedWorldSessionCoordinator {
             }
         }
         if ("host".equals(result.action()) && result.assignment() != null) {
-            Integer snapshotDataVersion = result.world() != null ? result.world().lastSnapshotDataVersion() : null;
-            if (link.sharedworld.host.WorldVersionGatePolicy.decideHost(
-                    snapshotDataVersion, link.sharedworld.versioned.ClientCompat.currentDataVersion())
-                    == link.sharedworld.host.WorldVersionGatePolicy.HostDecision.BLOCK_SNAPSHOT_NEWER) {
-                String snapshotVersion = result.world().lastSnapshotMinecraftVersion();
-                this.clientShell.setScreen(this.sessionUi.joinError(
-                        parent,
-                        new IllegalStateException(SharedWorldText.string(
-                                "screen.sharedworld.error_snapshot_newer_client",
-                                snapshotVersion == null ? String.valueOf(snapshotDataVersion) : snapshotVersion,
-                                String.valueOf(link.sharedworld.versioned.ClientCompat.currentMinecraftVersion())))
-                ));
-                return;
-            }
             clearPersistedRecoveryIfMatches(resumedRecoveryFingerprint);
             if (automaticTakeover) {
                 // The player never asked to host; they were pulled here by a
@@ -540,16 +526,12 @@ public final class SharedWorldSessionCoordinator {
                 this.clientShell.setScreen(this.sessionUi.confirmTakeover(
                         parent,
                         worldName,
-                        () -> {
-                            this.hostStartupOwner.beginHosting(parent, result, startupMode);
-                            this.clientShell.setScreen(this.sessionUi.hostAcquired(parent, result));
-                        },
+                        () -> hostAfterEnvironmentCheck(parent, result, worldName, startupMode),
                         () -> declineTakeover(parent, result)
                 ));
                 return;
             }
-            this.hostStartupOwner.beginHosting(parent, result, startupMode);
-            this.clientShell.setScreen(this.sessionUi.hostAcquired(parent, result));
+            hostAfterEnvironmentCheck(parent, result, worldName, startupMode);
             return;
         }
         if ("warn-host".equals(result.action())) {
@@ -568,8 +550,35 @@ public final class SharedWorldSessionCoordinator {
     }
 
     /**
-     * Declining an automatic takeover hands the freshly-assigned lease back
-     * gracefully (electing the next waiter, if any) and returns to the menu.
+     * Last gate before hosting: when this client differs from the one that wrote the latest
+     * snapshot in ways that change the world for good (another Minecraft version, missing
+     * mods), the player confirms first. A warning, never a block. It runs before any download or world open, so declining is the
+     * same clean lease hand-back as declining a takeover.
+     */
+    private void hostAfterEnvironmentCheck(Screen parent, EnterSessionResponseDto result, String worldName, SharedWorldHostingManager.StartupMode startupMode) {
+        Runnable host = () -> {
+            this.hostStartupOwner.beginHosting(parent, result, startupMode);
+            this.clientShell.setScreen(this.sessionUi.hostAcquired(parent, result));
+        };
+        link.sharedworld.host.HostEnvironmentCheck.Changes changes = link.sharedworld.host.HostEnvironmentCheck.compare(
+                result.world().lastSnapshotDataVersion(),
+                result.world().lastSnapshotMinecraftVersion(),
+                result.lastSnapshotHostMods(),
+                link.sharedworld.versioned.ClientCompat.currentDataVersion(),
+                link.sharedworld.versioned.ClientCompat.currentMinecraftVersion(),
+                result.lastSnapshotHostMods() == null ? java.util.List.of() : link.sharedworld.platform.SharedWorldPlatform.get().gameplayMods()
+        );
+        if (changes.isEmpty()) {
+            host.run();
+            return;
+        }
+        this.clientShell.setScreen(this.sessionUi.hostEnvironmentWarning(parent, worldName, changes, host, () -> declineTakeover(parent, result)));
+    }
+
+    /**
+     * Declining an automatic takeover or the environment warning hands the
+     * freshly-assigned lease back gracefully (electing the next waiter, if any)
+     * and returns to the menu.
      */
     private void declineTakeover(Screen parent, EnterSessionResponseDto result) {
         String worldId = result.world().id();
@@ -913,6 +922,10 @@ public final class SharedWorldSessionCoordinator {
 
         /** "The host left; take over hosting?" decision for automatic takeovers. */
         Screen confirmTakeover(Screen parent, String worldName, Runnable accept, Runnable decline);
+
+        default Screen hostEnvironmentWarning(Screen parent, String worldName, link.sharedworld.host.HostEnvironmentCheck.Changes changes, Runnable accept, Runnable decline) {
+            return new link.sharedworld.screen.HostEnvironmentWarningScreen(parent, worldName, changes, accept, decline);
+        }
     }
 
     @FunctionalInterface

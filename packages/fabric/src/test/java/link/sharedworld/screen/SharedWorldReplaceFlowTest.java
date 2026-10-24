@@ -127,7 +127,7 @@ final class SharedWorldReplaceFlowTest {
             SharedWorldModels.HostAssignmentDto assignment = "host".equals(this.action)
                     ? new SharedWorldModels.HostAssignmentDto(worldId, "11111111111111111111111111111111", "Owner", 9L, "token-9", null)
                     : null;
-            return new EnterSessionResponseDto(this.action, null, null, null, assignment, null);
+            return new EnterSessionResponseDto(this.action, null, null, null, assignment, null, null);
         }
 
         @Override

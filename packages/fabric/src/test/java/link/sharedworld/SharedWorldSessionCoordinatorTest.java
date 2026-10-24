@@ -345,6 +345,7 @@ final class SharedWorldSessionCoordinatorTest {
                             null
                     ),
                     null,
+                    null,
                     null
             ));
 
@@ -650,6 +651,7 @@ final class SharedWorldSessionCoordinatorTest {
                             null
                     ),
                     null,
+                    null,
                     null
             ));
             harness.sessionBackend.enqueueEnterResponse(SharedWorldCoordinatorHarness.hostResponse(world, 7L, "token-7"));
@@ -727,7 +729,7 @@ final class SharedWorldSessionCoordinatorTest {
         SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
         try {
             var world = SharedWorldCoordinatorHarness.world("world-1", "World", "player-owner");
-            harness.sessionBackend.enqueueEnterResponse(new link.sharedworld.api.SharedWorldModels.EnterSessionResponseDto("wait", world, null, null, null, null));
+            harness.sessionBackend.enqueueEnterResponse(new link.sharedworld.api.SharedWorldModels.EnterSessionResponseDto("wait", world, null, null, null, null, null));
 
             harness.sessionCoordinator.beginJoin(harness.parentScreen(), world);
             harness.runUntilIdle();
@@ -868,6 +870,78 @@ final class SharedWorldSessionCoordinatorTest {
             assertTrue(harness.clientShell.actions().contains("openMain"));
         } finally {
             harness.close();
+        }
+    }
+
+    /** A loader with no gameplay mods installed, for the host-start environment check. */
+    private static void installVanillaPlatform() {
+        link.sharedworld.platform.SharedWorldPlatform.setForTesting(new link.sharedworld.platform.SharedWorldPlatform() {
+            @Override
+            public java.nio.file.Path configDir() {
+                return java.nio.file.Path.of(".");
+            }
+
+            @Override
+            public boolean isModLoaded(String modId) {
+                return false;
+            }
+
+            @Override
+            public java.util.Optional<String> modVersion(String modId) {
+                return java.util.Optional.empty();
+            }
+
+            @Override
+            public java.util.List<link.sharedworld.api.SharedWorldModels.HostModDto> gameplayMods() {
+                return java.util.List.of();
+            }
+        });
+    }
+
+    @Test
+    void aMissingModAsksBeforeHostingAndDecliningHandsTheLeaseBack() throws Exception {
+        installVanillaPlatform();
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            var world = SharedWorldCoordinatorHarness.world("world-1", "World", "player-owner");
+            harness.sessionBackend.enqueueEnterResponse(SharedWorldCoordinatorHarness.hostResponseWithSnapshotMods(
+                    world, 7L, "token-7", new link.sharedworld.api.SharedWorldModels.HostModDto("dynamictrees", "Dynamic Trees")));
+            harness.sessionCoordinator.beginJoin(harness.parentScreen(), world);
+            harness.runUntilIdle();
+
+            // Nothing downloads or opens until the player answers.
+            assertTrue(harness.clientShell.actions().contains("setScreen:host-environment-warning"));
+            assertFalse(harness.clientShell.actions().contains("setScreen:host-acquired"));
+            assertEquals(java.util.List.of("Dynamic Trees"), harness.lastEnvironmentChanges.missingMods());
+
+            harness.lastEnvironmentDecline.run();
+            harness.runUntilIdle();
+            assertEquals(java.util.List.of("world-1:true:7"), harness.sessionBackend.releaseHostCalls);
+            assertTrue(harness.clientShell.actions().contains("openMain"));
+        } finally {
+            harness.close();
+            link.sharedworld.platform.SharedWorldPlatform.setForTesting(null);
+        }
+    }
+
+    @Test
+    void acceptingTheEnvironmentWarningHosts() throws Exception {
+        installVanillaPlatform();
+        SharedWorldCoordinatorHarness harness = new SharedWorldCoordinatorHarness();
+        try {
+            var world = SharedWorldCoordinatorHarness.world("world-1", "World", "player-owner");
+            harness.sessionBackend.enqueueEnterResponse(SharedWorldCoordinatorHarness.hostResponseWithSnapshotMods(
+                    world, 7L, "token-7", new link.sharedworld.api.SharedWorldModels.HostModDto("dynamictrees", "Dynamic Trees")));
+            harness.sessionCoordinator.beginJoin(harness.parentScreen(), world);
+            harness.runUntilIdle();
+
+            harness.lastEnvironmentAccept.run();
+            harness.runUntilIdle();
+            assertTrue(harness.clientShell.actions().contains("setScreen:host-acquired"));
+            assertTrue(harness.sessionBackend.releaseHostCalls.isEmpty());
+        } finally {
+            harness.close();
+            link.sharedworld.platform.SharedWorldPlatform.setForTesting(null);
         }
     }
 
