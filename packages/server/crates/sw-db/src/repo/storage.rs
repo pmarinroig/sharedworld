@@ -5,7 +5,7 @@ use rusqlite::{params, Row};
 use sw_contracts::{StorageLinkStatus, StorageProviderType};
 
 use super::records::*;
-use super::{placeholders, Repository};
+use super::{json_list, placeholders, Repository, IN_JSON_LIST};
 use crate::error::DbError;
 
 pub(crate) fn decrypt_opt(
@@ -691,6 +691,65 @@ impl Repository {
                     params![provider.as_str(), a, k],
                 )?;
                 Ok(())
+            })
+            .await
+    }
+
+    /// Cancels the queued deletes of `storage_keys` and returns the keys that
+    /// were queued. Callers about to rely on a key (upload planning, finalize,
+    /// manifest writes) claim it so a delete that has not run yet never will.
+    pub async fn claim_pending_blob_deletes(
+        &self,
+        provider: StorageProviderType,
+        storage_account_id: &str,
+        storage_keys: &[String],
+    ) -> Result<std::collections::HashSet<String>, DbError> {
+        if storage_keys.is_empty() {
+            return Ok(std::collections::HashSet::new());
+        }
+        let (a, keys) = (storage_account_id.to_string(), json_list(storage_keys));
+        self.db
+            .write(move |c| {
+                Ok(c.query(
+                    "pending_blob_deletes.claim",
+                    &format!(
+                        "DELETE FROM pending_blob_deletes
+                         WHERE provider = ? AND storage_account_id = ? AND storage_key {IN_JSON_LIST}
+                         RETURNING storage_key"
+                    ),
+                    params![provider.as_str(), a, keys],
+                    |r| r.get::<_, String>(0),
+                )?
+                .into_iter()
+                .collect())
+            })
+            .await
+    }
+
+    /// The subset of `storage_keys` still queued for deletion (not claimed).
+    pub async fn queued_blob_deletes_among(
+        &self,
+        provider: StorageProviderType,
+        storage_account_id: &str,
+        storage_keys: &[String],
+    ) -> Result<std::collections::HashSet<String>, DbError> {
+        if storage_keys.is_empty() {
+            return Ok(std::collections::HashSet::new());
+        }
+        let (a, keys) = (storage_account_id.to_string(), json_list(storage_keys));
+        self.db
+            .read(move |c| {
+                Ok(c.query(
+                    "pending_blob_deletes.queued_among",
+                    &format!(
+                        "SELECT storage_key FROM pending_blob_deletes
+                         WHERE provider = ? AND storage_account_id = ? AND storage_key {IN_JSON_LIST}"
+                    ),
+                    params![provider.as_str(), a, keys],
+                    |r| r.get::<_, String>(0),
+                )?
+                .into_iter()
+                .collect())
             })
             .await
     }

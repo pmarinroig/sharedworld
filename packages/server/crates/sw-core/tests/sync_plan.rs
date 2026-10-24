@@ -479,6 +479,49 @@ async fn an_already_stored_full_key_is_not_signed_again() {
 }
 
 #[tokio::test]
+async fn a_world_recreated_from_the_same_save_keeps_the_blobs_its_deleted_copy_left_queued() {
+    // #30: storage keys are content addressed per account, so a world
+    // re-created from the same save names the keys its deleted copy's purge
+    // is about to remove. Planning must claim them and ask for a re-upload,
+    // and the purge must then leave them alone.
+    let f = Fixture::drive().await;
+    let key = "packs/full/ab/abc.pack";
+    f.seed_blob(key, "stored").await;
+    f.finalize(
+        None,
+        vec![pack(NON_REGION_PACK_ID, "abc", 6, key, FileTransferMode::PackFull, &[("level.dat", "l")])],
+        1_000,
+    )
+    .await;
+    let deleting = f.env.deferring_ctx(owner());
+    sw_core::service::worlds::delete_world(&f.env.svc, &deleting, &f.world_id, time::now()).await.unwrap();
+
+    let again = Fixture::build(f.env, true).await;
+    let plan = again
+        .prepare(
+            &owner(),
+            &again.upload_request(
+                Some(local_pack(NON_REGION_PACK_ID, "abc", 6, &[("level.dat", "l")])),
+                vec![],
+            ),
+        )
+        .await
+        .unwrap()
+        .non_region_pack_upload
+        .clone()
+        .flatten()
+        .unwrap();
+    assert!(plan.full_upload.is_some(), "a key queued for deletion is uploaded again, not trusted");
+
+    again.env.run_deferred().await;
+    let binding = again.env.repo.get_world_storage_binding(&again.world_id).await.unwrap().unwrap();
+    assert!(
+        again.env.svc.storage_provider.get(&binding, key, None).await.unwrap().is_some(),
+        "the deleted copy's purge skipped the claimed key"
+    );
+}
+
+#[tokio::test]
 async fn a_plan_forcing_an_oversized_full_upload_fails_with_blob_too_large() {
     // What a pre-sharding client with an oversized superpack receives at plan
     // time, instead of a bare 413 from the edge mid-upload.

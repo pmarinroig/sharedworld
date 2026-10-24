@@ -320,12 +320,7 @@ pub async fn report_host_game_rules(
     ))
 }
 
-pub async fn delete_world(
-    svc: &ServiceContext,
-    ctx: &RequestContext,
-    world_id: &str,
-    now: Instant,
-) -> HttpResult<()> {
+pub async fn delete_world(svc: &Svc, ctx: &RequestContext, world_id: &str, now: Instant) -> HttpResult<()> {
     require_world_details(svc, world_id, &ctx.player_uuid).await?;
     let binding = require_world_storage_binding(svc, world_id).await?;
     let recipients: Vec<String> = svc
@@ -338,7 +333,7 @@ pub async fn delete_world(
         .collect();
     let result = svc.repository.delete_world_for_player(&ctx.actor(), world_id, now).await?;
     if result.world_deleted {
-        purge_world_snapshots(svc, &binding, world_id).await?;
+        purge_world_snapshots(svc, ctx, &binding, world_id).await?;
         maybe_delete_unreferenced_blob(svc, &binding, result.deleted_custom_icon_storage_key.as_deref())
             .await?;
         // P5: the coordinator drops every runtime trace and pushes world-deleted.

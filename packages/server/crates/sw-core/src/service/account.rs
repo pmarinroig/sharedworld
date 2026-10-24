@@ -7,7 +7,7 @@ use sw_db::repo::UserRecord;
 
 use crate::http_error::{HttpError, HttpResult};
 use crate::request::RequestContext;
-use crate::service::{snapshots, worlds, ServiceContext};
+use crate::service::{snapshots, worlds, ServiceContext, Svc};
 use crate::storage::StorageBinding;
 use crate::time::{self, Instant};
 
@@ -109,7 +109,7 @@ pub struct AccountDeleteOutcome {
 /// Drive tokens (sweep, revoke) happens while sessions and storage rows still
 /// exist; sessions and the `users` row go last, in the final call.
 pub async fn delete_account_step(
-    svc: &ServiceContext,
+    svc: &Svc,
     ctx: &RequestContext,
     now: Instant,
 ) -> HttpResult<AccountDeleteOutcome> {

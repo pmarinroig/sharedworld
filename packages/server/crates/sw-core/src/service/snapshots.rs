@@ -42,6 +42,8 @@ const SNAPSHOT_RETENTION_INTERVAL_MS: i64 = 60 * 60_000;
 pub const DEFERRED_BLOB_DELETE_BUDGET_MS: i64 = 15_000;
 
 const PENDING_BLOB_DELETE_SWEEP_LIMIT: i64 = 3;
+/// Keys deleted per reference re-check in `delete_unreferenced_blobs`.
+const BLOB_DELETE_CHUNK: usize = 64;
 /// Per cron tick. Every key costs a handful of provider/row round-trips (the
 /// reference check is one query for the whole tick), so the tick stays small
 /// and relies on running often.
@@ -357,7 +359,11 @@ async fn write_manifest_document(
     packs: &[SnapshotPack],
 ) -> HttpResult<String> {
     let built = build_manifest_document(packs);
-    if !storage_key_exists(svc, binding, &built.storage_key).await? {
+    // A document queued for deletion (an identical manifest of a deleted
+    // world or backup) may vanish under its new snapshot: claim it and
+    // write it again rather than trusting the existence check.
+    let claimed = claim_queued_blob_deletes(svc, binding, std::slice::from_ref(&built.storage_key)).await?;
+    if !claimed.is_empty() || !storage_key_exists(svc, binding, &built.storage_key).await? {
         svc.storage_provider
             .put(
                 binding,
@@ -432,26 +438,46 @@ async fn retention_cleanup(
     sweep_pending_blob_deletes(svc, &binding, now).await
 }
 
+/// World deletion: the snapshot rows go and their unreferenced keys are
+/// queued within the request; the provider deletes run after the response
+/// under the deferred budget (a big world's purge used to run inline, one
+/// delete at a time), and whatever is left drains through the cron sweep.
 pub async fn purge_world_snapshots(
-    svc: &ServiceContext,
+    svc: &Svc,
+    ctx: &RequestContext,
     binding: &WorldStorageBinding,
     world_id: &str,
 ) -> HttpResult<()> {
-    if let Err(error) = purge_world_snapshots_inner(svc, binding, world_id).await {
-        tracing::warn!(world_id, cause = %error, "SharedWorld world storage cleanup failed");
-    }
+    let enqueued_at = time::now();
+    let keys = match purge_world_snapshot_rows(svc, binding, world_id, enqueued_at).await {
+        Ok(keys) => keys,
+        Err(error) => {
+            tracing::warn!(world_id, cause = %error, "SharedWorld world storage cleanup failed");
+            return Ok(());
+        }
+    };
+    let budget = deferred_budget_of(ctx);
+    let (svc2, binding) = (svc.clone(), binding.clone());
+    ctx.run_after_response(async move {
+        if let Err(error) = drain_queued_blob_deletes(&svc2, &binding, &keys, enqueued_at, budget).await {
+            tracing::warn!(cause = %error, "SharedWorld blob cleanup after world delete failed");
+        }
+    })
+    .await;
     Ok(())
 }
 
-async fn purge_world_snapshots_inner(
+async fn purge_world_snapshot_rows(
     svc: &ServiceContext,
     binding: &WorldStorageBinding,
     world_id: &str,
-) -> HttpResult<()> {
+    enqueued_at: Instant,
+) -> HttpResult<Vec<String>> {
     let snapshots = svc.repository.list_snapshots_for_world(world_id).await?;
     let ids: Vec<String> = snapshots.into_iter().map(|snapshot| snapshot.snapshot_id).collect();
     let deletion = svc.repository.delete_snapshots(world_id, &ids).await?;
-    delete_unreferenced_blobs(svc, binding, &deletion.unreferenced_storage_keys, None).await
+    enqueue_blob_deletes(svc, binding, &deletion.unreferenced_storage_keys, enqueued_at).await?;
+    Ok(deletion.unreferenced_storage_keys)
 }
 
 /// Retention buckets purely by age, but a delta snapshot is only
@@ -554,54 +580,152 @@ fn iso_prefix(created_at: &str, n: usize) -> &str {
 // Blob GC
 // ---------------------------------------------------------------------------
 
-/// Deletes blobs whose last referencing rows are already gone. With a
-/// `budget_ms`, deletes stop once the budget elapses and every remaining key
-/// is queued for the bounded sweeps instead; the caller is running after the
-/// response and may be reclaimed by the runtime at any moment past that.
+/// Deletes blobs whose last referencing rows are already gone. Every key is
+/// queued first and deleted in chunks, each re-checked right before its
+/// deletes: storage keys are content addressed per storage account, so a world
+/// re-created from the same save reuses the very keys being reclaimed (#30:
+/// friends of an owner who re-created a world got blob 404s). A key that a
+/// newer snapshot references again, or that upload planning, finalize or a
+/// manifest write claimed off the queue, is skipped. With a `budget_ms`,
+/// deletes stop once the budget elapses and the rest stay queued for the
+/// bounded sweeps; the caller is running after the response and may be
+/// reclaimed by the runtime at any moment past that.
 pub async fn delete_unreferenced_blobs(
     svc: &ServiceContext,
     binding: &WorldStorageBinding,
     storage_keys: &[String],
     budget_ms: Option<i64>,
 ) -> HttpResult<()> {
+    let enqueued_at = time::now();
+    // 0028: the unreferenced-key computation runs exactly once (candidates
+    // come from rows that are already deleted), so a key that is not queued
+    // before its delete is attempted is orphaned for good if the delete drops.
+    enqueue_blob_deletes(svc, binding, storage_keys, enqueued_at).await?;
+    drain_queued_blob_deletes(svc, binding, storage_keys, enqueued_at, budget_ms).await
+}
+
+/// The delete half of `delete_unreferenced_blobs`, for keys the caller queued
+/// at `enqueued_at`. Never re-queues: a key claimed since the enqueue must
+/// stay claimed.
+async fn drain_queued_blob_deletes(
+    svc: &ServiceContext,
+    binding: &WorldStorageBinding,
+    storage_keys: &[String],
+    enqueued_at: Instant,
+    budget_ms: Option<i64>,
+) -> HttpResult<()> {
     let deadline = budget_ms.map(|ms| time::to_millis(time::now()) + ms);
-    for (index, storage_key) in storage_keys.iter().enumerate() {
+    for (index, chunk) in storage_keys.chunks(BLOB_DELETE_CHUNK).enumerate() {
         if deadline.is_some_and(|deadline| time::to_millis(time::now()) >= deadline) {
-            let remaining = &storage_keys[index..];
-            if let Some(account) = &binding.storage_account_id {
-                svc.repository
-                    .enqueue_pending_blob_deletes(binding.provider, account, remaining, &time::now_iso())
-                    .await?;
-            }
             tracing::warn!(
-                remaining = remaining.len(),
+                remaining = storage_keys.len() - index * BLOB_DELETE_CHUNK,
                 budget_ms,
                 "SharedWorld blob cleanup deferred to the sweep queue"
             );
             return Ok(());
         }
-        if let Err(error) = svc.storage_provider.delete(binding, storage_key).await {
-            tracing::warn!(storage_key, cause = %error, "SharedWorld blob cleanup failed for");
-            // 0028: the unreferenced-key computation runs exactly once
-            // (candidates come from rows that are already deleted), so a
-            // dropped delete used to orphan the bytes permanently. Enqueue
-            // for the bounded sweep.
-            if let Some(account) = &binding.storage_account_id {
-                if let Err(error) = svc
-                    .repository
-                    .enqueue_pending_blob_delete(binding.provider, account, storage_key, &time::now_iso())
-                    .await
-                {
-                    tracing::warn!(
-                        storage_key,
-                        cause = %error,
-                        "SharedWorld pending-delete enqueue failed"
-                    );
+        for storage_key in still_deletable_blobs(svc, binding, chunk, enqueued_at).await? {
+            match svc.storage_provider.delete(binding, &storage_key).await {
+                Ok(()) => {
+                    if let Some(account) = &binding.storage_account_id {
+                        svc.repository
+                            .delete_pending_blob_delete(binding.provider, account, &storage_key)
+                            .await?;
+                    }
+                }
+                // Stays queued; the cron drain retries it.
+                Err(error) => {
+                    tracing::warn!(storage_key, cause = %error, "SharedWorld blob cleanup failed for")
                 }
             }
         }
     }
     Ok(())
+}
+
+async fn enqueue_blob_deletes(
+    svc: &ServiceContext,
+    binding: &WorldStorageBinding,
+    storage_keys: &[String],
+    now: Instant,
+) -> HttpResult<()> {
+    if let Some(account) = &binding.storage_account_id {
+        svc.repository
+            .enqueue_pending_blob_deletes(binding.provider, account, storage_keys, &time::to_iso(now))
+            .await?;
+    }
+    Ok(())
+}
+
+/// The keys of `chunk` that may still be deleted: queued (not claimed) and
+/// not referenced by a snapshot created since `since` (with created_at slack;
+/// older snapshots were already accounted for when the keys were computed).
+/// Re-referenced keys leave the queue. Without a storage account there is no
+/// queue (dev/legacy bindings), so only the reference re-check applies.
+async fn still_deletable_blobs(
+    svc: &ServiceContext,
+    binding: &WorldStorageBinding,
+    chunk: &[String],
+    since: Instant,
+) -> HttpResult<Vec<String>> {
+    let referenced = svc
+        .repository
+        .filter_referenced_storage_keys(
+            chunk,
+            Some(StorageReferenceScope {
+                provider: binding.provider,
+                storage_account_id: binding.storage_account_id.clone(),
+                snapshots_created_since: Some(time::to_iso(time::from_millis(
+                    time::to_millis(since) - SNAPSHOT_CREATED_AT_SLACK_MS,
+                ))),
+            }),
+        )
+        .await?;
+    let Some(account) = &binding.storage_account_id else {
+        return Ok(chunk.iter().filter(|key| !referenced.contains(*key)).cloned().collect());
+    };
+    let queued = svc.repository.queued_blob_deletes_among(binding.provider, account, chunk).await?;
+    let mut deletable = Vec::new();
+    for key in chunk.iter().filter(|key| queued.contains(*key)) {
+        if referenced.contains(key) {
+            tracing::info!(
+                storage_key = %key,
+                storage_account_id = %account,
+                "SharedWorld pending blob delete dropped: key re-referenced"
+            );
+            svc.repository.delete_pending_blob_delete(binding.provider, account, key).await?;
+        } else {
+            deletable.push(key.clone());
+        }
+    }
+    Ok(deletable)
+}
+
+/// Cancels queued deletes of keys the caller is about to rely on; returns the
+/// keys that were queued. Their objects may already be gone or about to be,
+/// so callers must not trust an existence answer for them.
+pub async fn claim_queued_blob_deletes(
+    svc: &ServiceContext,
+    binding: &WorldStorageBinding,
+    storage_keys: &[String],
+) -> HttpResult<HashSet<String>> {
+    let Some(account) = &binding.storage_account_id else { return Ok(HashSet::new()) };
+    // Every upload plan and finalize lands here and the queue almost never
+    // names their keys: look before taking the write lock.
+    let queued = svc.repository.queued_blob_deletes_among(binding.provider, account, storage_keys).await?;
+    if queued.is_empty() {
+        return Ok(queued);
+    }
+    let queued: Vec<String> = queued.into_iter().collect();
+    let claimed = svc.repository.claim_pending_blob_deletes(binding.provider, account, &queued).await?;
+    if !claimed.is_empty() {
+        tracing::info!(
+            claimed = claimed.len(),
+            storage_account_id = %account,
+            "SharedWorld queued blob deletes cancelled: keys in use again"
+        );
+    }
+    Ok(claimed)
 }
 
 /// Bounded retry of previously-failed blob deletes (0028), request-driven from
@@ -709,7 +833,12 @@ async fn retry_pending_blob_deletes(
                 }),
             )
             .await?;
+        // Entries claimed since the listing are in use again: leave them be.
+        let queued = svc.repository.queued_blob_deletes_among(provider, &storage_account_id, &keys).await?;
         for entry in group {
+            if !queued.contains(&entry.storage_key) {
+                continue;
+            }
             if referenced.contains(&entry.storage_key) {
                 tracing::info!(
                     storage_key = %entry.storage_key,
@@ -912,6 +1041,10 @@ async fn validate_finalize_snapshot_request(
     let mut seen_pack_ids: HashSet<String> = HashSet::new();
     let mut keys: Vec<String> = request.files.iter().map(|f| f.storage_key.clone()).collect();
     keys.extend(request.packs.as_deref().unwrap_or(&[]).iter().map(|p| p.storage_key.clone()));
+    // Claim before checking existence: a queued delete that has not run yet
+    // never will, and one that already ran removed the object row, so the
+    // check below rejects the snapshot instead of committing a dangling key.
+    claim_queued_blob_deletes(svc, &binding, &keys).await?;
     let existing_storage_keys =
         storage_keys_exist(svc, &binding, &keys, WhenUnverifiable::AssumePresent).await?;
 

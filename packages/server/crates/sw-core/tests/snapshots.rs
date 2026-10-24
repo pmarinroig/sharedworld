@@ -1501,6 +1501,70 @@ async fn the_cron_sweep_drops_a_queued_key_a_newer_snapshot_references_again() {
 }
 
 #[tokio::test]
+async fn a_delete_skips_a_key_a_snapshot_created_since_references_again() {
+    // The unreferenced keys are computed before the deletes run; a snapshot
+    // finalized in between (same account, same content) must keep its blob.
+    let env = TestEnv::new().await;
+    let world = env
+        .repo
+        .create_world(&owner().actor(), "Again", "again", drive_binding("acct-1"), None, None)
+        .await
+        .unwrap();
+    for key in ["blobs/back.bin", "blobs/gone.bin"] {
+        put_blob(&env, key).await;
+    }
+    let pack = SnapshotPack { size: 1, files: vec![], ..full_pack("p", "h", "blobs/back.bin") };
+    env.repo
+        .finalize_snapshot(
+            &world.summary.id,
+            &owner().actor(),
+            &FinalizeSnapshotRequest { files: vec![], packs: Some(vec![pack]), ..Default::default() },
+            time::now(),
+            None,
+        )
+        .await
+        .unwrap();
+
+    snapshots::delete_unreferenced_blobs(
+        &env.svc,
+        &drive_binding("acct-1"),
+        &["blobs/back.bin".into(), "blobs/gone.bin".into()],
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(blob_exists(&env, "blobs/back.bin").await, "re-referenced key kept");
+    assert!(!blob_exists(&env, "blobs/gone.bin").await);
+    assert!(env
+        .repo
+        .list_pending_blob_deletes(StorageProviderType::GoogleDrive, "acct-1", 10)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn the_cron_sweep_skips_a_queued_key_claimed_after_it_was_listed() {
+    let env = TestEnv::new().await;
+    let binding = drive_binding("acct-1");
+    for key in ["k/claimed", "k/doomed"] {
+        put_blob(&env, key).await;
+    }
+    snapshots::delete_unreferenced_blobs(
+        &env.svc,
+        &binding,
+        &["k/claimed".into(), "k/doomed".into()],
+        Some(0),
+    )
+    .await
+    .unwrap();
+    snapshots::claim_queued_blob_deletes(&env.svc, &binding, &["k/claimed".into()]).await.unwrap();
+    snapshots::sweep_due_pending_blob_deletes(&env.svc, time::now(), 10).await;
+    assert!(blob_exists(&env, "k/claimed").await);
+    assert!(!blob_exists(&env, "k/doomed").await);
+}
+
+#[tokio::test]
 async fn the_cron_sweep_drains_across_accounts_and_backs_off_failing_keys() {
     let env = TestEnv::new().await;
     for key in ["blobs/ok-1.bin", "blobs/ok-2.bin"] {

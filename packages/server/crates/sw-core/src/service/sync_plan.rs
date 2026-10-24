@@ -19,7 +19,9 @@ use super::runtime_access::{
     require_world_storage_binding,
 };
 use super::signer::{sign_download_for_world, sign_upload_for_world};
-use super::snapshots::{is_delta_pack_transfer_mode, storage_keys_exist, WhenUnverifiable};
+use super::snapshots::{
+    claim_queued_blob_deletes, is_delta_pack_transfer_mode, storage_keys_exist, WhenUnverifiable,
+};
 use super::worlds::cached_quota;
 use super::ServiceContext;
 use crate::http_error::{HttpError, HttpResult};
@@ -155,7 +157,14 @@ pub async fn prepare_uploads(
             candidate_keys.push(delta.clone());
         }
     }
-    let existing = storage_keys_exist(svc, &binding, &candidate_keys, WhenUnverifiable::AskProvider).await?;
+    // Keys queued for deletion (left by a deleted world or backup with the
+    // same content) are claimed off the queue and reported missing, so the
+    // client uploads them again instead of relying on an object that a
+    // delete may already have removed (#30).
+    let claimed = claim_queued_blob_deletes(svc, &binding, &candidate_keys).await?;
+    let mut existing =
+        storage_keys_exist(svc, &binding, &candidate_keys, WhenUnverifiable::AskProvider).await?;
+    existing.retain(|key| !claimed.contains(key));
 
     let mut region_bundle_uploads: Vec<UploadPackPlan> = Vec::new();
     for (index, bundle) in bundles.iter().enumerate() {
