@@ -1,12 +1,17 @@
+/* Shared by the legal pages (privacy, terms); the home page carries its own styles
+   in the same look: paper background, ink outlines, Lilita One headings. */
+@import url("https://fonts.googleapis.com/css2?family=Lilita+One&family=Nunito:wght@500;600;700;800&family=Pixelify+Sans:wght@600&display=swap");
+
 :root {
-  color-scheme: dark;
-  --bg: #0b1120;
-  --surface: #131d33;
-  --border: #26334d;
-  --text: #e8edf6;
-  --muted: #97a3b8;
-  --accent: #4da3e8;
-  --accent-soft: rgba(77, 163, 232, 0.12);
+  color-scheme: light;
+  --paper: #fff8ec;
+  --card: #ffffff;
+  --ink: #1b1f3b;
+  --ink-soft: #454b6e;
+  --blue: #2f6fd6;
+  --gold: #ffd23f;
+  --sky-top: #3f7fd6;
+  --sky-mid: #79aeea;
 }
 
 * {
@@ -20,24 +25,29 @@ html {
 body {
   margin: 0;
   min-height: 100vh;
-  font-family: "Inter", "Segoe UI", system-ui, sans-serif;
-  line-height: 1.6;
-  color: var(--text);
-  background: var(--bg);
+  font-family: "Nunito", system-ui, sans-serif;
+  font-weight: 600;
+  line-height: 1.65;
+  color: var(--ink);
+  background: linear-gradient(180deg, var(--sky-top) 0, var(--sky-mid) 14rem, var(--paper) 14rem);
 }
 
 a {
-  color: var(--accent);
+  color: var(--blue);
   text-underline-offset: 0.14em;
+  text-decoration-thickness: 2px;
 }
 
 a:hover {
-  color: #7cbdf0;
+  color: #1f56b0;
 }
 
 code {
-  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
-  font-size: 0.95em;
+  font-family: "SFMono-Regular", ui-monospace, monospace;
+  font-size: 0.92em;
+  padding: 0.05em 0.3em;
+  background: #f1ead9;
+  border-radius: 5px;
 }
 
 .layout {
@@ -57,80 +67,85 @@ code {
 .brand {
   display: inline-flex;
   align-items: center;
-  gap: 0.55rem;
-  color: var(--text);
+  gap: 0.6rem;
+  color: #fff;
   text-decoration: none;
-  font-size: 0.98rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
+  font-family: "Lilita One", sans-serif;
+  font-size: 1.4rem;
+  text-shadow: 0 2px 0 rgba(27, 31, 59, 0.45);
+}
+
+.brand:hover {
+  color: #fff;
 }
 
 .brand img {
-  width: 26px;
-  height: 26px;
+  width: 36px;
+  height: 36px;
   image-rendering: pixelated;
 }
 
 .content,
 .policy {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 0.75rem;
-}
-
-.content,
-.policy {
   padding: 2rem;
+  background: var(--card);
+  border: 3px solid var(--ink);
+  border-radius: 14px;
+  box-shadow: 6px 6px 0 var(--ink);
 }
 
 h1,
 h2 {
   margin: 0;
-  line-height: 1.2;
+  font-family: "Lilita One", sans-serif;
+  font-weight: 400;
+  line-height: 1.15;
 }
 
 h1 {
-  font-size: clamp(2rem, 5vw, 2.7rem);
+  font-size: clamp(2.1rem, 5vw, 2.8rem);
 }
 
 h2 {
-  font-size: 1.35rem;
+  font-size: 1.45rem;
 }
 
 .summary,
 .content p,
 .policy p,
 .policy li {
-  color: var(--muted);
+  color: var(--ink-soft);
 }
 
 .summary {
   margin: 1rem 0 0;
-  font-size: 1.05rem;
+  font-size: 1.08rem;
 }
 
 .page-section + .page-section {
   margin-top: 2rem;
   padding-top: 2rem;
-  border-top: 1px solid var(--border);
+  border-top: 2px dashed #e2d6bd;
 }
 
 .links {
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem 1.25rem;
-  margin-top: 1rem;
+  margin-top: 1.2rem;
   padding: 0 0.25rem;
 }
 
 .kicker {
   display: inline-block;
-  margin: 0 0 0.5rem;
-  font-size: 0.8rem;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: #1bd96a;
+  margin: 0 0 0.6rem;
+  padding: 0.1rem 0.55rem;
+  background: var(--gold);
+  border: 2px solid var(--ink);
+  border-radius: 8px;
+  font-family: "Pixelify Sans", sans-serif;
+  font-size: 0.9rem;
+  color: var(--ink);
 }
 
 .policy h2 + p {
@@ -149,29 +164,24 @@ h2 {
 .meta {
   display: inline-block;
   margin: 1rem 0 0;
-  padding: 0.2rem 0.6rem;
+  padding: 0.15rem 0.65rem;
+  border: 2px solid var(--ink);
   border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: 0.92rem;
+  background: #e3eefc;
+  color: var(--ink);
+  font-size: 0.9rem;
 }
 
 @media (max-width: 700px) {
   .layout,
   .layout-policy {
-    width: min(100% - 1rem, 48rem);
+    width: min(100% - 1.5rem, 48rem);
     padding-top: 1rem;
   }
 
   .content,
   .policy {
-    padding-left: 1.25rem;
-    padding-right: 1.25rem;
-  }
-
-  .content,
-  .policy {
-    padding-top: 1.5rem;
-    padding-bottom: 1.5rem;
+    padding: 1.5rem 1.25rem;
+    box-shadow: 4px 4px 0 var(--ink);
   }
 }

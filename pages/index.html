@@ -6,34 +6,44 @@
     <title>SharedWorld · Play Minecraft together, like on a server, without the server</title>
     <meta
       name="description"
-      content="SharedWorld is a Fabric mod that keeps one Minecraft world in sync between friends. Whoever is online hosts, and when they leave someone else takes over. No dedicated server, no paid hosting."
+      content="SharedWorld is a free Minecraft mod that keeps one world in sync between friends. Whoever is online hosts, and when they log off someone else takes over. No server, no port forwarding."
     >
     <link rel="canonical" href="https://sharedworld.net/">
     <link rel="icon" type="image/png" href="./assets/logo-128.png">
+    <meta name="theme-color" content="#4a86d9">
     <meta property="og:type" content="website">
-    <meta property="og:title" content="SharedWorld">
-    <meta property="og:description" content="Play Minecraft together, like on a server, without the server. Whoever is online hosts, and the world keeps going.">
+    <meta property="og:title" content="SharedWorld: a free Minecraft server for you and your friends">
+    <meta property="og:description" content="The world saves to your Google Drive. Whoever's online hosts it, and when they log off someone else takes over.">
     <meta property="og:url" content="https://sharedworld.net/">
-    <meta property="og:image" content="https://sharedworld.net/assets/logo-512.png">
-    <meta name="twitter:card" content="summary">
+    <meta property="og:image" content="https://sharedworld.net/assets/og.jpg">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta name="twitter:card" content="summary_large_image">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Lilita+One&family=Nunito:wght@500;600;700;800&family=Pixelify+Sans:wght@500;600&display=swap" rel="stylesheet">
     <style>
       :root {
-        color-scheme: dark;
-        --bg: #0b1120;
-        --bg-raise: #111a2e;
-        --card: #131d33;
-        --border: #26334d;
-        --border-soft: #1c2740;
-        --text: #e8edf6;
-        --muted: #97a3b8;
-        --blue: #4da3e8;
-        --green: #1bd96a;
-        --green-deep: #12b558;
-        --glow-blue: rgba(61, 139, 212, 0.16);
-        --glow-green: rgba(27, 217, 106, 0.10);
+        color-scheme: light;
+        --sky-top: #3f7fd6;
+        --sky-mid: #79aeea;
+        --sky-low: #c4def4;
+        --horizon: #f4dcb4;
+        --ink: #1b1f3b;
+        --ink-soft: #454b6e;
+        --paper: #fff8ec;
+        --paper-deep: #f6ead3;
+        --card: #ffffff;
+        --grass: #5bb336;
+        --grass-dark: #3d8a22;
+        --dirt: #8a5a33;
+        --gold: #ffd23f;
+        --blue: #2f6fd6;
+        --night-top: #10163a;
+        --night-low: #2a2f6b;
+        --radius: 14px;
+        --shadow: 5px 5px 0 var(--ink);
+        --shadow-sm: 3px 3px 0 var(--ink);
       }
 
       * { box-sizing: border-box; }
@@ -42,355 +52,465 @@
 
       body {
         margin: 0;
-        min-height: 100vh;
-        font-family: "Inter", system-ui, sans-serif;
-        line-height: 1.65;
-        color: var(--text);
-        background:
-          radial-gradient(900px 480px at 75% -10%, var(--glow-blue), transparent 60%),
-          radial-gradient(700px 420px at 10% 30%, var(--glow-green), transparent 65%),
-          var(--bg);
-        background-attachment: fixed;
+        font-family: "Nunito", system-ui, sans-serif;
+        font-weight: 600;
+        line-height: 1.6;
+        color: var(--ink);
+        background: var(--paper);
+        overflow-x: hidden;
       }
 
       h1, h2, h3 {
-        font-family: "Space Grotesk", "Inter", system-ui, sans-serif;
-        line-height: 1.15;
+        font-family: "Lilita One", "Nunito", system-ui, sans-serif;
+        font-weight: 400;
+        line-height: 1.08;
         margin: 0;
-        letter-spacing: -0.015em;
+        letter-spacing: 0.005em;
       }
 
-      a { color: var(--blue); text-underline-offset: 0.16em; }
+      a { color: var(--blue); text-underline-offset: 0.16em; text-decoration-thickness: 2px; }
+
+      img, video { display: block; max-width: 100%; height: auto; }
 
       .wrap {
-        width: min(64rem, calc(100% - 2.5rem));
+        width: min(70rem, calc(100% - 2.5rem));
         margin: 0 auto;
       }
 
-      /* Header */
+      .pixel {
+        font-family: "Pixelify Sans", "Nunito", sans-serif;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+      }
+
+      /* Buttons: chunky, outlined, with a hard shadow that presses in. */
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.55rem;
+        padding: 0.72rem 1.3rem;
+        border: 3px solid var(--ink);
+        border-radius: 12px;
+        font-family: "Nunito", sans-serif;
+        font-weight: 800;
+        font-size: 1.04rem;
+        color: var(--ink);
+        text-decoration: none;
+        box-shadow: 0 5px 0 var(--ink);
+        transition: transform 0.08s ease, box-shadow 0.08s ease, background 0.15s ease;
+      }
+      .btn:hover { transform: translateY(-1px); box-shadow: 0 6px 0 var(--ink); }
+      .btn:active { transform: translateY(4px); box-shadow: 0 1px 0 var(--ink); }
+      .btn:focus-visible { outline: 3px solid var(--gold); outline-offset: 3px; }
+      .btn svg { flex: none; }
+
+      .btn-grass { background: var(--grass); color: #fff; text-shadow: 0 2px 0 rgba(0, 0, 0, 0.25); }
+      .btn-grass:hover { background: #69c142; }
+      .btn-paper { background: var(--card); }
+      .btn-paper:hover { background: #f3f6ff; }
+      .btn-small { padding: 0.45rem 0.9rem; font-size: 0.95rem; box-shadow: 0 4px 0 var(--ink); }
+
+      /* ---------- Sky (header + hero) ---------- */
+      .sky {
+        position: relative;
+        background: linear-gradient(180deg, var(--sky-top) 0%, var(--sky-mid) 42%, var(--sky-low) 78%, var(--horizon) 100%);
+        overflow: hidden;
+      }
+
+      .clouds { position: absolute; inset: 0; pointer-events: none; }
+      .cloud {
+        position: absolute;
+        height: 26px;
+        background: rgba(255, 255, 255, 0.55);
+        box-shadow:
+          28px -18px 0 -2px rgba(255, 255, 255, 0.55),
+          70px -18px 0 -2px rgba(255, 255, 255, 0.55);
+        animation: drift linear infinite;
+      }
+      .cloud.c1 { top: 13%; width: 180px; left: -12%; animation-duration: 95s; }
+      .cloud.c2 { top: 32%; width: 120px; left: 60%; animation-duration: 120s; animation-delay: -40s; opacity: 0.8; }
+      .cloud.c3 { top: 58%; width: 220px; left: 20%; animation-duration: 140s; animation-delay: -90s; opacity: 0.7; }
+      .cloud.c4 { top: 8%; width: 90px; left: 82%; animation-duration: 110s; animation-delay: -20s; opacity: 0.85; }
+      @keyframes drift {
+        from { transform: translateX(-30vw); }
+        to { transform: translateX(130vw); }
+      }
+
       .site-header {
+        position: relative;
+        z-index: 2;
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 1rem;
-        padding: 1.4rem 0;
+        padding: 1.2rem 0;
       }
 
       .brand {
         display: flex;
         align-items: center;
-        gap: 0.65rem;
-        color: var(--text);
+        gap: 0.6rem;
+        color: #fff;
         text-decoration: none;
-        font-family: "Space Grotesk", sans-serif;
-        font-weight: 700;
-        font-size: 1.15rem;
+        font-family: "Lilita One", sans-serif;
+        font-size: 1.45rem;
+        text-shadow: 0 2px 0 rgba(27, 31, 59, 0.45);
       }
+      .brand img { width: 40px; height: 40px; image-rendering: pixelated; filter: drop-shadow(0 2px 0 rgba(27, 31, 59, 0.35)); }
 
-      .brand img { width: 34px; height: 34px; image-rendering: pixelated; }
-
-      .header-nav {
-        display: flex;
-        align-items: center;
-        gap: 1.4rem;
-        font-size: 0.95rem;
-      }
-
-      .header-nav a.text-link { color: var(--muted); text-decoration: none; }
-      .header-nav a.text-link:hover { color: var(--text); }
-
-      .btn {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.55rem;
-        padding: 0.62rem 1.15rem;
-        border-radius: 0.6rem;
-        font-weight: 600;
-        font-size: 0.98rem;
+      .header-nav { display: flex; align-items: center; gap: 1.3rem; }
+      .header-nav a.text-link {
+        color: #fff;
         text-decoration: none;
-        border: 1px solid transparent;
-        transition: transform 0.08s ease, background 0.15s ease, border-color 0.15s ease;
+        font-weight: 800;
+        text-shadow: 0 2px 0 rgba(27, 31, 59, 0.35);
       }
+      .header-nav a.text-link:hover { text-decoration: underline; }
 
-      .btn:active { transform: translateY(1px); }
-
-      .btn-green {
-        background: var(--green);
-        color: #05240f;
-      }
-      .btn-green:hover { background: #3ce381; color: #05240f; }
-
-      .btn-ghost {
-        border-color: var(--border);
-        color: var(--text);
-        background: rgba(255, 255, 255, 0.02);
-      }
-      .btn-ghost:hover { border-color: #3a4a6b; background: rgba(255, 255, 255, 0.05); }
-
-      .btn svg { flex: none; }
-
-      .header-nav .btn { padding: 0.5rem 0.95rem; font-size: 0.92rem; }
-
-      /* Hero */
       .hero {
-        padding: 4.5rem 0 3.5rem;
-        text-align: center;
-      }
-
-      .hero img.mark {
-        width: 108px;
-        height: 108px;
-        image-rendering: pixelated;
-        margin-bottom: 1.6rem;
-        filter: drop-shadow(0 12px 32px rgba(61, 139, 212, 0.35));
+        position: relative;
+        z-index: 1;
+        display: grid;
+        grid-template-columns: minmax(0, 1.12fr) minmax(0, 0.88fr);
+        align-items: center;
+        gap: 3rem;
+        padding: 2.5rem 0 3rem;
       }
 
       .hero h1 {
-        font-size: clamp(2.1rem, 5.4vw, 3.4rem);
-        max-width: 21ch;
-        margin: 0 auto;
+        color: #fff;
+        font-size: clamp(2.3rem, 4.3vw, 3.3rem);
+        text-shadow: 0 4px 0 rgba(27, 31, 59, 0.55);
+        text-wrap: balance;
       }
-
-      .hero h1 .accent { color: var(--green); display: block; }
+      .hero h1 .accent { display: block; color: var(--gold); }
 
       .hero .sub {
-        max-width: 44rem;
-        margin: 1.3rem auto 0;
-        color: var(--muted);
-        font-size: clamp(1.02rem, 1.8vw, 1.16rem);
+        margin: 1.2rem 0 0;
+        max-width: 31rem;
+        color: #fff;
+        font-size: clamp(1.08rem, 1.6vw, 1.22rem);
+        font-weight: 700;
+        text-shadow: 0 2px 0 rgba(27, 31, 59, 0.35);
       }
 
-      .hero .cta-row {
-        display: flex;
-        flex-wrap: wrap;
-        justify-content: center;
-        gap: 0.9rem;
-        margin-top: 2.1rem;
+      .cta-row { display: flex; flex-wrap: wrap; gap: 0.9rem; margin-top: 1.8rem; }
+      .cta-row .btn { font-size: 1.1rem; padding: 0.85rem 1.45rem; }
+
+      .fineprint {
+        margin-top: 1.2rem;
+        color: #fff;
+        font-size: 0.95rem;
+        font-weight: 700;
+        text-shadow: 0 1px 0 rgba(27, 31, 59, 0.35);
       }
 
-      .hero .cta-row .btn { padding: 0.8rem 1.5rem; font-size: 1.05rem; }
-
-      .hero .fineprint {
-        margin-top: 1rem;
-        font-size: 0.88rem;
-        color: var(--muted);
+      .film {
+        position: relative;
+        border: 4px solid var(--ink);
+        border-radius: 18px;
+        box-shadow: 8px 8px 0 var(--ink);
+        overflow: hidden;
+        background: var(--sky-mid);
+        transform: rotate(1.2deg);
       }
+      .film video { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; }
 
-      /* Stats */
       .stats {
+        position: relative;
+        z-index: 1;
         display: grid;
         grid-template-columns: repeat(4, 1fr);
         gap: 1rem;
-        padding: 1.2rem 0 0;
+        padding: 0 0 3.2rem;
       }
-
       .stat {
-        background: linear-gradient(180deg, rgba(255,255,255,0.025), rgba(255,255,255,0.005));
-        border: 1px solid var(--border-soft);
-        border-radius: 0.9rem;
-        padding: 1.3rem 1rem 1.15rem;
+        background: var(--card);
+        border: 3px solid var(--ink);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow-sm);
+        padding: 0.9rem 0.8rem 0.8rem;
         text-align: center;
       }
+      .stat .num { font-family: "Lilita One", sans-serif; font-size: clamp(1.7rem, 3vw, 2.2rem); line-height: 1.1; }
+      .stat .num .unit { font-size: 0.6em; color: var(--ink-soft); }
+      .stat .label { color: var(--ink-soft); font-size: 0.92rem; font-weight: 700; }
 
-      .stat .num {
-        font-family: "Space Grotesk", sans-serif;
-        font-weight: 700;
-        font-size: clamp(1.6rem, 3vw, 2.1rem);
-        color: var(--text);
+      /* Pixel grass on top of a dirt band: where the sky meets the page. */
+      .ground {
+        height: 56px;
+        background:
+          url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='56' shape-rendering='crispEdges'%3E%3Crect width='64' height='56' fill='%238a5a33'/%3E%3Crect width='64' height='16' fill='%235bb336'/%3E%3Crect y='16' width='8' height='8' fill='%235bb336'/%3E%3Crect x='16' y='16' width='8' height='4' fill='%235bb336'/%3E%3Crect x='32' y='16' width='8' height='8' fill='%235bb336'/%3E%3Crect x='48' y='16' width='4' height='4' fill='%235bb336'/%3E%3Crect x='56' y='16' width='8' height='4' fill='%235bb336'/%3E%3Crect x='8' y='0' width='8' height='4' fill='%2369c142'/%3E%3Crect x='40' y='4' width='8' height='4' fill='%2369c142'/%3E%3Crect x='24' y='8' width='4' height='4' fill='%233d8a22'/%3E%3Crect x='52' y='8' width='4' height='4' fill='%233d8a22'/%3E%3Crect x='4' y='32' width='4' height='4' fill='%236b4325'/%3E%3Crect x='28' y='40' width='4' height='4' fill='%236b4325'/%3E%3Crect x='44' y='30' width='4' height='4' fill='%23a06a3c'/%3E%3Crect x='12' y='46' width='4' height='4' fill='%23a06a3c'/%3E%3Crect x='56' y='44' width='4' height='4' fill='%236b4325'/%3E%3Crect x='36' y='50' width='4' height='4' fill='%237d7f86'/%3E%3C/svg%3E") repeat-x;
+        background-size: 64px 56px;
+        image-rendering: pixelated;
       }
 
-      .stat .num .unit { font-size: 0.6em; color: var(--muted); font-weight: 600; }
-
-      .stat .label {
-        margin-top: 0.15rem;
-        font-size: 0.88rem;
-        color: var(--muted);
-      }
-
-      /* Sections */
-      section.block { padding: 4.2rem 0 0; }
+      /* ---------- Paper sections ---------- */
+      section.block { padding: 4.5rem 0 0; }
 
       .kicker {
         display: inline-block;
-        font-size: 0.8rem;
-        font-weight: 600;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        color: var(--green);
         margin-bottom: 0.7rem;
+        padding: 0.15rem 0.6rem;
+        background: var(--gold);
+        border: 2px solid var(--ink);
+        border-radius: 8px;
+        font-size: 0.95rem;
       }
 
-      section.block > .wrap > h2 {
-        font-size: clamp(1.5rem, 3vw, 2rem);
-      }
+      .block h2 { font-size: clamp(2rem, 4vw, 2.8rem); }
+      .lead { margin: 0.8rem 0 0; max-width: 42rem; color: var(--ink-soft); font-size: 1.1rem; }
 
-      .lead {
-        color: var(--muted);
-        max-width: 46rem;
-        margin: 0.8rem 0 0;
-      }
-
-      /* How it works cards */
       .steps {
         display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 1.1rem;
-        margin-top: 2rem;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 1.6rem;
+        margin-top: 2.2rem;
+        counter-reset: step;
       }
-
       .step {
         background: var(--card);
-        border: 1px solid var(--border-soft);
-        border-radius: 1rem;
-        padding: 1.5rem 1.4rem;
+        border: 3px solid var(--ink);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        overflow: hidden;
       }
-
-      .step .n {
+      .step img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-bottom: 3px solid var(--ink); }
+      .step .body { padding: 1.1rem 1.25rem 1.3rem; }
+      .step h3 { font-size: 1.5rem; display: flex; align-items: center; gap: 0.6rem; }
+      .step h3::before {
+        counter-increment: step;
+        content: counter(step);
         display: inline-flex;
         align-items: center;
         justify-content: center;
+        flex: none;
         width: 2rem;
         height: 2rem;
-        border-radius: 0.55rem;
-        background: rgba(77, 163, 232, 0.14);
-        color: var(--blue);
-        font-family: "Space Grotesk", sans-serif;
-        font-weight: 700;
-        margin-bottom: 0.9rem;
+        background: var(--gold);
+        border: 2px solid var(--ink);
+        border-radius: 8px;
+        font-size: 1.1rem;
       }
+      .step p { margin: 0.5rem 0 0; color: var(--ink-soft); }
 
-      .step h3 { font-size: 1.12rem; }
-
-      .step p {
-        margin: 0.55rem 0 0;
-        color: var(--muted);
-        font-size: 0.96rem;
-      }
-
-      /* Trust / safety */
-      .trust-grid {
+      .screens {
         display: grid;
         grid-template-columns: repeat(2, 1fr);
-        gap: 1.1rem;
-        margin-top: 2rem;
+        gap: 1.8rem;
+        margin-top: 2.2rem;
       }
+      .screens figure { margin: 0; }
+      .screens .shot {
+        border: 3px solid var(--ink);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        overflow: hidden;
+        background: #111;
+      }
+      .screens .shot img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; }
+      .screens figcaption { margin-top: 0.9rem; color: var(--ink-soft); }
+      .screens figcaption strong { color: var(--ink); }
 
-      .trust {
-        display: flex;
-        gap: 0.95rem;
+      .features {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1.3rem;
+        margin-top: 2.2rem;
+      }
+      .feature {
         background: var(--card);
-        border: 1px solid var(--border-soft);
-        border-radius: 1rem;
-        padding: 1.35rem 1.4rem;
+        border: 3px solid var(--ink);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow-sm);
+        padding: 1.2rem 1.2rem 1.25rem;
       }
-
-      .trust .icon {
-        flex: none;
-        width: 2.4rem;
-        height: 2.4rem;
+      .feature .icon {
+        width: 44px;
+        height: 44px;
         display: flex;
         align-items: center;
         justify-content: center;
-        border-radius: 0.6rem;
-        background: rgba(27, 217, 106, 0.10);
-        color: var(--green);
+        border: 2px solid var(--ink);
+        border-radius: 10px;
+        margin-bottom: 0.8rem;
       }
+      .feature .icon svg { width: 28px; height: 28px; shape-rendering: crispEdges; }
+      .feature h3 { font-size: 1.3rem; }
+      .feature p { margin: 0.4rem 0 0; color: var(--ink-soft); font-size: 0.98rem; }
 
-      .trust h3 { font-size: 1.05rem; }
-
-      .trust p { margin: 0.4rem 0 0; color: var(--muted); font-size: 0.95rem; }
-
-      .trust p a { color: var(--blue); }
-
-      /* Bottom CTA */
-      .bottom-cta {
-        margin-top: 4.5rem;
-        padding: 3.2rem 1.5rem;
-        text-align: center;
-        background: linear-gradient(180deg, var(--bg-raise), var(--card));
-        border-top: 1px solid var(--border-soft);
-        border-bottom: 1px solid var(--border-soft);
+      .trust {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 0.9rem 2rem;
+        margin: 1.8rem 0 0;
+        padding: 1.4rem 1.6rem;
+        list-style: none;
+        background: var(--paper-deep);
+        border: 3px solid var(--ink);
+        border-radius: var(--radius);
       }
+      .trust li { display: flex; gap: 0.7rem; align-items: flex-start; color: var(--ink-soft); }
+      .trust li strong { color: var(--ink); }
+      .trust svg { flex: none; margin-top: 0.2rem; shape-rendering: crispEdges; }
 
-      .bottom-cta h2 { font-size: clamp(1.5rem, 3vw, 2rem); }
-
-      .bottom-cta p { color: var(--muted); margin: 0.7rem auto 1.6rem; max-width: 38rem; }
-
-      /* Footer */
-      .site-footer {
-        padding: 2.2rem 0 2.8rem;
+      .faq { margin-top: 2rem; display: grid; gap: 0.9rem; max-width: 52rem; }
+      .faq details {
+        background: var(--card);
+        border: 3px solid var(--ink);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow-sm);
       }
-
-      .site-footer .row {
+      .faq summary {
+        cursor: pointer;
+        list-style: none;
         display: flex;
-        flex-wrap: wrap;
-        align-items: center;
         justify-content: space-between;
+        align-items: center;
         gap: 1rem;
+        padding: 1rem 1.2rem;
+        font-weight: 800;
+        font-size: 1.08rem;
+      }
+      .faq summary::-webkit-details-marker { display: none; }
+      .faq summary::after {
+        content: "+";
+        flex: none;
+        width: 1.7rem;
+        height: 1.7rem;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border: 2px solid var(--ink);
+        border-radius: 7px;
+        background: var(--gold);
+        font-family: "Lilita One", sans-serif;
+        font-size: 1.2rem;
+        line-height: 1;
+      }
+      .faq details[open] summary::after { content: "−"; }
+      .faq summary:focus-visible { outline: 3px solid var(--blue); outline-offset: -3px; border-radius: 10px; }
+      .faq .answer { padding: 0 1.2rem 1.1rem; color: var(--ink-soft); }
+      .faq .answer p { margin: 0 0 0.6rem; }
+      .faq .answer p:last-child { margin-bottom: 0; }
+
+      /* ---------- Night (final call + footer) ---------- */
+      .night {
+        margin-top: 5rem;
+        background-color: var(--night-low);
+        color: #fff;
+        background:
+          radial-gradient(2px 2px at 6% 30%, #fff 99%, transparent),
+          radial-gradient(2px 2px at 12% 68%, #fff 99%, transparent),
+          radial-gradient(3px 3px at 21% 16%, #fff 99%, transparent),
+          radial-gradient(2px 2px at 34% 9%, #fff 99%, transparent),
+          radial-gradient(2px 2px at 67% 12%, #fff 99%, transparent),
+          radial-gradient(3px 3px at 82% 24%, #fff 99%, transparent),
+          radial-gradient(2px 2px at 90% 60%, #fff 99%, transparent),
+          radial-gradient(2px 2px at 96% 36%, #fff 99%, transparent),
+          linear-gradient(180deg, var(--night-low), var(--night-top));
+      }
+      /* The page content is the island; the night sky shows under its rocky underside. */
+      .underside {
+        height: 96px;
+        background: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='64'%20height='48'%20shape-rendering='crispEdges'%3E%3Crect%20x='0'%20y='0'%20width='64'%20height='12'%20fill='%238a5a33'/%3E%3Crect%20x='0'%20y='12'%20width='4'%20height='24'%20fill='%237d7f86'/%3E%3Crect%20x='4'%20y='12'%20width='4'%20height='16'%20fill='%237d7f86'/%3E%3Crect%20x='8'%20y='12'%20width='4'%20height='28'%20fill='%237d7f86'/%3E%3Crect%20x='12'%20y='12'%20width='4'%20height='12'%20fill='%237d7f86'/%3E%3Crect%20x='16'%20y='12'%20width='4'%20height='16'%20fill='%237d7f86'/%3E%3Crect%20x='20'%20y='12'%20width='4'%20height='16'%20fill='%237d7f86'/%3E%3Crect%20x='24'%20y='12'%20width='4'%20height='24'%20fill='%237d7f86'/%3E%3Crect%20x='28'%20y='12'%20width='4'%20height='12'%20fill='%237d7f86'/%3E%3Crect%20x='32'%20y='12'%20width='4'%20height='20'%20fill='%237d7f86'/%3E%3Crect%20x='36'%20y='12'%20width='4'%20height='12'%20fill='%237d7f86'/%3E%3Crect%20x='40'%20y='12'%20width='4'%20height='16'%20fill='%237d7f86'/%3E%3Crect%20x='44'%20y='12'%20width='4'%20height='28'%20fill='%237d7f86'/%3E%3Crect%20x='48'%20y='12'%20width='4'%20height='28'%20fill='%237d7f86'/%3E%3Crect%20x='52'%20y='12'%20width='4'%20height='16'%20fill='%237d7f86'/%3E%3Crect%20x='56'%20y='12'%20width='4'%20height='20'%20fill='%237d7f86'/%3E%3Crect%20x='60'%20y='12'%20width='4'%20height='24'%20fill='%237d7f86'/%3E%3Crect%20x='52'%20y='0'%20width='4'%20height='4'%20fill='%236b4325'/%3E%3Crect%20x='28'%20y='8'%20width='4'%20height='4'%20fill='%236b4325'/%3E%3Crect%20x='48'%20y='0'%20width='4'%20height='4'%20fill='%236b4325'/%3E%3Crect%20x='4'%20y='8'%20width='4'%20height='4'%20fill='%236b4325'/%3E%3Crect%20x='36'%20y='4'%20width='4'%20height='4'%20fill='%236b4325'/%3E%3Crect%20x='12'%20y='8'%20width='4'%20height='4'%20fill='%23a06a3c'/%3E%3Crect%20x='20'%20y='0'%20width='4'%20height='4'%20fill='%236b4325'/%3E%3Crect%20x='44'%20y='0'%20width='4'%20height='4'%20fill='%236b4325'/%3E%3Crect%20x='4'%20y='8'%20width='4'%20height='4'%20fill='%236b4325'/%3E%3Crect%20x='60'%20y='8'%20width='4'%20height='4'%20fill='%23a06a3c'/%3E%3Crect%20x='12'%20y='12'%20width='4'%20height='4'%20fill='%238a5a33'/%3E%3Crect%20x='16'%20y='12'%20width='4'%20height='4'%20fill='%238a5a33'/%3E%3Crect%20x='20'%20y='12'%20width='4'%20height='4'%20fill='%238a5a33'/%3E%3Crect%20x='28'%20y='12'%20width='4'%20height='4'%20fill='%238a5a33'/%3E%3Crect%20x='32'%20y='12'%20width='4'%20height='4'%20fill='%238a5a33'/%3E%3Crect%20x='40'%20y='12'%20width='4'%20height='4'%20fill='%238a5a33'/%3E%3Crect%20x='44'%20y='12'%20width='4'%20height='4'%20fill='%238a5a33'/%3E%3Crect%20x='52'%20y='12'%20width='4'%20height='4'%20fill='%238a5a33'/%3E%3Crect%20x='60'%20y='12'%20width='4'%20height='4'%20fill='%238a5a33'/%3E%3Crect%20x='0'%20y='32'%20width='4'%20height='4'%20fill='%2393959c'/%3E%3Crect%20x='0'%20y='32'%20width='4'%20height='4'%20fill='%235f6168'/%3E%3Crect%20x='4'%20y='24'%20width='4'%20height='4'%20fill='%235f6168'/%3E%3Crect%20x='8'%20y='20'%20width='4'%20height='4'%20fill='%236a6c73'/%3E%3Crect%20x='8'%20y='36'%20width='4'%20height='4'%20fill='%2393959c'/%3E%3Crect%20x='8'%20y='36'%20width='4'%20height='4'%20fill='%235f6168'/%3E%3Crect%20x='12'%20y='20'%20width='4'%20height='4'%20fill='%235f6168'/%3E%3Crect%20x='16'%20y='24'%20width='4'%20height='4'%20fill='%235f6168'/%3E%3Crect%20x='20'%20y='20'%20width='4'%20height='4'%20fill='%2393959c'/%3E%3Crect%20x='20'%20y='24'%20width='4'%20height='4'%20fill='%235f6168'/%3E%3Crect%20x='24'%20y='24'%20width='4'%20height='4'%20fill='%2393959c'/%3E%3Crect%20x='24'%20y='28'%20width='4'%20height='4'%20fill='%236a6c73'/%3E%3Crect%20x='24'%20y='32'%20width='4'%20height='4'%20fill='%235f6168'/%3E%3Crect%20x='28'%20y='20'%20width='4'%20height='4'%20fill='%235f6168'/%3E%3Crect%20x='32'%20y='16'%20width='4'%20height='4'%20fill='%2393959c'/%3E%3Crect%20x='32'%20y='28'%20width='4'%20height='4'%20fill='%235f6168'/%3E%3Crect%20x='36'%20y='20'%20width='4'%20height='4'%20fill='%235f6168'/%3E%3Crect%20x='40'%20y='24'%20width='4'%20height='4'%20fill='%235f6168'/%3E%3Crect%20x='44'%20y='20'%20width='4'%20height='4'%20fill='%236a6c73'/%3E%3Crect%20x='44'%20y='24'%20width='4'%20height='4'%20fill='%236a6c73'/%3E%3Crect%20x='44'%20y='28'%20width='4'%20height='4'%20fill='%236a6c73'/%3E%3Crect%20x='44'%20y='36'%20width='4'%20height='4'%20fill='%2393959c'/%3E%3Crect%20x='44'%20y='36'%20width='4'%20height='4'%20fill='%235f6168'/%3E%3Crect%20x='48'%20y='28'%20width='4'%20height='4'%20fill='%236a6c73'/%3E%3Crect%20x='48'%20y='36'%20width='4'%20height='4'%20fill='%235f6168'/%3E%3Crect%20x='52'%20y='24'%20width='4'%20height='4'%20fill='%235f6168'/%3E%3Crect%20x='56'%20y='28'%20width='4'%20height='4'%20fill='%235f6168'/%3E%3Crect%20x='60'%20y='16'%20width='4'%20height='4'%20fill='%236a6c73'/%3E%3Crect%20x='60'%20y='24'%20width='4'%20height='4'%20fill='%236a6c73'/%3E%3Crect%20x='60'%20y='28'%20width='4'%20height='4'%20fill='%236a6c73'/%3E%3Crect%20x='60'%20y='32'%20width='4'%20height='4'%20fill='%235f6168'/%3E%3C/svg%3E") repeat-x;
+        background-size: 128px 96px;
+        image-rendering: pixelated;
+      }
+      .final { padding: 4rem 0 3.5rem; text-align: center; }
+      .final img { margin: 0 auto 1.2rem; width: 96px; height: 96px; image-rendering: pixelated; }
+      .final h2 { font-size: clamp(2.1rem, 4.5vw, 3rem); text-shadow: 0 4px 0 rgba(0, 0, 0, 0.35); }
+      .final p { margin: 0.8rem auto 1.8rem; max-width: 34rem; color: #d9dcf5; font-size: 1.12rem; }
+
+      .site-footer { padding: 1.5rem 0 2.6rem; border-top: 2px solid rgba(255, 255, 255, 0.12); }
+      .site-footer .row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 1rem; }
+      .site-footer nav { display: flex; flex-wrap: wrap; gap: 0.5rem 1.4rem; }
+      .site-footer a { color: #d9dcf5; text-decoration: none; }
+      .site-footer a:hover { color: #fff; text-decoration: underline; }
+      .site-footer .madeby { color: #aab0dc; }
+
+      @media (max-width: 960px) {
+        .hero { grid-template-columns: 1fr; gap: 2.2rem; padding-top: 1.2rem; }
+        .hero .sub { max-width: none; }
+        .film { transform: none; }
+        .features { grid-template-columns: repeat(2, 1fr); }
       }
 
-      .site-footer nav {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.6rem 1.4rem;
-        font-size: 0.92rem;
-      }
-
-      .site-footer a { color: var(--muted); text-decoration: none; }
-      .site-footer a:hover { color: var(--text); }
-
-      .site-footer .madeby {
-        font-size: 0.92rem;
-        color: var(--muted);
-      }
-
-      @media (max-width: 880px) {
+      @media (max-width: 720px) {
+        .cloud.c1, .cloud.c3 { display: none; }
+        .feature { display: grid; grid-template-columns: auto 1fr; column-gap: 0.85rem; align-items: center; }
+        .feature .icon { margin-bottom: 0; }
+        .feature p { grid-column: 1 / -1; margin-top: 0.6rem; }
+        .cta-row .btn { flex: 1 1 100%; justify-content: center; }
         .stats { grid-template-columns: repeat(2, 1fr); }
-        .steps { grid-template-columns: 1fr; }
-        .trust-grid { grid-template-columns: 1fr; }
+        .steps, .screens, .features, .trust { grid-template-columns: 1fr; }
+        .header-nav a.text-link { display: none; }
       }
 
-      @media (max-width: 560px) {
-        .header-nav a.text-link { display: none; }
-        .hero { padding-top: 3rem; }
+      @media (prefers-reduced-motion: reduce) {
+        .cloud { animation: none; }
+        .btn, .btn:hover, .btn:active { transition: none; transform: none; }
+        html { scroll-behavior: auto; }
       }
     </style>
   </head>
   <body>
-    <header class="wrap site-header">
-      <a class="brand" href="./" aria-current="page">
-        <img src="./assets/logo-128.png" alt="" width="34" height="34">
-        SharedWorld
-      </a>
-      <nav class="header-nav" aria-label="Site">
-        <a class="text-link" href="#how-it-works">How it works</a>
-        <a class="text-link" href="https://github.com/pmarinroig/sharedworld">GitHub</a>
-        <a class="btn btn-green" href="https://modrinth.com/mod/sharedworld">Download</a>
-      </nav>
-    </header>
+    <div class="sky">
+      <div class="clouds" aria-hidden="true">
+        <span class="cloud c1"></span>
+        <span class="cloud c2"></span>
+        <span class="cloud c3"></span>
+        <span class="cloud c4"></span>
+      </div>
 
-    <main>
-      <section class="wrap hero">
-        <img class="mark" src="./assets/logo-512.png" alt="SharedWorld logo" width="108" height="108">
-        <h1>Play Minecraft together, like&nbsp;on&nbsp;a&nbsp;server. <span class="accent">Without the server.</span></h1>
-        <p class="sub">
-          SharedWorld keeps your world in sync through Google Drive or your own
-          S3 bucket and connects everyone through
-          <a href="https://modrinth.com/mod/e4mc">e4mc</a>, or your own
-          address if your group plays over a VPN like Tailscale. Whoever is
-          online hosts. When they log off, someone else takes over and the
-          game keeps going.
-        </p>
-        <div class="cta-row">
-          <a class="btn btn-green" href="https://modrinth.com/mod/sharedworld">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Download on Modrinth
-          </a>
-          <a class="btn btn-ghost" href="https://github.com/pmarinroig/sharedworld">View source</a>
-        </div>
-        <p class="fineprint">Free and open source. Fabric, NeoForge, Minecraft 1.20.1 and newer.</p>
+      <header class="wrap site-header">
+        <a class="brand" href="./" aria-current="page">
+          <img src="./assets/logo-128.png" alt="" width="40" height="40">
+          SharedWorld
+        </a>
+        <nav class="header-nav" aria-label="Site">
+          <a class="text-link" href="#how-it-works">How it works</a>
+          <a class="text-link" href="#faq">FAQ</a>
+          <a class="text-link" href="https://github.com/pmarinroig/sharedworld">GitHub</a>
+          <a class="btn btn-grass btn-small" href="https://modrinth.com/mod/sharedworld">Download</a>
+        </nav>
+      </header>
 
-        <div class="stats" aria-label="Project stats">
+      <main id="top">
+        <section class="wrap hero">
+          <div>
+            <h1>Play Minecraft together, like&nbsp;on&nbsp;a&nbsp;server. <span class="accent">Without&nbsp;the&nbsp;server.</span></h1>
+            <p class="sub">
+              Your world saves to your own Google Drive. Whoever's online hosts
+              it, and when they log off, someone else picks it up and you all
+              keep playing.
+            </p>
+            <div class="cta-row">
+              <a class="btn btn-grass" href="https://modrinth.com/mod/sharedworld">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Download on Modrinth
+              </a>
+              <a class="btn btn-paper" href="#how-it-works">How it works</a>
+            </div>
+            <p class="fineprint">Free and open source. Fabric and NeoForge, Minecraft 1.20.1 up to 26.3.</p>
+          </div>
+
+          <div class="film">
+            <video
+              id="hero-film"
+              src="./assets/short-wide.mp4"
+              poster="./assets/short-poster.jpg"
+              autoplay
+              muted
+              loop
+              playsinline
+              preload="metadata"
+              aria-label="Animation: three friends build on a floating island, the world saves to Google Drive, Dave hosts, then logs off and Leo takes over while everyone keeps playing."
+            ></video>
+          </div>
+        </section>
+
+        <div class="wrap stats" aria-label="Project stats">
           <div class="stat">
             <div class="num" id="stat-downloads">5,900<span class="unit">+</span></div>
             <div class="label">downloads</div>
@@ -408,135 +528,232 @@
             <div class="label">of worlds kept in sync</div>
           </div>
         </div>
-      </section>
+      </main>
 
-      <section class="block" id="how-it-works">
-        <div class="wrap">
-          <span class="kicker">How it works</span>
-          <h2>The world follows the group, not one computer</h2>
-          <p class="lead">
-            Normally a Minecraft world lives on one person's PC, and if they are
-            not around nobody plays. SharedWorld fixes that.
-          </p>
-          <div class="steps">
-            <div class="step">
-              <span class="n">1</span>
-              <h3>Create a shared world</h3>
+      <div class="ground" aria-hidden="true"></div>
+    </div>
+
+    <section class="block" id="how-it-works">
+      <div class="wrap">
+        <span class="kicker pixel">How it works</span>
+        <h2>The world follows your friends around</h2>
+        <p class="lead">
+          Normally a world lives on one person's PC, and when they're not
+          around nobody can play. With SharedWorld, anyone in the group can
+          open it.
+        </p>
+        <div class="steps">
+          <article class="step">
+            <img src="./assets/step-1.jpg" alt="Three friends building on a floating island" width="960" height="540" loading="lazy">
+            <div class="body">
+              <h3>Make a shared world</h3>
               <p>
-                Make a world from the Shared Worlds screen, or link one you
-                already have, and invite your friends by their Minecraft name.
+                Start a new one or pick any of your singleplayer worlds, then
+                send your friends the invite code.
               </p>
             </div>
-            <div class="step">
-              <span class="n">2</span>
-              <h3>First one online hosts</h3>
+          </article>
+          <article class="step">
+            <img src="./assets/step-2.jpg" alt="Blocks from the island streaming up into a cloud labelled Google Drive" width="960" height="540" loading="lazy">
+            <div class="body">
+              <h3>It saves to your Drive</h3>
               <p>
-                Whoever opens the world first becomes the host. Everyone else
-                joins them through e4mc, with no port forwarding and no setup,
-                or through a custom address if you already share a VPN.
+                The world saves to your own Google Drive (or your own S3 bucket)
+                while you play, so it never depends on one computer.
               </p>
             </div>
-            <div class="step">
-              <span class="n">3</span>
-              <h3>Host leaves? Keep playing</h3>
+          </article>
+          <article class="step">
+            <img src="./assets/step-3.jpg" alt="Dave standing by the house with a yellow host label above his name" width="960" height="540" loading="lazy">
+            <div class="body">
+              <h3>Whoever's online hosts</h3>
               <p>
-                The world syncs to Google Drive as you play. When the host logs
-                off, another player picks it up and everyone reconnects on
-                their own.
+                Open the world and you're the host. Friends join you from their
+                Shared Worlds menu, no IP addresses or port forwarding.
               </p>
             </div>
-          </div>
+          </article>
+          <article class="step">
+            <img src="./assets/step-4.jpg" alt="Leo cheering with the crown and host label above him" width="960" height="540" loading="lazy">
+            <div class="body">
+              <h3>Host leaves? Someone takes over</h3>
+              <p>
+                When the host logs off, one of the others becomes the host and
+                the world carries on right where it was.
+              </p>
+            </div>
+          </article>
         </div>
-      </section>
-
-      <section class="block" id="safety">
-        <div class="wrap">
-          <span class="kicker">Privacy and safety</span>
-          <h2>Built to be trusted with your world</h2>
-          <div class="trust-grid">
-            <div class="trust">
-              <div class="icon" aria-hidden="true">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-              </div>
-              <div>
-                <h3>Your Drive stays yours</h3>
-                <p>
-                  The mod only gets a private app data folder in your Google
-                  Drive. It cannot see or touch your files, documents, or
-                  photos.
-                </p>
-              </div>
-            </div>
-            <div class="trust">
-              <div class="icon" aria-hidden="true">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-              </div>
-              <div>
-                <h3>Minimal data, encrypted</h3>
-                <p>
-                  The backend stores only what it needs to run, and encrypts
-                  your email and Drive tokens at rest. No request or IP logs.
-                  Details in the <a href="./privacy">privacy policy</a>.
-                </p>
-              </div>
-            </div>
-            <div class="trust">
-              <div class="icon" aria-hidden="true">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-              </div>
-              <div>
-                <h3>Open source</h3>
-                <p>
-                  The mod and the backend are on
-                  <a href="https://github.com/pmarinroig/sharedworld">GitHub</a>,
-                  so you can read exactly what runs on your computer and where
-                  your world goes.
-                </p>
-              </div>
-            </div>
-            <div class="trust">
-              <div class="icon" aria-hidden="true">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-              </div>
-              <div>
-                <h3>Leave whenever you want</h3>
-                <p>
-                  The in-game Account screen can disconnect your Google account
-                  or delete every trace of SharedWorld: worlds, backups, Drive
-                  data, and local files, in one go.
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section class="bottom-cta">
-        <div class="wrap">
-          <h2>Ready to play?</h2>
-          <p>
-            Grab the mod, sign in with Minecraft, and you and your friends can
-            be in the same world in a couple of minutes.
-          </p>
-          <a class="btn btn-green" href="https://modrinth.com/mod/sharedworld">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Download on Modrinth
-          </a>
-        </div>
-      </section>
-    </main>
-
-    <footer class="wrap site-footer">
-      <div class="row">
-        <nav aria-label="Project links">
-          <a href="./privacy">Privacy policy</a>
-          <a href="./terms">Terms of service</a>
-          <a href="https://github.com/pmarinroig/sharedworld">Source code</a>
-          <a href="https://github.com/pmarinroig/sharedworld/issues">GitHub issues</a>
-        </nav>
-        <span class="madeby">Made by a student on his free time.</span>
       </div>
-    </footer>
+    </section>
+
+    <section class="block" id="in-game">
+      <div class="wrap">
+        <span class="kicker pixel">In game</span>
+        <h2>It all happens inside Minecraft</h2>
+        <div class="screens">
+          <figure>
+            <div class="shot"><img src="./assets/screen-menu.jpg" alt="The Shared Worlds menu in Minecraft, showing a world with a custom icon and a colored message" width="1280" height="720" loading="lazy"></div>
+            <figcaption><strong>Shared Worlds get their own menu</strong>, right next to your servers, with their own icon and message of the day.</figcaption>
+          </figure>
+          <figure>
+            <div class="shot"><img src="./assets/screen-invite.jpg" alt="The screen after creating a world, showing an invite code to send to friends" width="1280" height="720" loading="lazy"></div>
+            <figcaption><strong>Invite friends with a code.</strong> They paste it in and the world shows up in their list.</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="features">
+      <div class="wrap">
+        <span class="kicker pixel">What you get</span>
+        <h2>Everything a real server has</h2>
+        <div class="features">
+          <div class="feature">
+            <div class="icon" style="background:#d9f2c9" aria-hidden="true">
+              <svg viewBox="0 0 8 8"><rect x="0" y="1" width="8" height="2" fill="#5bb336"/><rect x="0" y="3" width="8" height="4" fill="#8a5a33"/><rect x="1" y="4" width="1" height="1" fill="#6b4325"/><rect x="5" y="5" width="1" height="1" fill="#6b4325"/><rect x="3" y="1" width="1" height="1" fill="#3d8a22"/></svg>
+            </div>
+            <h3>Your mods come along</h3>
+            <p>Fabric and NeoForge. If a friend is missing a mod the world uses, SharedWorld warns them before they host.</p>
+          </div>
+          <div class="feature">
+            <div class="icon" style="background:#fff1c2" aria-hidden="true">
+              <svg viewBox="0 0 8 8"><rect x="2" y="0" width="4" height="1" fill="#1b1f3b"/><rect x="1" y="1" width="1" height="1" fill="#1b1f3b"/><rect x="6" y="1" width="1" height="1" fill="#1b1f3b"/><rect x="0" y="2" width="1" height="4" fill="#1b1f3b"/><rect x="7" y="2" width="1" height="4" fill="#1b1f3b"/><rect x="1" y="6" width="1" height="1" fill="#1b1f3b"/><rect x="6" y="6" width="1" height="1" fill="#1b1f3b"/><rect x="2" y="7" width="4" height="1" fill="#1b1f3b"/><rect x="1" y="2" width="6" height="4" fill="#ffd23f"/><rect x="2" y="1" width="4" height="6" fill="#ffd23f"/><rect x="4" y="2" width="1" height="3" fill="#1b1f3b"/><rect x="5" y="4" width="1" height="1" fill="#1b1f3b"/></svg>
+            </div>
+            <h3>Automatic backups</h3>
+            <p>Every save from the last hour, then one an hour for two days, one a day for a month and one a month after that. Restore any of them from the world's settings.</p>
+          </div>
+          <div class="feature">
+            <div class="icon" style="background:#d8e8fb" aria-hidden="true">
+              <svg viewBox="0 0 8 8"><rect x="2" y="2" width="3" height="1" fill="#2f6fd6"/><rect x="1" y="3" width="6" height="1" fill="#2f6fd6"/><rect x="0" y="4" width="8" height="2" fill="#2f6fd6"/><rect x="3" y="1" width="2" height="1" fill="#2f6fd6"/><rect x="2" y="4" width="1" height="1" fill="#79aeea"/></svg>
+            </div>
+            <h3>Your storage, not ours</h3>
+            <p>The world lives in your Google Drive, or in any S3-compatible bucket you own (Cloudflare R2, Backblaze B2 and the like).</p>
+          </div>
+          <div class="feature">
+            <div class="icon" style="background:#e6ddfb" aria-hidden="true">
+              <svg viewBox="0 0 8 8"><rect x="0" y="2" width="3" height="4" fill="#6b4fd6"/><rect x="5" y="2" width="3" height="4" fill="#6b4fd6"/><rect x="3" y="3" width="2" height="2" fill="#1b1f3b"/><rect x="1" y="3" width="1" height="2" fill="#e6ddfb"/><rect x="6" y="3" width="1" height="2" fill="#e6ddfb"/></svg>
+            </div>
+            <h3>No port forwarding</h3>
+            <p>Friends connect through e4mc automatically. Already on Tailscale or Radmin? Use your own address instead.</p>
+          </div>
+          <div class="feature">
+            <div class="icon" style="background:#ffe0e6" aria-hidden="true">
+              <svg viewBox="0 0 8 8"><rect x="3" y="0" width="2" height="2" fill="#e0465f"/><rect x="0" y="2" width="8" height="2" fill="#e0465f"/><rect x="1" y="4" width="6" height="1" fill="#e0465f"/><rect x="1" y="5" width="2" height="2" fill="#e0465f"/><rect x="5" y="5" width="2" height="2" fill="#e0465f"/><rect x="0" y="7" width="2" height="1" fill="#e0465f"/><rect x="6" y="7" width="2" height="1" fill="#e0465f"/></svg>
+            </div>
+            <h3>Make it yours</h3>
+            <p>Give the world its own icon and a colorful message of the day, just like a server in your list.</p>
+          </div>
+          <div class="feature">
+            <div class="icon" style="background:#dff3f1" aria-hidden="true">
+              <svg viewBox="0 0 8 8"><rect x="0" y="0" width="8" height="8" fill="#1b1f3b"/><rect x="1" y="1" width="6" height="6" fill="#2b9c8f"/><rect x="5" y="2" width="1" height="1" fill="#fff"/><rect x="4" y="3" width="1" height="2" fill="#fff"/><rect x="3" y="5" width="1" height="1" fill="#fff"/></svg>
+            </div>
+            <h3>Commands for friends</h3>
+            <p>Decide who in the group gets to use commands. The owner always can, whoever is hosting.</p>
+          </div>
+        </div>
+
+        <ul class="trust">
+          <li>
+            <svg width="18" height="18" viewBox="0 0 6 6" aria-hidden="true"><rect x="0" y="3" width="1" height="1" fill="#3d8a22"/><rect x="1" y="4" width="1" height="1" fill="#3d8a22"/><rect x="2" y="3" width="1" height="1" fill="#3d8a22"/><rect x="3" y="2" width="1" height="1" fill="#3d8a22"/><rect x="4" y="1" width="1" height="1" fill="#3d8a22"/><rect x="5" y="0" width="1" height="1" fill="#3d8a22"/></svg>
+            <span><strong>Your Drive stays yours.</strong> The mod only gets a private app folder in your Google Drive; it can't see your files or photos.</span>
+          </li>
+          <li>
+            <svg width="18" height="18" viewBox="0 0 6 6" aria-hidden="true"><rect x="0" y="3" width="1" height="1" fill="#3d8a22"/><rect x="1" y="4" width="1" height="1" fill="#3d8a22"/><rect x="2" y="3" width="1" height="1" fill="#3d8a22"/><rect x="3" y="2" width="1" height="1" fill="#3d8a22"/><rect x="4" y="1" width="1" height="1" fill="#3d8a22"/><rect x="5" y="0" width="1" height="1" fill="#3d8a22"/></svg>
+            <span><strong>Barely any data.</strong> The backend keeps only what it needs, encrypts your email and tokens, and keeps no IP logs. <a href="./privacy">Privacy policy</a>.</span>
+          </li>
+          <li>
+            <svg width="18" height="18" viewBox="0 0 6 6" aria-hidden="true"><rect x="0" y="3" width="1" height="1" fill="#3d8a22"/><rect x="1" y="4" width="1" height="1" fill="#3d8a22"/><rect x="2" y="3" width="1" height="1" fill="#3d8a22"/><rect x="3" y="2" width="1" height="1" fill="#3d8a22"/><rect x="4" y="1" width="1" height="1" fill="#3d8a22"/><rect x="5" y="0" width="1" height="1" fill="#3d8a22"/></svg>
+            <span><strong>Open source.</strong> The mod and the backend are on <a href="https://github.com/pmarinroig/sharedworld">GitHub</a>, so you can read exactly what runs.</span>
+          </li>
+          <li>
+            <svg width="18" height="18" viewBox="0 0 6 6" aria-hidden="true"><rect x="0" y="3" width="1" height="1" fill="#3d8a22"/><rect x="1" y="4" width="1" height="1" fill="#3d8a22"/><rect x="2" y="3" width="1" height="1" fill="#3d8a22"/><rect x="3" y="2" width="1" height="1" fill="#3d8a22"/><rect x="4" y="1" width="1" height="1" fill="#3d8a22"/><rect x="5" y="0" width="1" height="1" fill="#3d8a22"/></svg>
+            <span><strong>Leave any time.</strong> One button in the Account screen deletes your worlds, backups and Drive data.</span>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="block" id="faq">
+      <div class="wrap">
+        <span class="kicker pixel">FAQ</span>
+        <h2>Questions people ask</h2>
+        <div class="faq">
+          <details>
+            <summary>Is it really free?</summary>
+            <div class="answer">
+              <p>Yes. The mod is free and open source, and the world lives in your own Google Drive, whose free space is plenty for most worlds (the average one takes under 3 GB with its backups). There's no server to rent.</p>
+            </div>
+          </details>
+          <details>
+            <summary>Do we all have to be online at the same time?</summary>
+            <div class="answer">
+              <p>No. Anyone in the group can open the world whenever they want, alone or with whoever's around. If someone is already hosting, you just join them.</p>
+            </div>
+          </details>
+          <details>
+            <summary>What happens if the host's game crashes?</summary>
+            <div class="answer">
+              <p>The world is saved to the cloud while you play, so nobody loses it. The next host starts from the latest save, and anything the crashed host hadn't uploaded yet goes up the next time they open the world.</p>
+            </div>
+          </details>
+          <details>
+            <summary>Which versions and loaders work?</summary>
+            <div class="answer">
+              <p><strong>Fabric:</strong> Minecraft 1.20 and 1.20.1, 1.21 and 1.21.1, 1.21.6 up to 1.21.11, and 26.1 up to 26.3.</p>
+              <p><strong>NeoForge:</strong> 1.21 and 1.21.1, and 1.21.6 up to 1.21.11.</p>
+              <p>Everyone in a world should be on the same version. If someone hosts on a different one, SharedWorld tells them first.</p>
+            </div>
+          </details>
+          <details>
+            <summary>What do my friends need to install?</summary>
+            <div class="answer">
+              <p>The same Minecraft version, SharedWorld, and Fabric API if you're on Fabric. Also <a href="https://modrinth.com/mod/e4mc">e4mc</a>, unless your group connects through its own address (like a Tailscale VPN). And the same mods your world uses.</p>
+            </div>
+          </details>
+          <details>
+            <summary>Can I share a world I already have?</summary>
+            <div class="answer">
+              <p>Yes. When you create a shared world, pick any of your singleplayer worlds and it gets uploaded as the starting point.</p>
+            </div>
+          </details>
+          <details>
+            <summary>Do I need a Minecraft account?</summary>
+            <div class="answer">
+              <p>Yes, a Java Edition account. SharedWorld signs you in with it, so offline or cracked launchers don't work.</p>
+            </div>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <div class="night">
+      <div class="underside" aria-hidden="true"></div>
+      <section class="wrap final">
+        <img src="./assets/logo-512.png" alt="" width="96" height="96">
+        <h2>Get your friends in the same world tonight</h2>
+        <p>
+          Install the mod, sign in with your Minecraft account and send your
+          friends the code. It takes a couple of minutes.
+        </p>
+        <a class="btn btn-grass" href="https://modrinth.com/mod/sharedworld">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download on Modrinth
+        </a>
+      </section>
+
+      <footer class="wrap site-footer">
+        <div class="row">
+          <nav aria-label="Project links">
+            <a href="./privacy">Privacy policy</a>
+            <a href="./terms">Terms of service</a>
+            <a href="https://github.com/pmarinroig/sharedworld">Source code</a>
+            <a href="https://github.com/pmarinroig/sharedworld/issues">Report a problem</a>
+          </nav>
+          <span class="madeby">Made by a student in his free time.</span>
+        </div>
+      </footer>
+    </div>
 
     <script>
       // Keep the downloads number fresh without redeploying the site.
@@ -544,13 +761,21 @@
         .then((r) => (r.ok ? r.json() : null))
         .then((p) => {
           if (!p || !p.downloads) return;
-          const el = document.getElementById("stat-downloads");
           const n = Math.floor(p.downloads / 50) * 50;
-          if (n > 1250) {
-            el.innerHTML = n.toLocaleString("en-US") + '<span class="unit">+</span>';
+          if (n > 5900) {
+            document.getElementById("stat-downloads").innerHTML =
+              n.toLocaleString("en-US") + '<span class="unit">+</span>';
           }
         })
         .catch(() => {});
+
+      // Respect reduced motion: no autoplaying film, the player decides.
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        const film = document.getElementById("hero-film");
+        film.removeAttribute("autoplay");
+        film.pause();
+        film.controls = true;
+      }
     </script>
   </body>
 </html>
