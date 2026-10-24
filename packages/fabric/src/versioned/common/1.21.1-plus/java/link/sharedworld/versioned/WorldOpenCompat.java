@@ -10,9 +10,8 @@ public final class WorldOpenCompat {
     }
 
     /** Opens the level with the given id from the given storage, on the render thread. */
-    public static void openExistingWorld(Minecraft minecraft, LevelStorageSource levelSource, String levelId) {
+    public static void openExistingWorld(Minecraft minecraft, LevelStorageSource levelSource, String levelId, Runnable onCancel) {
         WorldOpenFlows flows = new WorldOpenFlows(minecraft, levelSource);
-        flows.openWorld(levelId, () -> {
-        });
+        flows.openWorld(levelId, onCancel);
     }
 }

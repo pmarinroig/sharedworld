@@ -9,8 +9,11 @@ public final class WorldOpenCompat {
     private WorldOpenCompat() {
     }
 
-    /** Opens the level with the given id from the given storage, on the render thread. */
-    public static void openExistingWorld(Minecraft minecraft, LevelStorageSource levelSource, String levelId) {
+    /**
+     * Opens the level with the given id from the given storage, on the render thread.
+     * 1.20.x has no cancel hook: a cancelled vanilla prompt returns to the current screen.
+     */
+    public static void openExistingWorld(Minecraft minecraft, LevelStorageSource levelSource, String levelId, Runnable onCancel) {
         WorldOpenFlows flows = new WorldOpenFlows(minecraft, levelSource);
         flows.loadLevel(minecraft.screen, levelId);
     }

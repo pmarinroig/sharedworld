@@ -70,6 +70,26 @@ final class SharedWorldHostingManagerTest {
         assertEquals(syncAccess.preparedWorldDirectory, worldOpenController.openedWorldDirectory);
     }
 
+    @Test
+    void anOpenQueuedBeforeACancelIsDroppedWhenItRuns() throws Exception {
+        // The open runs on the render thread after it is queued; a cancel in
+        // between used to open the world anyway, leaving its session.lock held
+        // so the next attempt's open failed (seen on 26.x in the two-client e2e).
+        ManagedWorldStore worldStore = new ManagedWorldStore(this.tempDir.resolve("managed"));
+        RecordingSyncAccess syncAccess = new RecordingSyncAccess(this.tempDir.resolve("prepared-world"));
+        RecordingWorldOpenController worldOpenController = new RecordingWorldOpenController();
+        SharedWorldHostingManager manager = manager(worldStore, syncAccess, worldOpenController, new InMemoryHostRecoveryStore(), worldId -> false);
+
+        primeStartup(manager, world("world-1", "Handoff World"), 7L, SharedWorldHostingManager.StartupMode.NORMAL);
+        invokePrepareAndOpen(manager, 7L);
+        assertEquals(1, worldOpenController.openExistingCalls);
+        assertTrue(worldOpenController.stillWanted.getAsBoolean());
+
+        manager.cancelStartup();
+
+        assertFalse(worldOpenController.stillWanted.getAsBoolean());
+    }
+
     // ---- no-silent-rollback guard (0.4.4): local-changes marker at host start
 
     private static void primeUnreleasedWorkingCopy(ManagedWorldStore worldStore, String worldId, String baselineSnapshotId) throws Exception {
@@ -1974,11 +1994,13 @@ final class SharedWorldHostingManagerTest {
     private static final class RecordingWorldOpenController implements SharedWorldHostingManager.WorldOpenController {
         private int openExistingCalls;
         private Path openedWorldDirectory;
+        private java.util.function.BooleanSupplier stillWanted;
 
         @Override
-        public void openExistingWorld(ManagedWorldStore worldStore, SharedWorldModels.WorldSummaryDto world, Path worldDirectory) {
+        public void openExistingWorld(ManagedWorldStore worldStore, SharedWorldModels.WorldSummaryDto world, Path worldDirectory, java.util.function.BooleanSupplier stillWanted) {
             this.openExistingCalls += 1;
             this.openedWorldDirectory = worldDirectory;
+            this.stillWanted = stillWanted;
         }
     }
 

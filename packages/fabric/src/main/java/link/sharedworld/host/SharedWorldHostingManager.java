@@ -81,6 +81,8 @@ public final class SharedWorldHostingManager {
     private final HostingEvents events;
     private final HostGameRulesSync gameRulesSync;
     private final WorldSnapshotCaptureCoordinator snapshotCaptureCoordinator;
+    /** Set while a world open this manager started is inside vanilla's open flow; see MinecraftClientWorldGate. */
+    private final java.util.concurrent.atomic.AtomicBoolean worldOpenInFlight = new java.util.concurrent.atomic.AtomicBoolean();
     private final WorldOpenController worldOpenController;
     private final HostWorldBootstrap worldBootstrap;
     private final Executor backgroundExecutor;
@@ -198,10 +200,10 @@ public final class SharedWorldHostingManager {
         this.snapshotCaptureCoordinator = new WorldSnapshotCaptureCoordinator(this.worldStore);
         this.worldOpenController = worldOpenController != null
                 ? worldOpenController
-                : new MinecraftWorldOpenController();
+                : new MinecraftWorldOpenController(this.worldOpenInFlight, this::onVanillaWorldOpenCancelled);
         this.clientWorldGate = clientWorldGate != null
                 ? clientWorldGate
-                : new MinecraftClientWorldGate();
+                : new MinecraftClientWorldGate(this.worldOpenInFlight);
         this.worldBootstrap = new HostWorldBootstrap(this.syncAccess, this.worldStore, this.worldOpenController);
         this.gameRulesSync = new HostGameRulesSync(this.apiClient, this.events, this.backgroundExecutor, this.mainThreadExecutor);
     }
@@ -234,10 +236,26 @@ public final class SharedWorldHostingManager {
     }
 
     private static final class MinecraftClientWorldGate implements ClientWorldGate {
+        private final java.util.concurrent.atomic.AtomicBoolean worldOpenInFlight;
+
+        private MinecraftClientWorldGate(java.util.concurrent.atomic.AtomicBoolean worldOpenInFlight) {
+            this.worldOpenInFlight = worldOpenInFlight;
+        }
+
+        /**
+         * An open SharedWorld started counts from the moment vanilla takes the save:
+         * on 26.x vanilla may hold it behind its own prompt (back up, migrate files) before
+         * any server exists, and a cancel that saw "nothing open" then left the save locked
+         * for the next attempt.
+         */
         @Override
         public boolean isWorldOpen() {
             Minecraft minecraft = Minecraft.getInstance();
-            return minecraft.hasSingleplayerServer() || minecraft.level != null || minecraft.getConnection() != null;
+            if (minecraft.hasSingleplayerServer() || minecraft.level != null || minecraft.getConnection() != null) {
+                this.worldOpenInFlight.set(false);
+                return true;
+            }
+            return this.worldOpenInFlight.get();
         }
 
         @Override
@@ -760,6 +778,17 @@ public final class SharedWorldHostingManager {
 
     public String activeWorldName() {
         return this.world == null ? "" : this.world.name();
+    }
+
+    /**
+     * Vanilla's own pre-load prompt (back up a world from another version, migrate its
+     * files) was cancelled: vanilla already closed the save, so the attempt ends like a
+     * player cancel and the player lands back in the SharedWorld menu instead of on a
+     * dead prompt.
+     */
+    private void onVanillaWorldOpenCancelled() {
+        cancelStartup();
+        link.sharedworld.SharedWorldClient.openMainScreen(null);
     }
 
     public void cancelStartup() {
@@ -1510,6 +1539,7 @@ public final class SharedWorldHostingManager {
 
     private void resetState() {
         String clearedWorldId = this.world == null ? null : this.world.id();
+        this.worldOpenInFlight.set(false);
         this.phase = Phase.IDLE;
         this.world = null;
         this.hostPlayerUuid = null;
@@ -1782,7 +1812,12 @@ public final class SharedWorldHostingManager {
     }
 
     interface WorldOpenController {
-        void openExistingWorld(ManagedWorldStore worldStore, WorldSummaryDto world, Path worldDirectory);
+        /**
+         * Opens the working copy on the render thread unless {@code stillWanted} is false by
+         * then: a cancel can land between queueing the open and running it, and opening for a
+         * cancelled attempt leaves the save locked for the next one.
+         */
+        void openExistingWorld(ManagedWorldStore worldStore, WorldSummaryDto world, Path worldDirectory, java.util.function.BooleanSupplier stillWanted);
     }
 
     private static final class WorldSyncAdapter implements SyncAccess {
@@ -1816,10 +1851,32 @@ public final class SharedWorldHostingManager {
     }
 
     private static final class MinecraftWorldOpenController implements WorldOpenController {
+        private final java.util.concurrent.atomic.AtomicBoolean worldOpenInFlight;
+        private final Runnable onVanillaCancel;
+
+        private MinecraftWorldOpenController(java.util.concurrent.atomic.AtomicBoolean worldOpenInFlight, Runnable onVanillaCancel) {
+            this.worldOpenInFlight = worldOpenInFlight;
+            this.onVanillaCancel = onVanillaCancel;
+        }
+
         @Override
-        public void openExistingWorld(ManagedWorldStore worldStore, WorldSummaryDto world, Path worldDirectory) {
-            Minecraft.getInstance().execute(() -> link.sharedworld.versioned.WorldOpenCompat.openExistingWorld(
-                    Minecraft.getInstance(), worldStore.levelSource(world.id()), worldStore.levelId(world.id())));
+        public void openExistingWorld(ManagedWorldStore worldStore, WorldSummaryDto world, Path worldDirectory, java.util.function.BooleanSupplier stillWanted) {
+            Minecraft.getInstance().execute(() -> {
+                if (!stillWanted.getAsBoolean()) {
+                    return;
+                }
+                this.worldOpenInFlight.set(true);
+                link.sharedworld.versioned.WorldOpenCompat.openExistingWorld(
+                        Minecraft.getInstance(),
+                        worldStore.levelSource(world.id()),
+                        worldStore.levelId(world.id()),
+                        () -> {
+                            this.worldOpenInFlight.set(false);
+                            if (stillWanted.getAsBoolean()) {
+                                this.onVanillaCancel.run();
+                            }
+                        });
+            });
         }
     }
 

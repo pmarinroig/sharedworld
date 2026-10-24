@@ -99,6 +99,7 @@ final class HostWorldBootstrap {
         // Xaero's world id before the map opens, so host and guests share one map instance.
         XaeroMapCompat.ensureWorldIdFile(worldDirectory);
         onOpeningWorld.run();
-        this.worldOpenController.openExistingWorld(this.worldStore, world, worldDirectory);
+        this.worldOpenController.openExistingWorld(this.worldStore, world, worldDirectory,
+                () -> isActiveStartupAttempt.test(startupAttemptId));
     }
 }

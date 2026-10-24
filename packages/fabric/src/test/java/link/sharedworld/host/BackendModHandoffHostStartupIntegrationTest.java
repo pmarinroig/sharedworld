@@ -215,7 +215,7 @@ final class BackendModHandoffHostStartupIntegrationTest {
         private Path openedWorldDirectory;
 
         @Override
-        public void openExistingWorld(ManagedWorldStore worldStore, SharedWorldModels.WorldSummaryDto world, Path worldDirectory) {
+        public void openExistingWorld(ManagedWorldStore worldStore, SharedWorldModels.WorldSummaryDto world, Path worldDirectory, java.util.function.BooleanSupplier stillWanted) {
             this.openedWorldDirectory = worldDirectory;
         }
     }
