@@ -40,6 +40,11 @@ public final class DevHelperWindowPolicy {
         GLFW.glfwWindowHint(GLFW.GLFW_VISIBLE, GLFW.GLFW_FALSE);
     }
 
+    /** Resizes the game window (promo capture framing). */
+    public static void setWindowSize(long window, int width, int height) {
+        GLFW.glfwSetWindowSize(window, width, height);
+    }
+
     public enum FirstTickHide { NO_WINDOW, WAS_VISIBLE, ALREADY_HIDDEN }
 
     /**

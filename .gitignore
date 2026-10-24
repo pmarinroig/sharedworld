@@ -28,6 +28,8 @@ packages/fabric/run-ui-tour/
 packages/fabric/modern/run/
 packages/fabric/modern/run-host/
 packages/fabric/modern/run-guest/
+packages/fabric/modern/run-e2e-host/
+packages/fabric/modern/run-e2e-guest/
 packages/fabric/modern/local/mods/*
 packages/fabric/neoforge/run/
 packages/fabric/neoforge/run-e2e-guest/

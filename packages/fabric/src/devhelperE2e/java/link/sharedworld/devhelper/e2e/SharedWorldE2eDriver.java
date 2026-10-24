@@ -9,6 +9,7 @@ import link.sharedworld.host.SharedWorldHostingManager;
 import link.sharedworld.integration.E4mcDomainTracker;
 import link.sharedworld.screen.SharedWorldErrorScreen;
 import link.sharedworld.screen.SharedWorldScreen;
+import link.sharedworld.versioned.ClientCompat;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.PauseScreen;
 import net.minecraft.client.gui.screens.Screen;
@@ -192,6 +193,7 @@ public final class SharedWorldE2eDriver {
     private GuestStep guestStep = GuestStep.WAIT_GO;
     private TourStep tourStep = TourStep.WAIT_TITLE;
     private int tourSettleTicks;
+    private boolean tourEnvironmentScrolled;
     private int tourEditTabIndex;
     private final AtomicBoolean asyncInFlight = new AtomicBoolean(false);
     private final AtomicReference<WorldSummaryDto> targetWorld = new AtomicReference<>();
@@ -288,7 +290,7 @@ public final class SharedWorldE2eDriver {
             // looking at so orchestrator timeouts are diagnosable from markers
             // alone.
             if (this.ticksInStep > 0 && this.ticksInStep % 300 == 0) {
-                String screenName = minecraft.screen == null ? "none" : minecraft.screen.getClass().getName();
+                String screenName = ClientCompat.currentScreen(minecraft) == null ? "none" : ClientCompat.currentScreen(minecraft).getClass().getName();
                 String step = "host".equals(this.role) ? this.hostStep.name()
                         : "guest".equals(this.role) ? this.guestStep.name()
                         : this.tourStep.name();
@@ -308,15 +310,15 @@ public final class SharedWorldE2eDriver {
     }
 
     private void reportErrorScreens(Minecraft minecraft) {
-        boolean isErrorScreen = minecraft.screen instanceof SharedWorldErrorScreen;
+        boolean isErrorScreen = ClientCompat.currentScreen(minecraft) instanceof SharedWorldErrorScreen;
         if (isErrorScreen && !this.sawErrorScreen) {
-            this.markers.emit("error-screen", minecraft.screen.getTitle().getString());
+            this.markers.emit("error-screen", ClientCompat.currentScreen(minecraft).getTitle().getString());
         }
         this.sawErrorScreen = isErrorScreen;
         boolean isReconnectScreen =
-                minecraft.screen instanceof link.sharedworld.screen.ReleaseDriveReconnectScreen;
+                ClientCompat.currentScreen(minecraft) instanceof link.sharedworld.screen.ReleaseDriveReconnectScreen;
         if (isReconnectScreen && !this.sawReconnectScreen) {
-            this.markers.emit("drive-reconnect-screen", minecraft.screen.getTitle().getString());
+            this.markers.emit("drive-reconnect-screen", ClientCompat.currentScreen(minecraft).getTitle().getString());
         }
         this.sawReconnectScreen = isReconnectScreen;
     }
@@ -332,7 +334,12 @@ public final class SharedWorldE2eDriver {
             return;
         }
         try {
-            net.minecraft.client.gui.components.ChatComponent chat = minecraft.gui.getChat();
+            // 26.3 moved the chat component from Gui onto Gui.hud.
+            Object chatOwner = minecraft.gui;
+            if (findNoArgMethod(chatOwner, "getChat") == null) {
+                chatOwner = minecraft.gui.getClass().getField("hud").get(minecraft.gui);
+            }
+            Object chat = invokeFirstNoArg(chatOwner, "getChat");
             java.lang.reflect.Field field = chat.getClass().getDeclaredField("allMessages");
             field.setAccessible(true);
             java.util.List<?> all = (java.util.List<?>) field.get(chat);
@@ -368,27 +375,51 @@ public final class SharedWorldE2eDriver {
 
     // ---------------------------------------------------------------- host
 
+    /**
+     * Answers the pre-hosting prompts the way a player who means to host does:
+     * SharedWorld's environment warning, and vanilla's own prompts for a world from another
+     * Minecraft version (back up first; on 26.x, join after the file migration).
+     * Runs before the step logic on both roles, since a guest re-hosts after a handoff.
+     */
+    private void answerHostingPrompts(Minecraft minecraft) {
+        net.minecraft.client.gui.screens.Screen screen = ClientCompat.currentScreen(minecraft);
+        if (screen instanceof link.sharedworld.screen.HostEnvironmentWarningScreen
+                && WidgetAutomation.pressButton(screen, "screen.sharedworld.env_host")) {
+            this.markers.emit("environment-warning-accepted", null);
+        } else if (screen instanceof net.minecraft.client.gui.screens.BackupConfirmScreen
+                && WidgetAutomation.pressButton(screen, "selectWorld.backupJoinSkipButton")) {
+            this.markers.emit("vanilla-backup-prompt-skipped", null);
+        } else if (screen instanceof net.minecraft.client.gui.screens.ConfirmScreen
+                && screen.getTitle().getContents() instanceof net.minecraft.network.chat.contents.TranslatableContents title
+                && "upgradeWorld.done".equals(title.getKey())
+                && WidgetAutomation.pressButton(screen, "gui.yes")) {
+            // 26.x: after migrating an older world's files, vanilla asks "join now?".
+            this.markers.emit("vanilla-upgrade-join-confirmed", null);
+        }
+    }
+
     private void tickHost(Minecraft minecraft) {
+        answerHostingPrompts(minecraft);
         HostStep before = this.hostStep;
         switch (this.hostStep) {
             case WAIT_TITLE -> {
                 dismissOnboarding(minecraft);
-                if (minecraft.screen instanceof TitleScreen) {
+                if (ClientCompat.currentScreen(minecraft) instanceof TitleScreen) {
                     this.hostStep = HostStep.OPEN_MAIN;
                 }
             }
             case OPEN_MAIN -> {
-                SharedWorldClient.openMainScreen(minecraft.screen);
+                SharedWorldClient.openMainScreen(ClientCompat.currentScreen(minecraft));
                 this.hostStep = HostStep.BEGIN_CREATE;
             }
             case BEGIN_CREATE -> {
-                if (minecraft.screen instanceof SharedWorldScreen screen
+                if (ClientCompat.currentScreen(minecraft) instanceof SharedWorldScreen screen
                         && WidgetAutomation.pressButton(screen, "screen.sharedworld.create")) {
                     this.hostStep = HostStep.CREATE_NAVIGATE;
                 }
             }
             case CREATE_NAVIGATE -> {
-                Screen screen = minecraft.screen;
+                Screen screen = ClientCompat.currentScreen(minecraft);
                 if (screen == null) {
                     return;
                 }
@@ -405,7 +436,7 @@ public final class SharedWorldE2eDriver {
                 WidgetAutomation.pressButton(screen, "screen.sharedworld.next");
             }
             case CREATE_LINK_DRIVE -> {
-                Screen screen = minecraft.screen;
+                Screen screen = ClientCompat.currentScreen(minecraft);
                 if (screen == null) {
                     return;
                 }
@@ -439,7 +470,7 @@ public final class SharedWorldE2eDriver {
                 this.fetchDriveAuthUrlOnce(screen);
             }
             case CREATE_SUBMIT -> {
-                Screen screen = minecraft.screen;
+                Screen screen = ClientCompat.currentScreen(minecraft);
                 if (screen != null && WidgetAutomation.pressButton(screen, "screen.sharedworld.create_world")) {
                     this.markers.emit("create-submitted", this.worldName);
                     this.hostStep = HostStep.AWAIT_WORLD_LISTED;
@@ -447,13 +478,13 @@ public final class SharedWorldE2eDriver {
             }
             case AWAIT_WORLD_LISTED -> {
                 // A successful create lands on the share-code screen first.
-                if (minecraft.screen instanceof link.sharedworld.screen.SharedWorldInviteScreen inviteScreen) {
+                if (ClientCompat.currentScreen(minecraft) instanceof link.sharedworld.screen.SharedWorldInviteScreen inviteScreen) {
                     if (WidgetAutomation.pressButton(inviteScreen, "screen.sharedworld.done")) {
                         this.markers.emit("post-create-invite-shown", null);
                     }
                     return;
                 }
-                if (minecraft.screen instanceof SharedWorldScreen) {
+                if (ClientCompat.currentScreen(minecraft) instanceof SharedWorldScreen) {
                     this.lookUpWorldByName(world -> {
                         this.hostedWorldId = world.id();
                         this.markers.emit("world-created", world.id());
@@ -467,7 +498,7 @@ public final class SharedWorldE2eDriver {
             }
             case BEGIN_HOSTING -> {
                 WorldSummaryDto world = this.targetWorld.get();
-                if (minecraft.screen instanceof SharedWorldScreen screen && world != null) {
+                if (ClientCompat.currentScreen(minecraft) instanceof SharedWorldScreen screen && world != null) {
                     SharedWorldClient.sessionCoordinator().beginJoin(screen, world);
                     this.markers.emit("hosting-requested", world.id());
                     // First pass exercises the cancel drill (cancel mid-startup,
@@ -494,7 +525,7 @@ public final class SharedWorldE2eDriver {
                     this.cancelDrillDone = true;
                     // The forced disconnect landed on a vanilla screen; reopen
                     // the SharedWorld screen and host again.
-                    SharedWorldClient.openMainScreen(minecraft.screen);
+                    SharedWorldClient.openMainScreen(ClientCompat.currentScreen(minecraft));
                     this.hostStep = HostStep.BEGIN_HOSTING;
                 }
             }
@@ -533,8 +564,8 @@ public final class SharedWorldE2eDriver {
             }
             case BIGWORLD_SESSION -> {
                 if (this.bigWorldSessionTick(minecraft)) {
-                    if (minecraft.screen == null) {
-                        minecraft.setScreen(new PauseScreen(true));
+                    if (ClientCompat.currentScreen(minecraft) == null) {
+                        ClientCompat.setScreen(minecraft, new PauseScreen(true));
                     }
                     this.hostStep = HostStep.AWAIT_RELEASE_COMPLETE;
                 }
@@ -669,8 +700,8 @@ public final class SharedWorldE2eDriver {
             case AWAIT_SHUTDOWN_COMMAND -> {
                 if ("shutdown".equals(this.commands.poll())) {
                     this.markers.emit("shutdown-received", null);
-                    if (minecraft.screen == null) {
-                        minecraft.setScreen(new PauseScreen(true));
+                    if (ClientCompat.currentScreen(minecraft) == null) {
+                        ClientCompat.setScreen(minecraft, new PauseScreen(true));
                     }
                     this.hostStep = HostStep.AWAIT_RELEASE_COMPLETE;
                 }
@@ -716,8 +747,8 @@ public final class SharedWorldE2eDriver {
                     this.beginServerBlockCheck(minecraft, pos);
                 } else if ("shutdown".equals(command)) {
                     this.markers.emit("shutdown-received", null);
-                    if (minecraft.screen == null) {
-                        minecraft.setScreen(new PauseScreen(true));
+                    if (ClientCompat.currentScreen(minecraft) == null) {
+                        ClientCompat.setScreen(minecraft, new PauseScreen(true));
                     }
                     this.hostStep = HostStep.AWAIT_RELEASE_COMPLETE;
                 } else {
@@ -730,22 +761,22 @@ public final class SharedWorldE2eDriver {
                 // failing release.
                 if ("shutdown".equals(this.commands.poll())) {
                     this.markers.emit("shutdown-received", null);
-                    if (minecraft.screen == null) {
-                        minecraft.setScreen(new PauseScreen(true));
+                    if (ClientCompat.currentScreen(minecraft) == null) {
+                        ClientCompat.setScreen(minecraft, new PauseScreen(true));
                     }
                     this.hostStep = HostStep.DRIVE_FAILURE_AWAIT_RECONNECT_SCREEN;
                 }
             }
             case DRIVE_FAILURE_AWAIT_RECONNECT_SCREEN -> {
-                if (minecraft.screen instanceof PauseScreen pauseScreen) {
+                if (ClientCompat.currentScreen(minecraft) instanceof PauseScreen pauseScreen) {
                     WidgetAutomation.pressButton(pauseScreen, "menu.returnToMenu");
                     return;
                 }
-                if (minecraft.screen instanceof link.sharedworld.screen.ReleaseDriveReconnectScreen) {
+                if (ClientCompat.currentScreen(minecraft) instanceof link.sharedworld.screen.ReleaseDriveReconnectScreen) {
                     // reportErrorScreens already emitted drive-reconnect-screen.
                     this.screenshot(minecraft, "drive-reconnect-screen");
                     this.hostStep = HostStep.DRIVE_FAILURE_RECONNECT_INTERACT;
-                } else if (minecraft.screen instanceof SharedWorldErrorScreen) {
+                } else if (ClientCompat.currentScreen(minecraft) instanceof SharedWorldErrorScreen) {
                     // A storage-full release parks on the plain error screen
                     // (Retry Saving plus the keep-changes escape hatch).
                     this.screenshot(minecraft, "release-error-screen");
@@ -755,7 +786,7 @@ public final class SharedWorldE2eDriver {
             case DRIVE_FAILURE_AWAIT_HUB -> {
                 // The escape hatch must land on the SharedWorld hub with no
                 // release state left and the hosting manager back at idle.
-                if (minecraft.screen instanceof SharedWorldScreen
+                if (ClientCompat.currentScreen(minecraft) instanceof SharedWorldScreen
                         && SharedWorldClient.releaseCoordinator().view() == null
                         && SharedWorldClient.hostingManager().phase() == SharedWorldHostingManager.Phase.IDLE) {
                     this.markers.emit("left-to-hub", null);
@@ -772,7 +803,7 @@ public final class SharedWorldE2eDriver {
                         .filter(candidate -> candidate.id().equals(worldId))
                         .findFirst()
                         .orElse(null);
-                if (minecraft.screen instanceof SharedWorldScreen screen && world != null) {
+                if (ClientCompat.currentScreen(minecraft) instanceof SharedWorldScreen screen && world != null) {
                     SharedWorldClient.sessionCoordinator().beginJoin(screen, world);
                     this.markers.emit("rehost-requested", world.id());
                     this.hostStep = HostStep.DRIVE_FAILURE_REHOST_AWAIT_LIVE;
@@ -784,7 +815,7 @@ public final class SharedWorldE2eDriver {
                 // The abandoned upload left an unclean-shutdown warning, so even
                 // the same account is asked first; acknowledge it like a player
                 // (own shutdown: a single Launch press, no second confirmation).
-                if (minecraft.screen instanceof link.sharedworld.screen.UncleanShutdownWarningScreen screen) {
+                if (ClientCompat.currentScreen(minecraft) instanceof link.sharedworld.screen.UncleanShutdownWarningScreen screen) {
                     if (WidgetAutomation.pressButton(screen, "screen.sharedworld.unclean_shutdown_launch")
                             || WidgetAutomation.pressButton(screen, "screen.sharedworld.unclean_shutdown_confirm_launch")) {
                         this.markers.emit("unclean-warning-acknowledged", null);
@@ -804,11 +835,11 @@ public final class SharedWorldE2eDriver {
                         return;
                     }
                     this.escBouncePending = false;
-                    boolean bounced = minecraft.screen instanceof link.sharedworld.screen.ReleaseDriveReconnectScreen
-                            || minecraft.screen instanceof link.sharedworld.screen.SharedWorldSavingScreen
-                            || minecraft.screen instanceof SharedWorldErrorScreen;
+                    boolean bounced = ClientCompat.currentScreen(minecraft) instanceof link.sharedworld.screen.ReleaseDriveReconnectScreen
+                            || ClientCompat.currentScreen(minecraft) instanceof link.sharedworld.screen.SharedWorldSavingScreen
+                            || ClientCompat.currentScreen(minecraft) instanceof SharedWorldErrorScreen;
                     this.markers.emit(bounced ? "esc-bounced" : "esc-escaped",
-                            minecraft.screen == null ? "none" : minecraft.screen.getClass().getSimpleName());
+                            ClientCompat.currentScreen(minecraft) == null ? "none" : ClientCompat.currentScreen(minecraft).getClass().getSimpleName());
                     return;
                 }
                 if (SharedWorldClient.hostingManager().startupView().complete()) {
@@ -823,14 +854,14 @@ public final class SharedWorldE2eDriver {
                 }
                 switch (command) {
                     case "press-esc" -> {
-                        if (minecraft.screen != null) {
-                            minecraft.screen.onClose();
+                        if (ClientCompat.currentScreen(minecraft) != null) {
+                            ClientCompat.currentScreen(minecraft).onClose();
                         }
                         this.escBouncePending = true;
                         this.escBounceAt = System.currentTimeMillis();
                     }
                     case "keep-and-leave" -> {
-                        Screen screen = minecraft.screen;
+                        Screen screen = ClientCompat.currentScreen(minecraft);
                         if (screen != null
                                 && WidgetAutomation.pressButton(screen, "screen.sharedworld.release_keep_changes_and_leave")) {
                             this.markers.emit("keep-and-leave-pressed", null);
@@ -842,7 +873,7 @@ public final class SharedWorldE2eDriver {
                         }
                     }
                     case "drive-reconnect" -> {
-                        Screen screen = minecraft.screen;
+                        Screen screen = ClientCompat.currentScreen(minecraft);
                         // The create flow already left ITS auth URL on the
                         // clipboard; only a URL appearing after this press is
                         // the reconnect session's.
@@ -871,14 +902,14 @@ public final class SharedWorldE2eDriver {
             }
             case PROMO_SESSION -> {
                 if (this.promoOps.tick(minecraft, this.commands, this.markers)) {
-                    if (minecraft.screen == null) {
-                        minecraft.setScreen(new PauseScreen(true));
+                    if (ClientCompat.currentScreen(minecraft) == null) {
+                        ClientCompat.setScreen(minecraft, new PauseScreen(true));
                     }
                     this.hostStep = HostStep.AWAIT_RELEASE_COMPLETE;
                 }
             }
             case AWAIT_RELEASE_COMPLETE -> {
-                if (minecraft.screen instanceof PauseScreen pauseScreen) {
+                if (ClientCompat.currentScreen(minecraft) instanceof PauseScreen pauseScreen) {
                     WidgetAutomation.pressButton(pauseScreen, "menu.returnToMenu");
                     return;
                 }
@@ -1054,6 +1085,7 @@ public final class SharedWorldE2eDriver {
     // ---------------------------------------------------------------- guest
 
     private void tickGuest(Minecraft minecraft) {
+        answerHostingPrompts(minecraft);
         GuestStep before = this.guestStep;
         switch (this.guestStep) {
             case WAIT_GO -> {
@@ -1072,16 +1104,16 @@ public final class SharedWorldE2eDriver {
             }
             case WAIT_TITLE -> {
                 dismissOnboarding(minecraft);
-                if (minecraft.screen instanceof TitleScreen) {
+                if (ClientCompat.currentScreen(minecraft) instanceof TitleScreen) {
                     this.guestStep = GuestStep.OPEN_MAIN;
                 }
             }
             case OPEN_MAIN -> {
-                SharedWorldClient.openMainScreen(minecraft.screen);
+                SharedWorldClient.openMainScreen(ClientCompat.currentScreen(minecraft));
                 this.guestStep = GuestStep.AWAIT_WORLD_LISTED;
             }
             case AWAIT_WORLD_LISTED -> {
-                if (minecraft.screen instanceof SharedWorldScreen) {
+                if (ClientCompat.currentScreen(minecraft) instanceof SharedWorldScreen) {
                     this.lookUpWorldByName(world -> this.markers.emit("guest-sees-world", world.id()));
                     WorldSummaryDto seen = this.targetWorld.get();
                     if (seen != null) {
@@ -1103,7 +1135,7 @@ public final class SharedWorldE2eDriver {
                     return;
                 }
                 WorldSummaryDto world = this.targetWorld.get();
-                if (minecraft.screen instanceof SharedWorldScreen screen && world != null) {
+                if (ClientCompat.currentScreen(minecraft) instanceof SharedWorldScreen screen && world != null) {
                     SharedWorldClient.sessionCoordinator().beginJoin(screen, world);
                     this.markers.emit("guest-join-requested", world.id());
                     this.guestStep = GuestStep.AWAIT_INGAME;
@@ -1148,7 +1180,7 @@ public final class SharedWorldE2eDriver {
             }
             case AWAIT_HOST_DEPARTURE -> {
                 if (minecraft.level == null || SharedWorldClient.playSessionTracker().currentSession() == null) {
-                    String screenName = minecraft.screen == null ? "none" : minecraft.screen.getClass().getSimpleName();
+                    String screenName = ClientCompat.currentScreen(minecraft) == null ? "none" : ClientCompat.currentScreen(minecraft).getClass().getSimpleName();
                     this.markers.emit("guest-observed-host-departure", screenName);
                     this.guestStep = this.bigWorld || this.extended
                             ? GuestStep.BIGWORLD_AWAIT_REHOST_GO
@@ -1174,14 +1206,14 @@ public final class SharedWorldE2eDriver {
                     return;
                 }
                 WorldSummaryDto world = this.targetWorld.get();
-                if (minecraft.screen instanceof SharedWorldScreen screen && world != null) {
+                if (ClientCompat.currentScreen(minecraft) instanceof SharedWorldScreen screen && world != null) {
                     SharedWorldClient.sessionCoordinator().beginJoin(screen, world);
                     this.markers.emit("rehost-requested", world.id());
                     this.guestStep = GuestStep.BIGWORLD_REHOST_AWAIT_PUBLISH;
                     return;
                 }
                 if (minecraft.level == null && this.ticksInStep % 40 == 0) {
-                    SharedWorldClient.openMainScreen(minecraft.screen);
+                    SharedWorldClient.openMainScreen(ClientCompat.currentScreen(minecraft));
                 }
             }
             case BIGWORLD_REHOST_AWAIT_PUBLISH -> {
@@ -1219,8 +1251,8 @@ public final class SharedWorldE2eDriver {
                     this.markers.emit("guest-observed-host-departure", PromoOps.screenName(minecraft));
                 }
                 if (this.promoOps.tick(minecraft, this.commands, this.markers)) {
-                    if (minecraft.screen == null) {
-                        minecraft.setScreen(new PauseScreen(true));
+                    if (ClientCompat.currentScreen(minecraft) == null) {
+                        ClientCompat.setScreen(minecraft, new PauseScreen(true));
                     }
                     this.guestStep = GuestStep.BIGWORLD_AWAIT_RELEASE_COMPLETE;
                 }
@@ -1230,7 +1262,7 @@ public final class SharedWorldE2eDriver {
                 // CLIENT view of the live world (check-block:x,y,z), then wait
                 // for the host to leave.
                 if (minecraft.level == null || SharedWorldClient.playSessionTracker().currentSession() == null) {
-                    String screenName = minecraft.screen == null ? "none" : minecraft.screen.getClass().getSimpleName();
+                    String screenName = ClientCompat.currentScreen(minecraft) == null ? "none" : ClientCompat.currentScreen(minecraft).getClass().getSimpleName();
                     this.markers.emit("guest-observed-host-departure", screenName);
                     this.guestStep = GuestStep.BIGWORLD_AWAIT_REHOST_GO;
                     return;
@@ -1261,8 +1293,8 @@ public final class SharedWorldE2eDriver {
                     this.beginServerBlockCheck(minecraft, pos);
                 } else if ("shutdown".equals(command)) {
                     this.markers.emit("shutdown-received", null);
-                    if (minecraft.screen == null) {
-                        minecraft.setScreen(new PauseScreen(true));
+                    if (ClientCompat.currentScreen(minecraft) == null) {
+                        ClientCompat.setScreen(minecraft, new PauseScreen(true));
                     }
                     this.guestStep = GuestStep.BIGWORLD_AWAIT_RELEASE_COMPLETE;
                 }
@@ -1271,7 +1303,7 @@ public final class SharedWorldE2eDriver {
                 // Generic session as a guest; the host leaving ends it and the
                 // orchestrator decides between re-hosting and exiting.
                 if (minecraft.level == null || SharedWorldClient.playSessionTracker().currentSession() == null) {
-                    String screenName = minecraft.screen == null ? "none" : minecraft.screen.getClass().getSimpleName();
+                    String screenName = ClientCompat.currentScreen(minecraft) == null ? "none" : ClientCompat.currentScreen(minecraft).getClass().getSimpleName();
                     this.markers.emit("guest-observed-host-departure", screenName);
                     this.guestStep = GuestStep.BIGWORLD_AWAIT_REHOST_GO;
                     return;
@@ -1285,14 +1317,14 @@ public final class SharedWorldE2eDriver {
             }
             case BIGWORLD_SESSION -> {
                 if (this.bigWorldSessionTick(minecraft)) {
-                    if (minecraft.screen == null) {
-                        minecraft.setScreen(new PauseScreen(true));
+                    if (ClientCompat.currentScreen(minecraft) == null) {
+                        ClientCompat.setScreen(minecraft, new PauseScreen(true));
                     }
                     this.guestStep = GuestStep.BIGWORLD_AWAIT_RELEASE_COMPLETE;
                 }
             }
             case BIGWORLD_AWAIT_RELEASE_COMPLETE -> {
-                if (minecraft.screen instanceof PauseScreen pauseScreen) {
+                if (ClientCompat.currentScreen(minecraft) instanceof PauseScreen pauseScreen) {
                     WidgetAutomation.pressButton(pauseScreen, "menu.returnToMenu");
                     return;
                 }
@@ -1379,21 +1411,26 @@ public final class SharedWorldE2eDriver {
         } else if (command.startsWith("scroll:")) {
             // Mouse wheel at the screen centre (Xaero's map zooms on scroll).
             double amount = Double.parseDouble(command.substring("scroll:".length()));
-            if (minecraft.screen != null) {
-                minecraft.screen.mouseScrolled(minecraft.getWindow().getGuiScaledWidth() / 2.0, minecraft.getWindow().getGuiScaledHeight() / 2.0, 0.0, amount);
+            if (ClientCompat.currentScreen(minecraft) != null) {
+                ClientCompat.currentScreen(minecraft).mouseScrolled(minecraft.getWindow().getGuiScaledWidth() / 2.0, minecraft.getWindow().getGuiScaledHeight() / 2.0, 0.0, amount);
             }
             this.markers.emit("scrolled", Double.toString(amount));
         } else if (command.startsWith("gui-scale:")) {
+            // resizeDisplay became resizeGui in 26.3.
             minecraft.options.guiScale().set(Integer.parseInt(command.substring("gui-scale:".length())));
-            minecraft.resizeDisplay();
-            this.markers.emit("gui-scaled", command.substring("gui-scale:".length()));
+            try {
+                invokeFirstNoArg(minecraft, "resizeDisplay", "resizeGui");
+                this.markers.emit("gui-scaled", command.substring("gui-scale:".length()));
+            } catch (ReflectiveOperationException exception) {
+                this.markers.emit("gui-scale-failed", exception.toString());
+            }
         } else if ("close-screen".equals(command)) {
-            minecraft.setScreen(null);
+            ClientCompat.setScreen(minecraft, null);
             this.markers.emit("screen-closed", null);
         } else if ("shutdown".equals(command)) {
             this.markers.emit("shutdown-received", null);
-            if (minecraft.screen == null) {
-                minecraft.setScreen(new PauseScreen(true));
+            if (ClientCompat.currentScreen(minecraft) == null) {
+                ClientCompat.setScreen(minecraft, new PauseScreen(true));
             }
             return true;
         } else {
@@ -1508,7 +1545,7 @@ public final class SharedWorldE2eDriver {
             this.tourSettleTicks--;
             return;
         }
-        Screen screen = minecraft.screen;
+        Screen screen = ClientCompat.currentScreen(minecraft);
         switch (this.tourStep) {
             case WAIT_TITLE -> {
                 dismissOnboarding(minecraft);
@@ -1650,7 +1687,7 @@ public final class SharedWorldE2eDriver {
                 // The Drive-reconnect screen only exists mid-release-failure;
                 // for the layout shot it is constructed directly with the
                 // production copy.
-                minecraft.setScreen(new link.sharedworld.screen.ReleaseDriveReconnectScreen(
+                ClientCompat.setScreen(minecraft, new link.sharedworld.screen.ReleaseDriveReconnectScreen(
                         screen,
                         net.minecraft.network.chat.Component.translatable("screen.sharedworld.release_error_title"),
                         net.minecraft.network.chat.Component.translatable("screen.sharedworld.release_upload_failed_reauth")));
@@ -1659,7 +1696,35 @@ public final class SharedWorldE2eDriver {
             case HUB_WATCH -> {
                 if (screen instanceof link.sharedworld.screen.ReleaseDriveReconnectScreen reconnect) {
                     this.screenshot(minecraft, "15-release-drive-reconnect");
-                    reconnect.onClose();
+                    // Worst case for the host-start warning: a version upgrade plus a whole
+                    // wrong modpack, long names included. Cancel lands back on settings.
+                    java.util.List<String> mods = new java.util.ArrayList<>();
+                    mods.add("A Mod With An Absurdly Long Display Name That Will Never Fit On One Row Of Any Screen");
+                    mods.add("Dynamic Trees");
+                    for (int i = 1; i <= 298; i++) {
+                        mods.add("Pack Mod " + i);
+                    }
+                    ClientCompat.setScreen(minecraft, new link.sharedworld.screen.HostEnvironmentWarningScreen(
+                            screen,
+                            "A world name long enough to wrap the intro onto a second line on smaller windows",
+                            new link.sharedworld.host.HostEnvironmentCheck.Changes("26.2", "26.3", false, mods),
+                            () -> {
+                            },
+                            reconnect::onClose));
+                    this.settleThen(TourStep.HUB_WATCH, 30);
+                    return;
+                }
+                if (screen instanceof link.sharedworld.screen.HostEnvironmentWarningScreen warning) {
+                    // Top of the list, then scrolled into the mod rows (long-name truncation).
+                    if (!this.tourEnvironmentScrolled) {
+                        this.screenshot(minecraft, "16-host-environment-warning");
+                        warning.mouseScrolled(warning.width / 2.0, warning.height / 2.0, 0.0, -2.0);
+                        this.tourEnvironmentScrolled = true;
+                        this.tourSettleTicks = 10;
+                        return;
+                    }
+                    this.screenshot(minecraft, "17-host-environment-warning-scrolled");
+                    warning.onClose();
                     return;
                 }
                 if (screen instanceof link.sharedworld.screen.SettingsScreen settings) {
@@ -1708,26 +1773,55 @@ public final class SharedWorldE2eDriver {
         this.tourSettleTicks = ticks;
     }
 
-    /** Save the current frame as screenshots/<name>.png in the run dir. */
+    /**
+     * Save the current frame as screenshots/<name>.png in the run dir. Looked up
+     * reflectively: 26.3 dropped both Minecraft.getMainRenderTarget and
+     * Screenshot.takeScreenshot, so there the shot reports shot-failed.
+     */
     private void screenshot(Minecraft minecraft, String name) {
+        java.util.function.Consumer<com.mojang.blaze3d.platform.NativeImage> onImage = image -> {
+            try (image) {
+                java.nio.file.Path directory = minecraft.gameDirectory.toPath().resolve("screenshots");
+                java.nio.file.Files.createDirectories(directory);
+                image.writeToFile(directory.resolve(name + ".png"));
+                this.markers.emit("shot", name);
+            } catch (Exception exception) {
+                this.markers.emit("shot-failed", name + ": " + exception);
+            }
+        };
         try {
-            net.minecraft.client.Screenshot.takeScreenshot(minecraft.getMainRenderTarget(), image -> {
-                try (image) {
-                    java.nio.file.Path directory = minecraft.gameDirectory.toPath().resolve("screenshots");
-                    java.nio.file.Files.createDirectories(directory);
-                    image.writeToFile(directory.resolve(name + ".png"));
-                    this.markers.emit("shot", name);
-                } catch (Exception exception) {
-                    this.markers.emit("shot-failed", name + ": " + exception);
-                }
-            });
+            Object renderTarget = invokeFirstNoArg(minecraft, "getMainRenderTarget");
+            java.lang.reflect.Method take = java.util.Arrays.stream(net.minecraft.client.Screenshot.class.getMethods())
+                    .filter(method -> method.getName().equals("takeScreenshot") && method.getParameterCount() == 2)
+                    .findFirst()
+                    .orElseThrow(() -> new NoSuchMethodException("Screenshot.takeScreenshot"));
+            take.invoke(null, renderTarget, onImage);
         } catch (Exception exception) {
             this.markers.emit("shot-failed", name + ": " + exception);
         }
     }
 
+    private static java.lang.reflect.Method findNoArgMethod(Object target, String name) {
+        try {
+            return target.getClass().getMethod(name);
+        } catch (NoSuchMethodException exception) {
+            return null;
+        }
+    }
+
+    /** Invokes the first public no-arg method that exists under one of {@code names}. */
+    private static Object invokeFirstNoArg(Object target, String... names) throws ReflectiveOperationException {
+        for (String name : names) {
+            java.lang.reflect.Method method = findNoArgMethod(target, name);
+            if (method != null) {
+                return method.invoke(target);
+            }
+        }
+        throw new NoSuchMethodException(target.getClass().getName() + "." + String.join("|", names));
+    }
+
     private static void dismissOnboarding(Minecraft minecraft) {
-        if (minecraft.screen instanceof net.minecraft.client.gui.screens.AccessibilityOnboardingScreen onboarding) {
+        if (ClientCompat.currentScreen(minecraft) instanceof net.minecraft.client.gui.screens.AccessibilityOnboardingScreen onboarding) {
             WidgetAutomation.pressButton(onboarding, "gui.continue");
         }
     }

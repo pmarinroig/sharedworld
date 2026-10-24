@@ -1,5 +1,6 @@
 package link.sharedworld.devhelper.e2e;
 
+import link.sharedworld.versioned.ClientCompat;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
 
@@ -44,10 +45,10 @@ final class XaeroE2eOps {
 
     /** Presses confirm on the add-waypoint screen; true once the screen went away. */
     static boolean confirmAddWaypoint(Minecraft minecraft) {
-        if (!isAddWaypointScreen(minecraft.screen)) {
-            return minecraft.screen == null;
+        if (!isAddWaypointScreen(ClientCompat.currentScreen(minecraft))) {
+            return ClientCompat.currentScreen(minecraft) == null;
         }
-        WidgetAutomation.pressButton(minecraft.screen, CONFIRM_KEY);
+        WidgetAutomation.pressButton(ClientCompat.currentScreen(minecraft), CONFIRM_KEY);
         return false;
     }
 }

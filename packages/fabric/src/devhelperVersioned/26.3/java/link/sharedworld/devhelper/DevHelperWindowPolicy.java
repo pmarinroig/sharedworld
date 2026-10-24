@@ -29,6 +29,11 @@ public final class DevHelperWindowPolicy {
         return HIDE_WINDOW_REQUESTED ? SDLVideo.SDL_WINDOW_HIDDEN : 0L;
     }
 
+    /** Resizes the game window (promo capture framing). */
+    public static void setWindowSize(long window, int width, int height) {
+        SDLVideo.SDL_SetWindowSize(window, width, height);
+    }
+
     public enum FirstTickHide { NO_WINDOW, WAS_VISIBLE, ALREADY_HIDDEN }
 
     /** First-tick safety net: hides Minecraft's SDL window. */

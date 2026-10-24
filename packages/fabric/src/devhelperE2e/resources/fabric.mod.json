@@ -3,7 +3,7 @@
   "id": "sharedworld-dev-e2e",
   "version": "${version}",
   "name": "SharedWorld Dev E2E Driver",
-  "description": "Local-only automated e2e driver; pinned to the default bucket's Minecraft version.",
+  "description": "Local-only automated e2e driver.",
   "authors": [
     "pau"
   ],
@@ -19,7 +19,7 @@
   "depends": {
     "fabricloader": ">=0.18.2",
     "fabric-api": "*",
-    "minecraft": "~1.21.11",
+    "minecraft": "${minecraftRange}",
     "java": ">=21",
     "sharedworld": "*",
     "sharedworld-dev-helper": "*"

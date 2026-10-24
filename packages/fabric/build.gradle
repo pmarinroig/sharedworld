@@ -476,9 +476,10 @@ tasks.named("processDevHelperResources").configure {
 
 tasks.named("processDevHelperE2eResources").configure {
     inputs.property "version", project.version
+    inputs.property "minecraftRange", mcBucket.minecraftRange
 
     filesMatching("fabric.mod.json") {
-        expand "version": inputs.properties.version
+        expand "version": inputs.properties.version, "minecraftRange": inputs.properties.minecraftRange
     }
 }
 

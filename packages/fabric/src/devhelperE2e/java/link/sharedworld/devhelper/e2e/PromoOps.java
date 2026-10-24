@@ -1,5 +1,7 @@
 package link.sharedworld.devhelper.e2e;
 
+import link.sharedworld.devhelper.DevHelperWindowPolicy;
+import link.sharedworld.versioned.ClientCompat;
 import net.minecraft.client.CameraType;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
@@ -7,7 +9,6 @@ import net.minecraft.client.gui.screens.PauseScreen;
 import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.client.gui.screens.multiplayer.JoinMultiplayerScreen;
 import net.minecraft.client.player.LocalPlayer;
-import org.lwjgl.glfw.GLFW;
 
 import java.nio.file.Path;
 import java.util.HashMap;
@@ -88,7 +89,7 @@ final class PromoOps {
             });
         }
         if (this.pendingButton != null) {
-            if (minecraft.screen != null && WidgetAutomation.pressButton(minecraft.screen, this.pendingButton)) {
+            if (ClientCompat.currentScreen(minecraft) != null && WidgetAutomation.pressButton(ClientCompat.currentScreen(minecraft), this.pendingButton)) {
                 markers.emit("button-pressed", this.pendingButton);
                 this.pendingButton = null;
             } else if (--this.pendingButtonTicks <= 0) {
@@ -167,22 +168,22 @@ final class PromoOps {
                     this.awaitedScreen = null;
                 }
             } else if ("title-screen".equals(command)) {
-                minecraft.setScreen(new TitleScreen());
+                ClientCompat.setScreen(minecraft, new TitleScreen());
                 markers.emit("title-screen", null);
             } else if ("open-multiplayer".equals(command)) {
-                minecraft.setScreen(new JoinMultiplayerScreen(new TitleScreen()));
+                ClientCompat.setScreen(minecraft, new JoinMultiplayerScreen(new TitleScreen()));
                 markers.emit("multiplayer-opened", null);
             } else if ("close-screen".equals(command)) {
-                minecraft.setScreen(null);
+                ClientCompat.setScreen(minecraft, null);
                 markers.emit("screen-closed", null);
             } else if ("pause".equals(command)) {
-                if (minecraft.screen == null) {
-                    minecraft.setScreen(new PauseScreen(true));
+                if (ClientCompat.currentScreen(minecraft) == null) {
+                    ClientCompat.setScreen(minecraft, new PauseScreen(true));
                 }
                 markers.emit("paused", screenName(minecraft));
             } else if (command.startsWith("resize:")) {
                 String[] parts = command.substring("resize:".length()).split(":");
-                GLFW.glfwSetWindowSize(minecraft.getWindow().handle(), Integer.parseInt(parts[0]), Integer.parseInt(parts[1]));
+                DevHelperWindowPolicy.setWindowSize(minecraft.getWindow().handle(), Integer.parseInt(parts[0]), Integer.parseInt(parts[1]));
                 markers.emit("resize-requested", command);
             } else if ("window-size".equals(command)) {
                 markers.emit("window-size", minecraft.getWindow().getWidth() + "x" + minecraft.getWindow().getHeight()
@@ -297,6 +298,6 @@ final class PromoOps {
     }
 
     static String screenName(Minecraft minecraft) {
-        return minecraft.screen == null ? "none" : minecraft.screen.getClass().getSimpleName();
+        return ClientCompat.currentScreen(minecraft) == null ? "none" : ClientCompat.currentScreen(minecraft).getClass().getSimpleName();
     }
 }

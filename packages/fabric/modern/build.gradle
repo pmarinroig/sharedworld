@@ -39,6 +39,18 @@ def fakeRunDevAuthSecretProvider = providers.gradleProperty("sharedworldDevAuthS
         .orElse(providers.environmentVariable("SHAREDWORLD_DEV_AUTH_SECRET"))
 def fakeRunDevAuthSecret = fakeRunDevAuthSecretProvider.orNull
 def localModsDir = file("local/mods")
+// Two-player e2e (scripts/e2e/two-client-e2e.ts --modern=<bucket>), same
+// properties as the classic project's e2e runs.
+def e2eBackendUrl = providers.gradleProperty("sharedworldE2eBackendUrl").getOrElse(fakeRunLocalBackendUrl)
+def e2eMarkerFile = providers.gradleProperty("sharedworldE2eMarkerFile").orNull
+def e2eCommandFile = providers.gradleProperty("sharedworldE2eCommandFile").orNull
+def e2eWorldName = providers.gradleProperty("sharedworldE2eWorldName").orNull
+def e2eScenario = providers.gradleProperty("sharedworldE2eScenario").orNull
+def e2ePlayerName = providers.gradleProperty("sharedworldE2ePlayerName").orNull
+def e2eRoleOverride = providers.gradleProperty("sharedworldE2eRole").orNull
+def e2eCustomJoinPort = providers.gradleProperty("sharedworldE2eCustomJoinPort").orNull
+def e2eAutosaveIntervalMs = providers.gradleProperty("sharedworldE2eAutosaveIntervalMs").orNull
+def e2eSuperpackShardMaxBytes = providers.gradleProperty("sharedworldE2eSuperpackShardMaxBytes").orNull
 
 // The 26.1 generation renamed the GUI render layer wholesale ("render" became a
 // state-extraction pass) but kept every shape SharedWorld uses. Rather than fork the GUI
@@ -96,6 +108,23 @@ def prepareSharedDevHelperSources = tasks.register("prepareSharedDevHelperSource
     }
 }
 
+def prepareSharedDevE2eSources = tasks.register("prepareSharedDevE2eSources", Sync) {
+    inputs.property "modernRenames", modernRenames.collect { it.join(" -> ") }.join("\n")
+    from("../src/devhelperE2e/java") {
+        // Promo capture stays classic-only: src/devhelperE2e-modern supplies a
+        // PromoOps stand-in and the frame recorder (and its mixin) is left out.
+        exclude "link/sharedworld/devhelper/e2e/PromoOps.java"
+        exclude "link/sharedworld/devhelper/e2e/FrameRecorder.java"
+        exclude "link/sharedworld/devhelper/e2e/mixin/**"
+    }
+    into layout.buildDirectory.dir("generated/sharedDevE2e")
+    filter { String line ->
+        String result = line
+        modernRenames.each { rule -> result = result.replaceAll(rule[0], rule[1]) }
+        result
+    }
+}
+
 sourceSets {
     main {
         java.srcDirs = [prepareSharedSources, "../src/versioned/${mcBucketName}/java"] \
@@ -113,6 +142,12 @@ sourceSets {
         compileClasspath += sourceSets.main.compileClasspath + sourceSets.main.output
         runtimeClasspath += output + compileClasspath + sourceSets.main.runtimeClasspath
     }
+    devHelperE2e {
+        java.srcDirs = [prepareSharedDevE2eSources, "src/devhelperE2e-modern/java"]
+        resources.srcDirs = ["../src/devhelperE2e/resources"]
+        compileClasspath += sourceSets.main.compileClasspath + sourceSets.main.output + sourceSets.devHelper.output
+        runtimeClasspath += output + compileClasspath + sourceSets.main.runtimeClasspath
+    }
 }
 
 def devHelperJarTask = tasks.register("devHelperJar", Jar) {
@@ -121,6 +156,12 @@ def devHelperJarTask = tasks.register("devHelperJar", Jar) {
     // another bucket must never end up in a run's mod set.
     archiveVersion = "${project.mod_version}+mc${mcBucketName}"
     from sourceSets.devHelper.output
+}
+
+def devHelperE2eJarTask = tasks.register("devHelperE2eJar", Jar) {
+    archiveClassifier = "dev-e2e"
+    archiveVersion = "${project.mod_version}+mc${mcBucketName}"
+    from sourceSets.devHelperE2e.output
 }
 
 repositories {
@@ -147,9 +188,38 @@ dependencies {
     // present when HostA/GuestB connect through e4mc.
     if (!skipDevHelperRuntime.get()) {
         runtimeOnly(files(devHelperJarTask))
+        // The e2e driver idles unless a run sets sharedworld.e2e.role.
+        runtimeOnly(files(devHelperE2eJarTask))
     }
     testImplementation "org.junit.jupiter:junit-jupiter:5.10.2"
     testRuntimeOnly "org.junit.platform:junit-platform-launcher"
+}
+
+// Arguments every e2e run shares; both roles may run the integrated server
+// (a guest re-hosts after a handoff), hence the loopback login bypass on both.
+def e2eRunArgs = { run, String role, String playerName, String playerUuid ->
+    run.vmArgs "-Dsharedworld.backendUrl=${e2eBackendUrl}"
+    run.vmArgs "-Dsharedworld.devPlayerName=${playerName}"
+    run.vmArgs "-Dsharedworld.devPlayerUuid=${playerUuid}"
+    if (fakeRunDevAuthSecret != null) {
+        run.vmArgs "-Dsharedworld.devAuthSecret=${fakeRunDevAuthSecret}"
+    }
+    run.vmArgs "-Dsharedworld.e2e.role=${role}"
+    run.vmArgs "-Dsharedworld.e2e.insecureLoopback=true"
+    [
+            "sharedworld.dev.autosaveIntervalMs": e2eAutosaveIntervalMs,
+            "sharedworld.e2e.markerFile": e2eMarkerFile,
+            "sharedworld.e2e.commandFile": e2eCommandFile,
+            "sharedworld.e2e.worldName": e2eWorldName,
+            "sharedworld.e2e.scenario": e2eScenario,
+            "sharedworld.e2e.customJoinPort": e2eCustomJoinPort,
+    ].each { key, value ->
+        if (value != null) {
+            run.vmArgs "-D${key}=${value}"
+        }
+    }
+    run.programArg "--username=${playerName}"
+    run.programArg "--uuid=${playerUuid}"
 }
 
 loom {
@@ -174,6 +244,21 @@ loom {
             programArg "--username=${hostName}"
             programArg "--uuid=${hostUuid}"
         }
+        e2eHost {
+            inherit client
+            configName = "SharedWorld ${mcBucketName} E2E Host"
+            runDir = "run-e2e-host"
+            e2eRunArgs(delegate, e2eRoleOverride ?: "host", e2ePlayerName ?: "HostA", "11111111-1111-1111-1111-111111111111")
+            if (e2eSuperpackShardMaxBytes != null) {
+                vmArgs "-Dsharedworld.dev.superpackShardMaxBytes=${e2eSuperpackShardMaxBytes}"
+            }
+        }
+        e2eGuest {
+            inherit client
+            configName = "SharedWorld ${mcBucketName} E2E Guest"
+            runDir = "run-e2e-guest"
+            e2eRunArgs(delegate, "guest", e2ePlayerName ?: "GuestB", "22222222-2222-2222-2222-222222222222")
+        }
         fakeGuest {
             inherit client
             configName = "SharedWorld ${mcBucketName} Fake Guest"
@@ -193,7 +278,7 @@ loom {
 }
 
 gradle.taskGraph.whenReady { graph ->
-    if (graph.allTasks.any { it.name in ["runFakeHost", "runFakeGuest"] } && !fakeRunDevAuthSecretProvider.isPresent()) {
+    if (graph.allTasks.any { it.name in ["runFakeHost", "runFakeGuest", "runE2eHost", "runE2eGuest"] } && !fakeRunDevAuthSecretProvider.isPresent()) {
         throw new GradleException(
                 "Fake SharedWorld runs require a dev auth secret. Set DEV_AUTH_SECRET in " +
                         "packages/backend/.dev.vars and pass it with -PsharedworldDevAuthSecret=..., " +
@@ -227,6 +312,19 @@ tasks.named("processDevHelperResources").configure {
     }
     filesMatching("sharedworld-dev-helper.mixins.json") {
         expand "mixinCompatibilityLevel": "JAVA_21"
+    }
+}
+
+tasks.named("processDevHelperE2eResources").configure {
+    inputs.property "version", project.version
+    inputs.property "minecraftRange", mcBucket.minecraftRange
+
+    filesMatching("fabric.mod.json") {
+        expand "version": inputs.properties.version, "minecraftRange": inputs.properties.minecraftRange
+    }
+    // The frame recorder mixin is not compiled here (see prepareSharedDevE2eSources).
+    filesMatching("sharedworld-dev-e2e.mixins.json") {
+        filter { String line -> line.contains("\"GameRendererFrameRecorderMixin\"") ? "" : line }
     }
 }
 
