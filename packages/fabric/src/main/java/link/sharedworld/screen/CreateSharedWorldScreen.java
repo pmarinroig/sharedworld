@@ -313,8 +313,9 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
         this.updateStorageBanner();
         this.updateButtons();
         // The footer buttons are the same widgets on every step, only relabeled: a
-        // clicked "Next" stays focused (outlined) as "Create Shared World" unless
-        // focus is dropped before the step picks its own field.
+        // "Next" pressed from the keyboard would stay focused (outlined) as "Create
+        // Shared World" unless focus is dropped before the step picks its own field.
+        // Mouse clicks are handled in VersionedScreen.
         link.sharedworld.versioned.GuiCompat.clearFocus(this);
         this.sharedworldSetInitialFocus();
     }

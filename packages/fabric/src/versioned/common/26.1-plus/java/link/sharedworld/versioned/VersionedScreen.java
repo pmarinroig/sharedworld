@@ -42,7 +42,20 @@ public abstract class VersionedScreen extends Screen {
         if (this.sharedworldMouseClicked(event.x(), event.y())) {
             return true;
         }
-        return super.mouseClicked(event, doubleClick);
+        return this.sharedworldDropClickedButtonFocus(super.mouseClicked(event, doubleClick));
+    }
+
+    /**
+     * Vanilla focuses whatever button a mouse click lands on, and these menus keep their
+     * screens up while relabeling buttons (wizard steps), so the focus outline lingered
+     * on the next step's button. Mouse clicks never leave a button focused; keyboard
+     * focus and text fields are untouched.
+     */
+    private boolean sharedworldDropClickedButtonFocus(boolean handled) {
+        if (this.getFocused() instanceof net.minecraft.client.gui.components.AbstractButton) {
+            GuiCompat.clearFocus(this);
+        }
+        return handled;
     }
 
     @Override
