@@ -3,11 +3,9 @@ package link.sharedworld;
 import com.mojang.blaze3d.platform.NativeImage;
 import link.sharedworld.api.SharedWorldModels.SignedBlobUrlDto;
 import link.sharedworld.api.SharedWorldModels.WorldSummaryDto;
+import link.sharedworld.versioned.FileDialogCompat;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.FaviconTexture;
-import org.lwjgl.PointerBuffer;
-import org.lwjgl.system.MemoryStack;
-import org.lwjgl.util.tinyfd.TinyFileDialogs;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -19,6 +17,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 
 public final class SharedWorldCustomIconStore {
     /**
@@ -65,27 +64,24 @@ public final class SharedWorldCustomIconStore {
         }
     }
 
-    public SelectedIcon chooseIcon() throws IOException {
-        String selectedPath;
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            PointerBuffer patterns = stack.mallocPointer(1);
-            patterns.put(stack.UTF8("*.png"));
-            patterns.flip();
-            selectedPath = TinyFileDialogs.tinyfd_openFileDialog(
-                    "Choose Shared World Icon",
-                    "",
-                    patterns,
-                    null,
-                    false
-            );
-        }
-        if (selectedPath == null || selectedPath.isBlank()) {
-            return null;
-        }
-
-        Path path = Path.of(selectedPath);
-        validateIcon(path);
-        return new SelectedIcon(path, link.sharedworld.sync.LocalWorldHasher.hashFile(path));
+    /**
+     * Opens the PNG picker. {@code onChosen} runs on the client thread with the
+     * validated icon and is skipped when the player cancels; validation failures go
+     * to {@code onError}. The dialog may answer after this returns (26.3+).
+     */
+    public void chooseIcon(Consumer<SelectedIcon> onChosen, Consumer<Exception> onError) {
+        FileDialogCompat.openPngFile("Choose Shared World Icon", selectedPath -> {
+            if (selectedPath == null) {
+                return;
+            }
+            try {
+                Path path = Path.of(selectedPath);
+                validateIcon(path);
+                onChosen.accept(new SelectedIcon(path, link.sharedworld.sync.LocalWorldHasher.hashFile(path)));
+            } catch (Exception exception) {
+                onError.accept(exception);
+            }
+        });
     }
 
     public void validateIcon(Path path) throws IOException {

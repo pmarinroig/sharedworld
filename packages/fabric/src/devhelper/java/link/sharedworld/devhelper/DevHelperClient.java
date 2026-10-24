@@ -2,7 +2,6 @@ package link.sharedworld.devhelper;
 
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import org.lwjgl.glfw.GLFW;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -15,12 +14,11 @@ import org.slf4j.LoggerFactory;
  * visible; this first-tick hide is the safety net in case the mixin's
  * injection point drifts on a future Minecraft version.
  *
- * Timing: client entrypoints run BEFORE GLFW is initialized (calling any GLFW
- * function there queues a "not initialized" error that crashes the later
- * GLX init check), so the fallback hide is deferred to the first tick, when
- * the window exists and its GL context is current on this thread. The handle
- * comes from the current context instead of Minecraft's Window accessor so
- * this compiles unchanged against every mapped version.
+ * Timing: client entrypoints run BEFORE the windowing library is initialized
+ * (calling any GLFW function there queues a "not initialized" error that
+ * crashes the later GLX init check), so the fallback hide is deferred to the
+ * first tick, when the window exists. The windowing calls live in
+ * DevHelperWindowPolicy, which 26.3 replaces with an SDL version.
  */
 public final class DevHelperClient implements ClientModInitializer {
     private static final Logger LOGGER = LoggerFactory.getLogger("sharedworld-dev-helper");
@@ -37,17 +35,10 @@ public final class DevHelperClient implements ClientModInitializer {
                 return;
             }
             this.windowHidden = true;
-            long window = GLFW.glfwGetCurrentContext();
-            if (window == 0L) {
-                LOGGER.warn("SHAREDWORLD_HIDE_WINDOW is set but no GL context is current on the first tick; leaving the window visible.");
-                return;
-            }
-            boolean wasVisible = GLFW.glfwGetWindowAttrib(window, GLFW.GLFW_VISIBLE) == GLFW.GLFW_TRUE;
-            GLFW.glfwHideWindow(window);
-            if (wasVisible) {
-                LOGGER.warn("SharedWorld dev helper hid the game window on the first tick; the WindowDevHelperMixin should have kept it invisible from creation - check its injection point against this Minecraft version.");
-            } else {
-                LOGGER.info("SharedWorld dev helper confirmed the game window is hidden (SHAREDWORLD_HIDE_WINDOW).");
+            switch (DevHelperWindowPolicy.hideCurrentWindow()) {
+                case NO_WINDOW -> LOGGER.warn("SHAREDWORLD_HIDE_WINDOW is set but no game window was found on the first tick; leaving it visible.");
+                case WAS_VISIBLE -> LOGGER.warn("SharedWorld dev helper hid the game window on the first tick; the WindowDevHelperMixin should have kept it invisible from creation - check its injection point against this Minecraft version.");
+                case ALREADY_HIDDEN -> LOGGER.info("SharedWorld dev helper confirmed the game window is hidden (SHAREDWORLD_HIDE_WINDOW).");
             }
         });
     }

@@ -115,14 +115,16 @@ public final class ReplaceSharedWorldScreen extends link.sharedworld.versioned.V
     }
 
     private void selectWorldFolder() {
-        LocalSaveCatalog.LocalSaveOption option = SharedWorldFolderPicker.chooseSaveFolder(this.minecraft, this.banner);
-        if (option == null) {
-            return;
-        }
-        this.banner.clearSticky();
-        this.localSaves.removeIf(save -> save.directory().equals(option.directory()));
-        this.localSaves.add(0, option);
-        this.onSaveSelected(option);
+        SharedWorldFolderPicker.chooseSaveFolder(this.minecraft, this.banner, option -> {
+            // The dialog may answer after the player left this screen (26.3+).
+            if (link.sharedworld.versioned.ClientCompat.currentScreen(this.minecraft) != this) {
+                return;
+            }
+            this.banner.clearSticky();
+            this.localSaves.removeIf(save -> save.directory().equals(option.directory()));
+            this.localSaves.add(0, option);
+            this.onSaveSelected(option);
+        });
     }
 
     private void onReplacePressed() {

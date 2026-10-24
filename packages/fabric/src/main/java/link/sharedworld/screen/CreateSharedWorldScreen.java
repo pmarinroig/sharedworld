@@ -428,14 +428,16 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
     }
 
     private void selectWorldFolder() {
-        LocalSaveCatalog.LocalSaveOption option = SharedWorldFolderPicker.chooseSaveFolder(this.minecraft, this.banner);
-        if (option == null) {
-            return;
-        }
-        this.banner.clearSticky();
-        this.localSaves.removeIf(save -> save.directory().equals(option.directory()));
-        this.localSaves.add(0, option);
-        this.onSaveSelected(option);
+        SharedWorldFolderPicker.chooseSaveFolder(this.minecraft, this.banner, option -> {
+            // The dialog may answer after the player left this screen (26.3+).
+            if (link.sharedworld.versioned.ClientCompat.currentScreen(this.minecraft) != this) {
+                return;
+            }
+            this.banner.clearSticky();
+            this.localSaves.removeIf(save -> save.directory().equals(option.directory()));
+            this.localSaves.add(0, option);
+            this.onSaveSelected(option);
+        });
     }
 
     @Override
@@ -547,19 +549,24 @@ public final class CreateSharedWorldScreen extends VersionedScreen implements Lo
     }
 
     private void chooseIcon() {
-        try {
-            this.selectedIcon = SharedWorldClient.customIconStore().chooseIcon();
-            if (this.selectedIcon != null) {
-                this.clearCustomIcon = false;
-                this.refreshPreview();
+        SharedWorldClient.customIconStore().chooseIcon(icon -> {
+            // The dialog may answer after the player left this screen (26.3+).
+            if (link.sharedworld.versioned.ClientCompat.currentScreen(this.minecraft) != this) {
+                return;
             }
-        } catch (Exception exception) {
+            this.selectedIcon = icon;
+            this.clearCustomIcon = false;
+            this.refreshPreview();
+        }, exception -> {
+            if (link.sharedworld.versioned.ClientCompat.currentScreen(this.minecraft) != this) {
+                return;
+            }
             this.banner.setTransient(
                     SharedWorldStatusBanner.Kind.ERROR,
                     Component.translatable("screen.sharedworld.icon_error_invalid_png"),
                     ICON_ERROR_TTL_MS
             );
-        }
+        });
     }
 
     private void refreshPreview() {

@@ -81,9 +81,13 @@ def prepareSharedSources = tasks.register("prepareSharedSources", Sync) {
 def skipDevHelperRuntime = providers.gradleProperty("sharedworldSkipDevHelperRuntime")
         .map { it.toBoolean() }.orElse(false)
 
+def devHelperBucketDir = file("../src/devhelperVersioned/${mcBucketName}/java")
 def prepareSharedDevHelperSources = tasks.register("prepareSharedDevHelperSources", Sync) {
     inputs.property "modernRenames", modernRenames.collect { it.join(" -> ") }.join("\n")
     from "../src/devhelper/java"
+    // A bucket file at the same path replaces the shared one (26.3 swaps the
+    // GLFW DevHelperWindowPolicy for an SDL version).
+    exclude { element -> !element.directory && new File(devHelperBucketDir, element.relativePath.pathString).isFile() }
     into layout.buildDirectory.dir("generated/sharedDevHelper")
     filter { String line ->
         String result = line

@@ -871,16 +871,21 @@ public final class EditSharedWorldScreen extends VersionedScreen {
     }
 
     private void chooseIcon() {
-        try {
-            this.selectedIcon = SharedWorldClient.customIconStore().chooseIcon();
-            if (this.selectedIcon != null) {
-                this.clearCustomIcon = false;
-                this.refreshPreview();
-                this.refreshStatus();
+        SharedWorldClient.customIconStore().chooseIcon(icon -> {
+            // The dialog may answer after the player left this screen (26.3+).
+            if (link.sharedworld.versioned.ClientCompat.currentScreen(this.minecraft) != this) {
+                return;
             }
-        } catch (Exception exception) {
+            this.selectedIcon = icon;
+            this.clearCustomIcon = false;
+            this.refreshPreview();
+            this.refreshStatus();
+        }, exception -> {
+            if (link.sharedworld.versioned.ClientCompat.currentScreen(this.minecraft) != this) {
+                return;
+            }
             this.setStatusError(SharedWorldMetadataFormat.friendlyMessage(exception));
-        }
+        });
     }
 
     private void clearIconSelection() {

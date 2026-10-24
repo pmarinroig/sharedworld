@@ -14,7 +14,8 @@ import org.lwjgl.glfw.GLFW;
  * adds a GLFW_VISIBLE=false hint after glfwDefaultWindowHints; 26.1 moves
  * creation to Window.createGlfwWindow (still created visible); 26.2 already
  * creates it hidden and shows it explicitly at the end of client init, so
- * there the mixin suppresses that glfwShowWindow call instead.
+ * there the mixin suppresses that glfwShowWindow call instead. 26.3 swapped
+ * GLFW for SDL: src/devhelperVersioned/26.3 replaces this class.
  */
 public final class DevHelperWindowPolicy {
     private static final boolean HIDE_WINDOW_REQUESTED = readHideWindowEnv();
@@ -37,5 +38,22 @@ public final class DevHelperWindowPolicy {
             return;
         }
         GLFW.glfwWindowHint(GLFW.GLFW_VISIBLE, GLFW.GLFW_FALSE);
+    }
+
+    public enum FirstTickHide { NO_WINDOW, WAS_VISIBLE, ALREADY_HIDDEN }
+
+    /**
+     * First-tick safety net: hides the window whose GL context is current. The handle
+     * comes from the current context instead of Minecraft's Window accessor so this
+     * compiles unchanged against every mapped version.
+     */
+    public static FirstTickHide hideCurrentWindow() {
+        long window = GLFW.glfwGetCurrentContext();
+        if (window == 0L) {
+            return FirstTickHide.NO_WINDOW;
+        }
+        boolean wasVisible = GLFW.glfwGetWindowAttrib(window, GLFW.GLFW_VISIBLE) == GLFW.GLFW_TRUE;
+        GLFW.glfwHideWindow(window);
+        return wasVisible ? FirstTickHide.WAS_VISIBLE : FirstTickHide.ALREADY_HIDDEN;
     }
 }
