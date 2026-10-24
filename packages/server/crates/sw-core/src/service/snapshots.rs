@@ -9,7 +9,7 @@ use sw_contracts::sync::{
     PACK_FULL_TRANSFER_MODE, REGION_DELTA_TRANSFER_MODE, REGION_FULL_TRANSFER_MODE, WHOLE_GZIP_TRANSFER_MODE,
 };
 use sw_contracts::{
-    DeleteSnapshotsResult, FileTransferMode, FinalizeSnapshotRequest, ManifestFile, PackChainStep,
+    DeleteSnapshotsResult, FileTransferMode, FinalizeSnapshotRequest, HostMod, ManifestFile, PackChainStep,
     RealtimeEventKind, SnapshotActionResult, SnapshotManifest, SnapshotPack, WorldRuntimePhase,
     WorldSnapshotSummary,
 };
@@ -42,6 +42,8 @@ const SNAPSHOT_RETENTION_INTERVAL_MS: i64 = 60 * 60_000;
 pub const DEFERRED_BLOB_DELETE_BUDGET_MS: i64 = 15_000;
 
 const PENDING_BLOB_DELETE_SWEEP_LIMIT: i64 = 3;
+const MAX_HOST_MODS: usize = 2000;
+const MAX_HOST_MOD_FIELD_CHARS: usize = 128;
 /// Keys deleted per reference re-check in `delete_unreferenced_blobs`.
 const BLOB_DELETE_CHUNK: usize = 64;
 /// Per cron tick. Every key costs a handful of provider/row round-trips (the
@@ -149,6 +151,7 @@ pub async fn restore_snapshot(
         minecraft_version: game_versions.as_ref().and_then(|v| v.minecraft_version.clone()),
         files: snapshot.files.clone(),
         packs: Some(snapshot.packs.clone()),
+        host_mods: game_versions.and_then(|v| v.host_mods),
     };
     persist_snapshot(svc, world_id, ctx, &request, now, &mut SnapshotHeadersCache::new()).await?;
     let budget = deferred_budget_of(ctx);
@@ -332,6 +335,7 @@ pub async fn persist_snapshot(
     // self-contained snapshots; restore republishes packs whose recipes
     // inherit from the restored-from snapshot's directory.
     let mut request = request.clone();
+    request.host_mods = request.host_mods.take().map(sanitize_host_mods);
     stamp_chain_steps(svc, world_id, &mut request, headers_cache).await?;
     let mut manifest_storage_key: Option<String> = None;
     if !request.packs.as_deref().unwrap_or(&[]).is_empty() {
@@ -351,6 +355,24 @@ pub async fn persist_snapshot(
     let manifest =
         svc.repository.finalize_snapshot(world_id, &ctx.actor(), &request, now, manifest_storage_key).await?;
     Ok((*manifest).clone())
+}
+
+/// Bounds what a client can store per snapshot: ids/names trimmed and capped,
+/// empty and duplicate ids dropped, at most MAX_HOST_MODS entries (a modpack
+/// of a few hundred mods fits with room to spare).
+fn sanitize_host_mods(mods: Vec<HostMod>) -> Vec<HostMod> {
+    let mut seen = HashSet::new();
+    mods.into_iter()
+        .filter_map(|m| {
+            let id: String = m.id.trim().chars().take(MAX_HOST_MOD_FIELD_CHARS).collect();
+            let name = m
+                .name
+                .map(|n| n.trim().chars().take(MAX_HOST_MOD_FIELD_CHARS).collect::<String>())
+                .filter(|n| !n.is_empty());
+            (!id.is_empty() && seen.insert(id.clone())).then_some(HostMod { id, name })
+        })
+        .take(MAX_HOST_MODS)
+        .collect()
 }
 
 async fn write_manifest_document(

@@ -685,6 +685,10 @@ pub struct EnterSessionResponse {
     pub runtime: WorldRuntimeStatus,
     pub assignment: Option<HostAssignment>,
     pub waiter_session_id: Option<String>,
+    /// Gameplay mods recorded with the latest snapshot, for the host-start
+    /// environment check; absent when unknown (snapshot from a pre-0.5.4 host).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_snapshot_host_mods: Option<Vec<HostMod>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -1142,6 +1146,18 @@ pub struct FinalizeSnapshotRequest {
     pub files: Vec<ManifestFile>,
     #[serde(default)]
     pub packs: Option<Vec<SnapshotPack>>,
+    /// The host's gameplay mods (0.5.4+); None from older clients.
+    #[serde(default)]
+    pub host_mods: Option<Vec<HostMod>>,
+}
+
+/// One gameplay mod the host had installed when it wrote a snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostMod {
+    pub id: String,
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

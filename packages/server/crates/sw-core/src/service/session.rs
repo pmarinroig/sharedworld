@@ -43,6 +43,11 @@ pub async fn enter_session(
             Box::pin(async move { c.enter_session(&actor, waiter.as_deref(), ack, now).await })
         })
         .await?;
+    // Only a player about to host runs the environment check.
+    let last_snapshot_host_mods = match (&decision.assignment, &world.summary.last_snapshot_id) {
+        (Some(_), Some(snapshot_id)) => svc.repository.get_snapshot_host_mods(world_id, snapshot_id).await?,
+        _ => None,
+    };
     Ok(EnterSessionResponse {
         action: decision.action,
         world: world.summary,
@@ -50,6 +55,7 @@ pub async fn enter_session(
         runtime: decision.runtime,
         assignment: decision.assignment,
         waiter_session_id: decision.waiter_session_id,
+        last_snapshot_host_mods,
     })
 }
 

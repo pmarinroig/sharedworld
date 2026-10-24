@@ -136,6 +136,7 @@ fn request(
         minecraft_version: None,
         files,
         packs: Some(packs),
+        host_mods: None,
     }
 }
 
@@ -236,6 +237,7 @@ async fn repo_finalize(
         minecraft_version: None,
         files: vec![],
         packs: Some(packs),
+        host_mods: None,
     };
     upload_artifacts(env, &request).await;
     (*env
@@ -1480,6 +1482,7 @@ async fn the_cron_sweep_drops_a_queued_key_a_newer_snapshot_references_again() {
                 minecraft_version: None,
                 files: vec![],
                 packs: Some(vec![pack]),
+                host_mods: None,
             },
             at("2026-05-01T00:03:00.000Z"),
             None,
@@ -1654,4 +1657,94 @@ async fn deleting_a_world_purges_its_snapshots_and_blobs() {
     worlds::delete_world(&env.svc, &owner(), &world.id, time::now()).await.unwrap();
     assert!(env.repo.list_snapshots_for_world(&world.id).await.unwrap().is_empty());
     assert!(!blob_exists(&env, "blobs/a.bin").await);
+}
+
+// ---------------------------------------------------------------------------
+// Host mods (0.5.4 host-start environment check)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn host_mods_are_bounded_offered_to_the_next_host_and_survive_a_restore() {
+    let env = TestEnv::new().await;
+    let world = seed_world(&env, "Modded").await;
+    let mut first = request(&world, None, vec![file("a", "blobs/a.bin", "level.dat")], vec![]);
+    first.host_mods = Some(vec![
+        HostMod { id: " dynamictrees ".into(), name: Some("Dynamic Trees".into()) },
+        HostMod { id: "dynamictrees".into(), name: None },
+        HostMod { id: "   ".into(), name: Some("blank id".into()) },
+        HostMod { id: "x".repeat(300), name: None },
+    ]);
+    let written = finalize(&env, &owner(), &world, first, "2026-05-01T10:00:00.000Z").await;
+    let expected = vec![
+        HostMod { id: "dynamictrees".into(), name: Some("Dynamic Trees".into()) },
+        HostMod { id: "x".repeat(128), name: None },
+    ];
+    assert_eq!(
+        env.repo.get_snapshot_host_mods(&world.id, &written.snapshot_id).await.unwrap(),
+        Some(expected.clone())
+    );
+
+    // The owner releases the initial assignment; the next host to enter is
+    // handed the mods to compare against its own.
+    sw_core::service::session::release_host(
+        &env.svc,
+        &owner(),
+        &world.id,
+        &ReleaseHostRequest {
+            graceful: Some(serde_json::json!(true)),
+            runtime_epoch: Some(world.epoch),
+            host_token: Some(world.token.clone()),
+            ..Default::default()
+        },
+        time::now(),
+    )
+    .await
+    .unwrap();
+    let entry = sw_core::service::session::enter_session(
+        &env.svc,
+        &owner(),
+        &world.id,
+        &EnterSessionRequest::default(),
+        time::now(),
+    )
+    .await
+    .unwrap();
+    assert!(entry.assignment.is_some(), "the owner is assigned the host");
+    assert_eq!(entry.last_snapshot_host_mods, Some(expected.clone()));
+    sw_core::service::session::release_host(
+        &env.svc,
+        &owner(),
+        &world.id,
+        &ReleaseHostRequest {
+            graceful: Some(serde_json::json!(true)),
+            runtime_epoch: entry.assignment.as_ref().map(|a| a.runtime_epoch),
+            host_token: entry.assignment.as_ref().map(|a| a.host_token.clone()),
+            ..Default::default()
+        },
+        time::now(),
+    )
+    .await
+    .unwrap();
+
+    snapshots::restore_snapshot(&env.svc, &owner(), &world.id, &written.snapshot_id, time::now())
+        .await
+        .unwrap();
+    let restored = env.repo.list_snapshots_for_world(&world.id).await.unwrap()[0].snapshot_id.clone();
+    assert_ne!(restored, written.snapshot_id);
+    assert_eq!(env.repo.get_snapshot_host_mods(&world.id, &restored).await.unwrap(), Some(expected));
+}
+
+#[tokio::test]
+async fn a_snapshot_from_a_client_that_sends_no_mods_reports_them_unknown() {
+    let env = TestEnv::new().await;
+    let world = seed_world(&env, "Vanilla").await;
+    let written = finalize(
+        &env,
+        &owner(),
+        &world,
+        request(&world, None, vec![file("a", "blobs/a.bin", "level.dat")], vec![]),
+        "2026-05-01T10:00:00.000Z",
+    )
+    .await;
+    assert_eq!(env.repo.get_snapshot_host_mods(&world.id, &written.snapshot_id).await.unwrap(), None);
 }

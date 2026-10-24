@@ -543,10 +543,36 @@ impl Repository {
             .read(move |c| {
                 c.query_one(
                     "snapshots.game_versions",
-                    "SELECT data_version, minecraft_version FROM snapshots WHERE world_id = ? AND id = ?",
+                    "SELECT data_version, minecraft_version, host_mods_json FROM snapshots WHERE world_id = ? AND id = ?",
                     params![w, s],
-                    |r| Ok(SnapshotGameVersions { data_version: r.get(0)?, minecraft_version: r.get(1)? }),
+                    |r| {
+                        Ok(SnapshotGameVersions {
+                            data_version: r.get(0)?,
+                            minecraft_version: r.get(1)?,
+                            host_mods: parse_host_mods(r.get::<_, Option<String>>(2)?),
+                        })
+                    },
                 )
+            })
+            .await
+    }
+
+    /// The host mods recorded with one snapshot; None when unknown.
+    pub async fn get_snapshot_host_mods(
+        &self,
+        world_id: &str,
+        snapshot_id: &str,
+    ) -> Result<Option<Vec<sw_contracts::HostMod>>, DbError> {
+        let (w, s) = (world_id.to_string(), snapshot_id.to_string());
+        self.db
+            .read(move |c| {
+                Ok(c.query_one(
+                    "snapshots.host_mods",
+                    "SELECT host_mods_json FROM snapshots WHERE world_id = ? AND id = ?",
+                    params![w, s],
+                    |r| r.get::<_, Option<String>>(0),
+                )?
+                .and_then(parse_host_mods))
             })
             .await
     }
@@ -720,13 +746,14 @@ impl Repository {
                 }
                 directory.sort_by(|a, b| locale_compare(&a.pack_id, &b.pack_id));
                 let directory_json = serde_json::to_string(&directory)?;
+                let host_mods_json = req.host_mods.as_ref().map(serde_json::to_string).transpose()?;
                 if directory_json.len() > 1_000_000 {
                     tracing::warn!(world_id = %w, bytes = directory_json.len(), packs = directory.len(), "SharedWorld pack directory unusually large");
                 }
                 c.execute(
                     "snapshots.insert",
-                    "INSERT INTO snapshots (id, world_id, created_at, created_by_uuid, base_snapshot_id, data_version, minecraft_version, packs_json, loose_file_count, loose_total_size, manifest_storage_key)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO snapshots (id, world_id, created_at, created_by_uuid, base_snapshot_id, data_version, minecraft_version, packs_json, loose_file_count, loose_total_size, manifest_storage_key, host_mods_json)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     params![
                         sid,
                         w,
@@ -738,7 +765,8 @@ impl Repository {
                         directory_json,
                         req.files.len() as i64,
                         req.files.iter().map(|f| f.size).sum::<i64>(),
-                        manifest_storage_key
+                        manifest_storage_key,
+                        host_mods_json
                     ],
                 )?;
                 for (path, hash, size, csize, _pack, key, ctype, mode, bsid, bhash, depth) in member_inserts {
@@ -783,4 +811,9 @@ fn base_pack_rows_for_inheritance(
             Ok(pack_directory_of(c, base_snapshot_id)?.into_iter().map(|e| (e.pack_id.clone(), e)).collect())
         }
     }
+}
+
+/// A stored host-mods column; unreadable JSON counts as unknown, never as "no mods".
+fn parse_host_mods(raw: Option<String>) -> Option<Vec<sw_contracts::HostMod>> {
+    raw.and_then(|raw| serde_json::from_str(&raw).ok())
 }

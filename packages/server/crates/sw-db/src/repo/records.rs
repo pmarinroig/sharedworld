@@ -186,6 +186,8 @@ pub struct RuntimeMirrorRow {
 pub struct SnapshotGameVersions {
     pub data_version: Option<i64>,
     pub minecraft_version: Option<String>,
+    /// 0035: the writing host's gameplay mods; None when unknown.
+    pub host_mods: Option<Vec<sw_contracts::HostMod>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
