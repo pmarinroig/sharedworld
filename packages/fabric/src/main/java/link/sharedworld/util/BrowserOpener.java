@@ -15,8 +15,16 @@ public final class BrowserOpener {
     private BrowserOpener() {
     }
 
-    /** Returns true when a browser open was successfully started. */
+    /**
+     * Returns true when a browser open was successfully started. Automated runs set
+     * SHAREDWORLD_NO_BROWSER: their drivers complete auth links over HTTP, so a real
+     * browser tab would only pile up on the developer's machine. Reporting success
+     * keeps the screens on the same path as a real open.
+     */
     public static boolean open(String url) {
+        if ("1".equals(System.getenv("SHAREDWORLD_NO_BROWSER"))) {
+            return true;
+        }
         String[] command = platformCommand(url);
         if (command != null) {
             try {
