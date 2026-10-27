@@ -42,6 +42,9 @@ const SNAPSHOT_RETENTION_INTERVAL_MS: i64 = 60 * 60_000;
 pub const DEFERRED_BLOB_DELETE_BUDGET_MS: i64 = 15_000;
 
 const PENDING_BLOB_DELETE_SWEEP_LIMIT: i64 = 3;
+/// Consecutive failed retries (5+10+20+40+80+160 min of backoff, about 5 h)
+/// before a queued delete on a dead storage grant is dropped.
+const DEAD_GRANT_DROP_AFTER_ATTEMPTS: i64 = 7;
 const MAX_HOST_MODS: usize = 2000;
 const MAX_HOST_MOD_FIELD_CHARS: usize = 128;
 /// Keys deleted per reference re-check in `delete_unreferenced_blobs`.
@@ -874,6 +877,28 @@ async fn retry_pending_blob_deletes(
             }
             match svc.storage_provider.delete(&binding, &entry.storage_key).await {
                 Ok(()) => {
+                    svc.repository
+                        .delete_pending_blob_delete(provider, &storage_account_id, &entry.storage_key)
+                        .await?;
+                }
+                // A dead grant (revoked at Google, rejected S3 keys) never
+                // recovers on its own and the owner may never come back:
+                // drop the entry instead of retrying it daily forever. Only
+                // after several failures, because a token-refresh network
+                // blip also reports drive_reauth_required. The storage_objects
+                // row stays, so a later leftover sweep still finds the file
+                // if the account is re-linked.
+                Err(error)
+                    if (error.code == "drive_reauth_required" || error.code == "s3_unauthorized")
+                        && entry.attempts + 1 >= DEAD_GRANT_DROP_AFTER_ATTEMPTS =>
+                {
+                    tracing::info!(
+                        storage_key = %entry.storage_key,
+                        storage_account_id = %storage_account_id,
+                        attempts = entry.attempts + 1,
+                        cause = %error.code,
+                        "SharedWorld pending blob delete dropped: storage authorization is dead"
+                    );
                     svc.repository
                         .delete_pending_blob_delete(provider, &storage_account_id, &entry.storage_key)
                         .await?;

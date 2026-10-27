@@ -61,6 +61,7 @@ pub struct FakeDriveProvider {
     revoked_accounts: Mutex<Vec<String>>,
     auth_dead_accounts: Mutex<Vec<String>>,
     read_auth_dead_accounts: Mutex<Vec<String>>,
+    delete_auth_dead_accounts: Mutex<Vec<String>>,
     counters: Mutex<Counters>,
     quota: Mutex<StorageQuota>,
     next_id: AtomicU64,
@@ -77,6 +78,7 @@ impl FakeDriveProvider {
             revoked_accounts: Mutex::new(Vec::new()),
             auth_dead_accounts: Mutex::new(Vec::new()),
             read_auth_dead_accounts: Mutex::new(Vec::new()),
+            delete_auth_dead_accounts: Mutex::new(Vec::new()),
             counters: Mutex::new(Counters::default()),
             quota: Mutex::new(StorageQuota::default()),
             next_id: AtomicU64::new(0),
@@ -205,6 +207,12 @@ impl FakeDriveProvider {
         self.read_auth_dead_accounts.lock().push(account_id.to_string());
     }
 
+    /// Simulates a grant revoked while blob deletes were still queued: every
+    /// delete for this account fails with drive_reauth_required.
+    pub fn set_deletes_auth_dead(&self, account_id: &str) {
+        self.delete_auth_dead_accounts.lock().push(account_id.to_string());
+    }
+
     pub fn upload_count(&self, storage_key: &str) -> u32 {
         self.counters.lock().uploads.get(storage_key).copied().unwrap_or(0)
     }
@@ -301,6 +309,13 @@ impl StorageProvider for FakeDriveProvider {
 
     async fn delete(&self, binding: &StorageBinding, storage_key: &str) -> HttpResult<()> {
         let account = Self::account_of(binding)?;
+        if self.delete_auth_dead_accounts.lock().contains(&account) {
+            return Err(HttpError::new(
+                401,
+                "drive_reauth_required",
+                "Google Drive authorization needs to be refreshed.",
+            ));
+        }
         if let Some(object) =
             self.repo.get_storage_object(StorageProviderType::GoogleDrive, &account, storage_key).await?
         {

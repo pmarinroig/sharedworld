@@ -1638,6 +1638,58 @@ async fn the_cron_sweep_drains_across_accounts_and_backs_off_failing_keys() {
     assert!(env.repo.list_due_pending_blob_deletes("2027-01-01T00:00:00.000Z", 10).await.unwrap().is_empty());
 }
 
+#[tokio::test]
+async fn the_cron_sweep_drops_queued_deletes_once_the_storage_grant_is_dead() {
+    let env = TestEnv::with_fake_drive().await;
+    let account = env.link_drive_account(OWNER_UUID).await;
+    let binding = WorldStorageBinding {
+        provider: StorageProviderType::GoogleDrive,
+        storage_account_id: Some(account.clone()),
+    };
+    env.drive()
+        .put(
+            &binding,
+            "blobs/orphan.bin",
+            PutBody::Bytes(Bytes::from_static(b"blob")),
+            "application/octet-stream",
+        )
+        .await
+        .unwrap();
+    env.repo
+        .enqueue_pending_blob_deletes(
+            StorageProviderType::GoogleDrive,
+            &account,
+            &["blobs/orphan.bin".into()],
+            "2026-05-01T00:00:00.000Z",
+        )
+        .await
+        .unwrap();
+    env.drive().set_deletes_auth_dead(&account);
+
+    // A refresh blip reports the same code, so the first failures keep the
+    // entry queued with the usual backoff.
+    let mut now = at("2026-05-01T00:01:00.000Z");
+    for attempt in 1..=6 {
+        assert_eq!(snapshots::sweep_due_pending_blob_deletes(&env.svc, now, 10).await, 1);
+        let queued = env.repo.list_due_pending_blob_deletes("2027-01-01T00:00:00.000Z", 10).await.unwrap();
+        assert_eq!(queued.iter().map(|e| e.attempts).collect::<Vec<_>>(), vec![attempt]);
+        now = time::from_millis(time::to_millis(now) + 86_400_000);
+    }
+
+    // The seventh failure in a row drops it.
+    assert_eq!(snapshots::sweep_due_pending_blob_deletes(&env.svc, now, 10).await, 1);
+
+    // Nothing left to retry, but the object row survives for a later sweep
+    // if the owner ever re-links the account.
+    assert!(env.repo.list_due_pending_blob_deletes("2027-01-01T00:00:00.000Z", 10).await.unwrap().is_empty());
+    assert!(env
+        .repo
+        .get_storage_object(StorageProviderType::GoogleDrive, &account, "blobs/orphan.bin")
+        .await
+        .unwrap()
+        .is_some());
+}
+
 // ---------------------------------------------------------------------------
 // World deletion purges the world's snapshots and blobs
 // ---------------------------------------------------------------------------
