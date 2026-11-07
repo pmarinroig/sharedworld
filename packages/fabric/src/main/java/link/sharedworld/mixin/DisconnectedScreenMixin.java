@@ -15,7 +15,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(DisconnectedScreen.class)
 public abstract class DisconnectedScreenMixin {
-    @Shadow
+    @Shadow(aliases = {"parent", "f_95990_"})
     @Final
     private Screen parent;
 

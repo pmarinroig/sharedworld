@@ -2,13 +2,18 @@
 .idea/
 .vscode/
 .codex
+.agents/
+.gradle-home/
+PROJECT.md
 .gradle/
+**/.gradle/
 .wrangler/
 .turbo/
 .bun/
 node_modules/
 dist/
 build/
+**/build/
 run/
 out/
 coverage/
@@ -34,5 +39,8 @@ packages/fabric/modern/local/mods/*
 packages/fabric/neoforge/run/
 packages/fabric/neoforge/run-e2e-guest/
 packages/fabric/neoforge/local/mods/*.jar
+packages/fabric/forge/run/
+packages/fabric/forge/run-*/
+packages/fabric/forge/local/
 packages/fabric/local/mod-compat-probe/*.jar
 packages/fabric/local/mod-compat-probe/neoforge/*.jar
