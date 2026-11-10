@@ -1,0 +1,38 @@
+modLoader = "javafml"
+loaderVersion = "[47,)"
+license = "All Rights Reserved"
+issueTrackerURL = "https://sharedworld.net"
+
+[[mods]]
+modId = "sharedworld"
+version = "${version}"
+displayName = "SharedWorld"
+displayURL = "https://sharedworld.net"
+logoFile = "share_world_pixel_art.png"
+logoBlur = false
+displayTest = "IGNORE_ALL_VERSION"
+authors = "Bolido"
+description = '''
+Cloud-backed friend-hosted Minecraft worlds.
+'''
+
+[[dependencies.sharedworld]]
+modId = "forge"
+mandatory = true
+versionRange = "${forgeRange}"
+ordering = "NONE"
+side = "CLIENT"
+
+[[dependencies.sharedworld]]
+modId = "minecraft"
+mandatory = true
+versionRange = "${minecraftRange}"
+ordering = "NONE"
+side = "CLIENT"
+
+[[dependencies.sharedworld]]
+modId = "e4mc"
+mandatory = false
+versionRange = "[4.0.0,)"
+ordering = "NONE"
+side = "CLIENT"
