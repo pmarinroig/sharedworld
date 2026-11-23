@@ -11,12 +11,14 @@ import java.nio.file.Path;
  * <p>Distant Horizons keeps its LOD database in every dimension's {@code data}
  * folder and rewrites it constantly; synced, it dirtied a superpack shard on
  * every autosave, pushed gigabytes to every member and tripped the single-file
- * relay limit. Xaero's {@code xaeromap.txt} is deliberately NOT here: it holds
+ * relay limit. Voxy keeps its LOD cache in a top-level {@code voxy} folder with
+ * the same traits, plus a database lock that made autosave copies fail. Xaero's {@code xaeromap.txt} is deliberately NOT here: it holds
  * the world id Xaero's server side hands to guests, and syncing it is what keeps
  * every guest in the same map instance.
  */
 public final class LocalOnlyPaths {
     private static final String DISTANT_HORIZONS_DATABASE = "DistantHorizons.sqlite";
+    private static final String VOXY_FOLDER = "voxy/";
 
     private LocalOnlyPaths() {
     }
@@ -25,7 +27,7 @@ public final class LocalOnlyPaths {
     public static boolean isLocalOnly(String relativePath) {
         int slash = relativePath.lastIndexOf('/');
         String fileName = slash < 0 ? relativePath : relativePath.substring(slash + 1);
-        if (isLocalOnlyFileName(fileName)) {
+        if (isLocalOnlyFileName(fileName) || relativePath.startsWith(VOXY_FOLDER)) {
             return true;
         }
         String parent = slash < 0 ? "" : relativePath.substring(0, slash);

@@ -19,6 +19,14 @@ final class LocalOnlyPathsTest {
     }
 
     @Test
+    void voxyCacheStaysLocal() {
+        assertTrue(LocalOnlyPaths.isLocalOnly("voxy/3f2a/storage/000422.sst"));
+        assertTrue(LocalOnlyPaths.isLocalOnly("voxy/3f2a/storage/LOCK"));
+        assertFalse(LocalOnlyPaths.isLocalOnly("data/voxy.dat"), "only the top-level voxy folder");
+        assertFalse(LocalOnlyPaths.isLocalOnly("DIM-1/voxy/x"), "only the top-level voxy folder");
+    }
+
+    @Test
     void theRuleIsNarrow() {
         assertFalse(LocalOnlyPaths.isLocalOnly("DistantHorizons.sqlite"), "only inside a data folder");
         assertFalse(LocalOnlyPaths.isLocalOnly("data/DistantHorizons.sqlite.bak"));
