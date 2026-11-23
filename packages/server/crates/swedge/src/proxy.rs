@@ -141,6 +141,21 @@ async fn connect_with_retry(path: &std::path::Path, budget: Duration) -> Option<
     }
 }
 
+/// HTTP/2 clients (the mod's Java HttpClient among them) send the authority
+/// in the URI, not as a Host header. The URI is rewritten to `http://core`
+/// below and hyper would then derive `Host: core`, so the core would sign
+/// URLs (custom icon downloads) for `https://core/...`. Keep the client's own
+/// authority as the Host the core sees.
+fn preserve_client_host(req: &mut Request) {
+    if req.headers().contains_key(header::HOST) {
+        return;
+    }
+    let Some(authority) = req.uri().authority().map(|a| a.as_str().to_string()) else { return };
+    if let Ok(v) = HeaderValue::from_str(&authority) {
+        req.headers_mut().insert(header::HOST, v);
+    }
+}
+
 pub async fn proxy(
     State(state): State<Arc<ProxyState>>,
     ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
@@ -160,6 +175,7 @@ pub async fn proxy(
         headers.insert("x-forwarded-for", v);
     }
     headers.insert("x-forwarded-proto", HeaderValue::from_static(state.forwarded_proto));
+    preserve_client_host(&mut req);
     // The core speaks HTTP/1.1 over the socket; an h2 client request must be
     // downgraded or the pool refuses it ("unsupported version").
     *req.version_mut() = axum::http::Version::HTTP_11;
@@ -190,5 +206,28 @@ pub async fn proxy(
             )
                 .into_response()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_h2_request_keeps_its_authority_as_host() {
+        let mut req = Request::builder().uri("https://api.763616.xyz/worlds").body(Body::empty()).unwrap();
+        preserve_client_host(&mut req);
+        assert_eq!(req.headers()[header::HOST], "api.763616.xyz");
+    }
+
+    #[test]
+    fn an_explicit_host_header_wins() {
+        let mut req = Request::builder()
+            .uri("https://api.763616.xyz/worlds")
+            .header(header::HOST, "api.sharedworld.net")
+            .body(Body::empty())
+            .unwrap();
+        preserve_client_host(&mut req);
+        assert_eq!(req.headers()[header::HOST], "api.sharedworld.net");
     }
 }
