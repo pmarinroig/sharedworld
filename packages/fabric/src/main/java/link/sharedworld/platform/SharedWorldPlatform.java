@@ -41,7 +41,8 @@ public interface SharedWorldPlatform {
     final class Holder {
         private static final String[] IMPLEMENTATIONS = {
                 "link.sharedworld.platform.FabricPlatform",
-                "link.sharedworld.platform.NeoForgePlatform"
+                "link.sharedworld.platform.NeoForgePlatform",
+                "link.sharedworld.platform.ForgePlatform"
         };
         private static volatile SharedWorldPlatform instance;
 

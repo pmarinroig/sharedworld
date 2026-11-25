@@ -1,0 +1,212 @@
+plugins {
+    id "net.neoforged.moddev.legacyforge" version "${moddev_version}"
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = project.archives_base_name
+}
+
+// Bucket selection mirrors the classic & neoforge projects.
+def bucketConfig = new groovy.json.JsonSlurper().parse(file("../buckets.json"))
+def mcBuckets = bucketConfig.buckets.findAll { it.project == "classic" && it.forge != null }.collectEntries {
+    [(it.name): it]
+}
+def mcBucketName = providers.gradleProperty("sharedworldMcBucket").getOrElse(bucketConfig.defaults.forge ?: "1.20.1")
+def mcBucket = mcBuckets[mcBucketName]
+if (mcBucket == null) {
+    throw new GradleException("Unknown Forge sharedworldMcBucket '${mcBucketName}'. Known buckets: ${mcBuckets.keySet()}")
+}
+def bucketJavaRelease = (mcBucket.javaRelease ?: 17) as int
+def bucketMixinCompatibilityLevel = bucketJavaRelease >= 21 ? "JAVA_21" : "JAVA_17"
+
+// Fabric's semver range ("[>=]a[ <b]") to a maven range ("[a,b)"); the
+// buckets only ever use the >=lo <hi shape.
+static String mavenRange(String fabricRange) {
+    def m = fabricRange =~ /^>=([\w.\-]+)\s*(?:<([\w.\-]+))?$/
+    if (!m.matches()) {
+        throw new GradleException("Unsupported minecraftRange shape: ${fabricRange}")
+    }
+    return m.group(2) != null ? "[${m.group(1)},${m.group(2)})" : "[${m.group(1)},)"
+}
+def minecraftMavenRange = mavenRange(mcBucket.minecraftRange as String)
+
+// The shared tree, minus Fabric-only classes and Fabric-specific backdrop compat.
+def prepareSharedSources = tasks.register("prepareSharedSources", Sync) {
+    from("../src/main/java") {
+        exclude "link/sharedworld/fabric/**"
+        exclude "link/sharedworld/platform/FabricPlatform.java"
+    }
+    from("../src/versioned/${mcBucketName}/java") {
+        exclude "link/sharedworld/versioned/ScreenBackdropCompat.java"
+    }
+    (mcBucket.sharedVersionedDirs ?: []).each { group ->
+        from "../src/versioned/common/${group}/java"
+    }
+    into layout.buildDirectory.dir("generated/sharedMain")
+}
+
+sourceSets {
+    main {
+        java.srcDirs = [prepareSharedSources, "src/main/java"]
+        resources.srcDirs = ["src/main/resources", "../src/versioned/${mcBucketName}/resources"]
+    }
+    test {
+        java.srcDirs = ["../src/test/java", "../src/versionedTest/${mcBucketName}/java"] \
+                + (mcBucket.sharedVersionedTestDirs ?: []).collect { "../src/versionedTest/common/${it}/java" }
+        resources.srcDirs = ["../src/test/resources"]
+    }
+}
+
+processResources {
+    from("../src/main/resources") {
+        exclude "fabric.mod.json"
+    }
+    inputs.property "version", project.version
+    inputs.property "minecraftRange", minecraftMavenRange
+    inputs.property "forgeRange", mcBucket.forge.range
+    inputs.property "mixinCompatibilityLevel", bucketMixinCompatibilityLevel
+
+    filesMatching("META-INF/mods.toml") {
+        expand "version": inputs.properties.version,
+                "minecraftRange": inputs.properties.minecraftRange,
+                "forgeRange": inputs.properties.forgeRange
+    }
+    filesMatching("sharedworld.mixins.json") {
+        expand "mixinCompatibilityLevel": inputs.properties.mixinCompatibilityLevel
+        filter { line ->
+            if (line.contains('"required": true')) {
+                return '  "required": true,\n  "minVersion": "0.8",\n  "refmap": "sharedworld.refmap.json",'
+            }
+            return line
+        }
+    }
+    filesMatching("sharedworld-versioned.mixins.json") {
+        filter { line ->
+            if (line.contains('"compatibilityLevel":')) {
+                return "  \"compatibilityLevel\": \"${inputs.properties.mixinCompatibilityLevel}\","
+            }
+            if (line.contains('"required": true')) {
+                return '  "required": true,\n  "minVersion": "0.8",\n  "refmap": "sharedworld.refmap.json",'
+            }
+            return line
+        }
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+legacyForge {
+    version = "1.20.1-${mcBucket.forge.version}"
+
+    runs {
+        client {
+            client()
+        }
+    }
+
+    mods {
+        sharedworld {
+            sourceSet sourceSets.main
+        }
+    }
+
+    addModdingDependenciesTo sourceSets.test
+}
+
+dependencies {
+    annotationProcessor "org.spongepowered:mixin:0.8.5:processor"
+    compileOnly "org.jspecify:jspecify:1.0.0"
+    testImplementation "org.junit.jupiter:junit-jupiter:5.10.2"
+    testRuntimeOnly "org.junit.platform:junit-platform-launcher"
+}
+
+// Forge 1.20.1 runs against Searge-obfuscated names in production. The Mixin annotation
+// processor requires a Named -> Searge SRG map to compile refmap targets, but moddev produces
+// Searge -> Named (intermediateToNamed.srg). Invert it here on the fly.
+def generateNamedToSeargeSrg = tasks.register("generateNamedToSeargeSrg") {
+    dependsOn "createMinecraftArtifacts"
+    def inputSrg = layout.buildDirectory.file("moddev/artifacts/intermediateToNamed.srg")
+    def outputSrg = layout.buildDirectory.file("moddev/artifacts/namedToSearge.srg")
+    inputs.file inputSrg
+    outputs.file outputSrg
+    doLast {
+        def out = outputSrg.get().asFile
+        out.parentFile.mkdirs()
+        out.withWriter("UTF-8") { writer ->
+            inputSrg.get().asFile.eachLine("UTF-8") { line ->
+                if (line.startsWith("CL: ")) {
+                    def parts = line.split(" ")
+                    writer.writeLine("CL: ${parts[2]} ${parts[1]}")
+                } else if (line.startsWith("FD: ")) {
+                    def parts = line.split(" ")
+                    writer.writeLine("FD: ${parts[2]} ${parts[1]}")
+                } else if (line.startsWith("MD: ")) {
+                    def parts = line.split(" ")
+                    writer.writeLine("MD: ${parts[3]} ${parts[4]} ${parts[1]} ${parts[2]}")
+                } else {
+                    writer.writeLine(line)
+                }
+            }
+        }
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    dependsOn generateNamedToSeargeSrg
+    it.options.release = bucketJavaRelease
+    it.options.encoding = "UTF-8"
+    it.options.compilerArgs += [
+        "-AoutRefMapFile=${layout.buildDirectory.dir("classes/java/main").get().asFile}/sharedworld.refmap.json",
+        "-AreobfSrgFile=${layout.buildDirectory.dir("moddev/artifacts").get().asFile}/namedToSearge.srg",
+        "-AdefaultObfuscationEnv=searge"
+    ]
+}
+
+tasks.named("compileJava").configure {
+    doLast {
+        def refmapFile = file("${layout.buildDirectory.dir("classes/java/main").get().asFile}/sharedworld.refmap.json")
+        if (refmapFile.exists()) {
+            def json = new groovy.json.JsonSlurper().parseText(refmapFile.getText("UTF-8"))
+            ["mappings", "data"].each { rootKey ->
+                def section = rootKey == "data" ? json.data?.searge : json.mappings
+                if (section != null) {
+                    def mixinMap = section["link/sharedworld/mixin/DisconnectedScreenMixin"]
+                    if (mixinMap != null && !mixinMap.containsKey("parent")) {
+                        mixinMap["parent"] = "f_95990_:Lnet/minecraft/client/gui/screens/Screen;"
+                    }
+                }
+            }
+            refmapFile.write(groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(json)), "UTF-8")
+        }
+    }
+}
+
+tasks.named("jar").configure {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    archiveVersion = "${project.mod_version}+mc${mcBucketName}-forge"
+    manifest {
+        attributes([
+            "MixinConfigs": "sharedworld.mixins.json,sharedworld-versioned.mixins.json"
+        ])
+    }
+}
+
+tasks.named("test").configure {
+    useJUnitPlatform {
+        excludeTags "integration"
+    }
+    def testTmpDir = layout.buildDirectory.dir("test-tmpdir").get().asFile
+    doFirst { testTmpDir.mkdirs() }
+    systemProperty "java.io.tmpdir", testTmpDir.absolutePath
+    systemProperty "sharedworld.test.hugeDelta", System.getProperty("sharedworld.test.hugeDelta", "false")
+}
+
+java {
+    sourceCompatibility = JavaVersion.toVersion(bucketJavaRelease)
+    targetCompatibility = JavaVersion.toVersion(bucketJavaRelease)
+}
